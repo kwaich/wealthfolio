@@ -6,6 +6,7 @@
 use log::debug;
 use rig::{completion::ToolDefinition, tool::Tool};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::env::AiEnvironment;
@@ -262,6 +263,51 @@ impl<E: AiEnvironment> RecordActivityTool<E> {
         args: RecordActivityArgs,
         accounts: &[wealthfolio_core::accounts::Account],
     ) -> Result<RecordActivityOutput, AiError> {
+        self.build_output_with_accounts_and_symbol_cache(args, accounts, &HashMap::new())
+            .await
+    }
+
+    /// Resolve a symbol to a `ResolvedAsset` via the quote service.
+    ///
+    /// Returns `None` if no match is found (symbol should be treated as custom asset).
+    pub(crate) async fn resolve_symbol_to_asset(
+        &self,
+        symbol: &str,
+        currency: &str,
+    ) -> Option<ResolvedAsset> {
+        let results = self
+            .env
+            .quote_service()
+            .search_symbol_with_currency(symbol, Some(currency))
+            .await
+            .unwrap_or_default();
+        results.into_iter().next().map(|r| ResolvedAsset {
+            asset_id: r.existing_asset_id.unwrap_or_else(|| {
+                format!(
+                    "{}:{}",
+                    r.symbol,
+                    r.exchange_mic.as_deref().unwrap_or("UNKNOWN")
+                )
+            }),
+            symbol: r.symbol,
+            name: r.long_name,
+            currency: r.currency.unwrap_or_else(|| currency.to_string()),
+            exchange: r.exchange_name,
+            exchange_mic: r.exchange_mic,
+        })
+    }
+
+    /// Build normalized tool output using pre-fetched accounts and a pre-resolved symbol cache.
+    ///
+    /// If a symbol is present in `symbol_cache`, the cached result is used instead of calling
+    /// the quote service. Cache keys are uppercased symbols. A cached value of `None` means the
+    /// symbol was searched but not found (custom asset).
+    pub(crate) async fn build_output_with_accounts_and_symbol_cache(
+        &self,
+        args: RecordActivityArgs,
+        accounts: &[wealthfolio_core::accounts::Account],
+        symbol_cache: &HashMap<String, Option<ResolvedAsset>>,
+    ) -> Result<RecordActivityOutput, AiError> {
         debug!(
             "record_activity called: type={}, symbol={:?}, account={:?}, date={}",
             args.activity_type, args.symbol, args.account, args.activity_date
@@ -305,51 +351,23 @@ impl<E: AiEnvironment> RecordActivityTool<E> {
             .map(|a| a.currency.clone())
             .unwrap_or_else(|| self.env.base_currency());
 
-        // 4. Handle symbol/asset resolution using quote_service
+        // 4. Handle symbol/asset resolution: use cache if available, else call quote service.
         let (resolved_asset, asset_id, asset_name, is_custom_asset) =
             if let Some(symbol) = &args.symbol {
-                // Search for the symbol using quote_service
-                let search_results = self
-                    .env
-                    .quote_service()
-                    .search_symbol_with_currency(symbol, Some(&currency))
-                    .await
-                    .unwrap_or_default();
-
-                if let Some(top_result) = search_results.first() {
-                    // Found a match - use the top result
-                    let asset = ResolvedAsset {
-                        asset_id: top_result.existing_asset_id.clone().unwrap_or_else(|| {
-                            // Construct asset ID from symbol and exchange
-                            format!(
-                                "{}:{}",
-                                top_result.symbol,
-                                top_result.exchange_mic.as_deref().unwrap_or("UNKNOWN")
-                            )
-                        }),
-                        symbol: top_result.symbol.clone(),
-                        name: top_result.long_name.clone(),
-                        currency: top_result
-                            .currency
-                            .clone()
-                            .unwrap_or_else(|| currency.clone()),
-                        exchange: top_result.exchange_name.clone(),
-                        exchange_mic: top_result.exchange_mic.clone(),
-                    };
-                    (
+                let symbol_upper = symbol.to_uppercase();
+                let maybe_asset = if let Some(cached) = symbol_cache.get(&symbol_upper) {
+                    cached.clone()
+                } else {
+                    self.resolve_symbol_to_asset(&symbol_upper, &currency).await
+                };
+                match maybe_asset {
+                    Some(asset) => (
                         Some(asset.clone()),
                         Some(asset.asset_id.clone()),
                         Some(asset.name.clone()),
                         false,
-                    )
-                } else {
-                    // No match found - treat as custom asset
-                    (
-                        None,
-                        None,
-                        Some(symbol.clone()),
-                        true, // Mark as custom asset so user can create it
-                    )
+                    ),
+                    None => (None, None, Some(symbol.clone()), true),
                 }
             } else {
                 (None, None, None, false)

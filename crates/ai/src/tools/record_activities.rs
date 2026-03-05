@@ -6,7 +6,7 @@
 use log::debug;
 use rig::{completion::ToolDefinition, tool::Tool};
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use crate::env::AiEnvironment;
@@ -191,11 +191,29 @@ impl<E: AiEnvironment + 'static> Tool for RecordActivitiesTool<E> {
             .collect();
 
         let single_tool = RecordActivityTool::new(self.env.clone());
+
+        // Batch-resolve unique symbols once to avoid N serial API calls.
+        let base_currency = self.env.base_currency();
+        let unique_symbols: HashSet<String> = args
+            .activities
+            .iter()
+            .filter_map(|a| a.symbol.as_deref())
+            .map(|s| s.to_uppercase())
+            .collect();
+        let mut symbol_cache: HashMap<String, Option<ResolvedAsset>> =
+            HashMap::with_capacity(unique_symbols.len());
+        for symbol in &unique_symbols {
+            let resolved = single_tool
+                .resolve_symbol_to_asset(symbol, &base_currency)
+                .await;
+            symbol_cache.insert(symbol.clone(), resolved);
+        }
+
         let mut drafts = Vec::with_capacity(args.activities.len());
 
         for (row_index, activity) in args.activities.into_iter().enumerate() {
             match single_tool
-                .build_output_with_accounts(activity, &accounts)
+                .build_output_with_accounts_and_symbol_cache(activity, &accounts, &symbol_cache)
                 .await
             {
                 Ok(output) => {
@@ -484,6 +502,74 @@ mod tests {
             .validation
             .missing_fields
             .contains(&"unit_price".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_record_activities_deduplicates_symbol_resolution() {
+        // Two BUY rows for the same symbol — quote service search result is present once.
+        // Both rows should resolve the asset correctly from the shared cache.
+        let mut env = MockEnvironment::new();
+        env.account_service = Arc::new(MockAccountService {
+            accounts: vec![account("acc-1", "Main Broker", "USD")],
+        });
+        env.quote_service = Arc::new(MockQuoteService {
+            search_results: RwLock::new(vec![SymbolSearchResult {
+                symbol: "AAPL".to_string(),
+                long_name: "Apple Inc.".to_string(),
+                exchange_mic: Some("XNAS".to_string()),
+                exchange_name: Some("NASDAQ".to_string()),
+                currency: Some("USD".to_string()),
+                existing_asset_id: Some("SEC:AAPL:XNAS".to_string()),
+                ..SymbolSearchResult::default()
+            }]),
+        });
+        let tool = RecordActivitiesTool::new(Arc::new(env));
+
+        let output = tool
+            .call(RecordActivitiesArgs {
+                activities: vec![
+                    RecordActivityArgs {
+                        activity_type: "BUY".to_string(),
+                        symbol: Some("AAPL".to_string()),
+                        activity_date: "2026-01-10".to_string(),
+                        quantity: Some(10.0),
+                        unit_price: Some(200.0),
+                        amount: None,
+                        fee: None,
+                        account: Some("acc-1".to_string()),
+                        subtype: None,
+                        notes: None,
+                    },
+                    RecordActivityArgs {
+                        activity_type: "BUY".to_string(),
+                        symbol: Some("AAPL".to_string()),
+                        activity_date: "2026-01-11".to_string(),
+                        quantity: Some(5.0),
+                        unit_price: Some(210.0),
+                        amount: None,
+                        fee: None,
+                        account: Some("acc-1".to_string()),
+                        subtype: None,
+                        notes: None,
+                    },
+                ],
+            })
+            .await
+            .expect("batch tool should succeed");
+
+        assert_eq!(output.validation.total_rows, 2);
+        // Both rows should have resolved the same asset.
+        assert_eq!(
+            output.drafts[0].draft.asset_id,
+            Some("SEC:AAPL:XNAS".to_string())
+        );
+        assert_eq!(
+            output.drafts[1].draft.asset_id,
+            Some("SEC:AAPL:XNAS".to_string())
+        );
+        // Deduplicated resolved_assets list should contain AAPL only once.
+        assert_eq!(output.resolved_assets.len(), 1);
+        assert_eq!(output.resolved_assets[0].symbol, "AAPL");
     }
 
     #[tokio::test]
