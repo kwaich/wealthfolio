@@ -124,6 +124,12 @@ export function AccountItem({
         </div>
       </div>
       <div className="flex items-center space-x-2">
+        {account.excludeCash && (
+          <span className="inline-flex items-center gap-1 rounded-md border border-blue-200/40 bg-blue-100/30 px-2 py-1 text-xs font-medium text-blue-600 dark:border-blue-500/20 dark:bg-blue-500/10 dark:text-blue-400">
+            <Icons.Wallet className="h-3 w-3" />
+            No cash
+          </span>
+        )}
         {account.isArchived && (
           <span className="inline-flex items-center gap-1 rounded-md border border-red-200/40 bg-red-100/30 px-2 py-1 text-xs font-medium text-red-600 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-400">
             <Icons.FileArchive className="h-3 w-3" />

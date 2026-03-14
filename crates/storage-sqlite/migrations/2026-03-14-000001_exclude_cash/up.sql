@@ -1,0 +1,1 @@
+ALTER TABLE accounts ADD COLUMN exclude_cash BOOLEAN NOT NULL DEFAULT 0;

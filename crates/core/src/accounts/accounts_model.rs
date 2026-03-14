@@ -44,6 +44,9 @@ pub struct Account {
     pub is_archived: bool,
     /// Tracking mode for the account
     pub tracking_mode: TrackingMode,
+    /// Suppress cash balance tracking for this account
+    #[serde(default)]
+    pub exclude_cash: bool,
 }
 
 /// Input model for creating a new account.
@@ -67,6 +70,8 @@ pub struct NewAccount {
     pub is_archived: bool,
     #[serde(default)]
     pub tracking_mode: TrackingMode,
+    #[serde(default)]
+    pub exclude_cash: bool,
 }
 
 impl NewAccount {
@@ -103,6 +108,7 @@ pub struct AccountUpdate {
     pub provider_account_id: Option<String>,
     pub is_archived: Option<bool>,
     pub tracking_mode: Option<TrackingMode>,
+    pub exclude_cash: Option<bool>,
 }
 
 impl AccountUpdate {

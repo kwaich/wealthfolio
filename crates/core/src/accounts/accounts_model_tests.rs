@@ -91,6 +91,7 @@ mod tests {
             provider_account_id: None,
             is_archived: false,
             tracking_mode,
+            exclude_cash: false,
         }
     }
 }

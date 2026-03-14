@@ -329,6 +329,27 @@ export function AccountForm({ defaultValues, onSuccess = () => undefined }: Acco
             )}
           />
 
+          {currentTrackingMode === "TRANSACTIONS" && (
+            <FormField
+              control={form.control}
+              name="excludeCash"
+              render={({ field }) => (
+                <FormItem className="flex items-center space-x-3 space-y-0 rounded-lg border p-3">
+                  <FormControl>
+                    <Checkbox checked={field.value} onCheckedChange={field.onChange} />
+                  </FormControl>
+                  <FormLabel className="text-sm font-normal">
+                    Don't track cash balance
+                    <span className="text-muted-foreground ml-1 text-xs font-normal">
+                      — buys won't create negative cash
+                    </span>
+                  </FormLabel>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          )}
+
           {defaultValues?.id && (
             <FormField
               control={form.control}

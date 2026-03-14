@@ -52,6 +52,7 @@ export interface Account {
   isActive: boolean;
   isArchived: boolean;
   trackingMode: TrackingMode;
+  excludeCash?: boolean;
   createdAt: Date;
   updatedAt: Date;
   platformId?: string; // Optional - links to platform/broker

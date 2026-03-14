@@ -222,6 +222,7 @@ impl SnapshotService {
             provider_account_id: None,
             is_archived: false,
             tracking_mode: crate::accounts::TrackingMode::NotSet,
+            exclude_cash: false,
         }
     }
 
@@ -710,7 +711,7 @@ impl SnapshotService {
                 HashMap::with_capacity(accounts_to_process_today.len());
             let mut keyframes_today = Vec::new();
 
-            for (account_id, _account) in accounts_to_process_today {
+            for (account_id, account) in accounts_to_process_today {
                 let previous_holdings_snapshot = current_holdings_snapshots
                     .get(account_id)
                      .ok_or_else(|| {
@@ -731,7 +732,7 @@ impl SnapshotService {
                 let is_first_day = effective_start_dates.get(account_id) == Some(&current_date);
                 let has_activities = !activities_today.is_empty();
 
-                let current_holdings_snapshot: AccountStateSnapshot; // Final state for today
+                let mut current_holdings_snapshot: AccountStateSnapshot; // Final state for today
 
                 if !has_activities {
                     // No activities today, just carry forward the previous state
@@ -782,6 +783,13 @@ impl SnapshotService {
                             current_holdings_snapshot = errored_state;
                         }
                     }
+                }
+
+                // Clear cash when the account has exclude_cash enabled
+                if account.exclude_cash {
+                    current_holdings_snapshot.cash_balances.clear();
+                    current_holdings_snapshot.cash_total_account_currency = Decimal::ZERO;
+                    current_holdings_snapshot.cash_total_base_currency = Decimal::ZERO;
                 }
 
                 // Decide if it's a keyframe based on the determined snapshot
