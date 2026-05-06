@@ -1087,27 +1087,9 @@ mod tests {
 
     fn fixture_all_time_profit_fully_withdrawn() -> Vec<DailyAccountValuation> {
         vec![
-            valuation(
-                "2026-02-01",
-                dec!(1030),
-                dec!(1000),
-                dec!(930),
-                dec!(900),
-            ),
-            valuation(
-                "2026-02-10",
-                dec!(1400),
-                dec!(1000),
-                dec!(1200),
-                dec!(900),
-            ),
-            valuation(
-                "2026-02-20",
-                dec!(50),
-                dec!(-400),
-                dec!(50),
-                Decimal::ZERO,
-            ),
+            valuation("2026-02-01", dec!(1030), dec!(1000), dec!(930), dec!(900)),
+            valuation("2026-02-10", dec!(1400), dec!(1000), dec!(1200), dec!(900)),
+            valuation("2026-02-20", dec!(50), dec!(-400), dec!(50), Decimal::ZERO),
         ]
     }
 

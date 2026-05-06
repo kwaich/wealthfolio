@@ -257,8 +257,7 @@ const AccountPage = () => {
     return undefined;
   }, [account]);
 
-  const performanceDateRange =
-    selectedIntervalCode === "ALL" ? undefined : dateRange;
+  const performanceDateRange = selectedIntervalCode === "ALL" ? undefined : dateRange;
 
   // Pass tracking mode to the performance hook for SOTA calculations
   const {
