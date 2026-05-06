@@ -257,6 +257,9 @@ const AccountPage = () => {
     return undefined;
   }, [account]);
 
+  const performanceDateRange =
+    selectedIntervalCode === "ALL" ? undefined : dateRange;
+
   // Pass tracking mode to the performance hook for SOTA calculations
   const {
     data: performanceResponse,
@@ -265,7 +268,7 @@ const AccountPage = () => {
     errorMessages: performanceErrorMessages,
   } = useCalculatePerformanceHistory({
     selectedItems: accountTrackedItem ? [accountTrackedItem] : [],
-    dateRange: dateRange,
+    dateRange: performanceDateRange,
     trackingMode: isHoldingsMode ? "HOLDINGS" : "TRANSACTIONS",
   });
 
@@ -280,7 +283,7 @@ const AccountPage = () => {
 
   // Use period gain and return from backend (SOTA calculations for HOLDINGS mode)
   const frontendGainLossAmount = accountPerformance?.periodGain ?? 0;
-  const frontendSimpleReturn = accountPerformance?.periodReturn ?? 0;
+  const frontendSimpleReturn = accountPerformance?.periodReturn ?? null;
 
   const chartData: HistoryChartData[] = useMemo(() => {
     if (!valuationHistory) return [];
@@ -315,9 +318,9 @@ const AccountPage = () => {
     }
     // For other intervals, if accountPerformance is available, use cumulativeMwr
     if (accountPerformance) {
-      return accountPerformance.cumulativeMwr ?? 0;
+      return accountPerformance.cumulativeMwr ?? null;
     }
-    return 0; // Default if no specific logic matches or data is unavailable
+    return null; // Default if no specific logic matches or data is unavailable
   }, [accountPerformance, selectedIntervalCode, frontendSimpleReturn, isHoldingsMode]);
 
   const handleAccountSwitch = (selectedAccount: Account) => {
@@ -569,11 +572,13 @@ const AccountPage = () => {
                                 currency={account?.currency ?? baseCurrency}
                                 displayCurrency={false}
                               />
-                              <GainPercent
-                                value={percentageToDisplay}
-                                variant="badge"
-                                className="text-xs"
-                              />
+                              {percentageToDisplay !== null && (
+                                <GainPercent
+                                  value={percentageToDisplay}
+                                  variant="badge"
+                                  className="text-xs"
+                                />
+                              )}
                             </div>
                           )}
                         </div>

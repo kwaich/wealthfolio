@@ -234,6 +234,37 @@ impl PerformanceService {
         (period_gain, period_return)
     }
 
+    fn compute_transactions_period_metrics(
+        start_point: &DailyAccountValuation,
+        end_point: &DailyAccountValuation,
+        start_date_opt: Option<NaiveDate>,
+        cumulative_mwr: Decimal,
+    ) -> (Decimal, Option<Decimal>) {
+        let gain_loss_amount =
+            end_point.total_value - start_point.total_value - end_point.net_contribution
+                + start_point.net_contribution;
+
+        if start_date_opt.is_none() {
+            // ALL is special for transactions accounts: the first stored
+            // valuation row can already reflect post-trade market movement, so
+            // users expect inception P/L from contributed capital instead.
+            //
+            // Keep the dollar gain even when the user has withdrawn more than
+            // they contributed overall (net contribution <= 0): realized profit
+            // already taken out still belongs in lifetime P/L, but a return
+            // percentage no longer has a meaningful invested-capital denominator.
+            let period_gain = end_point.total_value - end_point.net_contribution;
+            let period_return = if end_point.net_contribution <= Decimal::ZERO {
+                None
+            } else {
+                Some(period_gain / end_point.net_contribution)
+            };
+            (period_gain, period_return)
+        } else {
+            (gain_loss_amount, Some(cumulative_mwr))
+        }
+    }
+
     /// Full account performance calculation including per-day `returns[]`,
     /// volatility, and max-drawdown. Used by the account-detail page.
     async fn calculate_account_performance(
@@ -439,7 +470,13 @@ impl PerformanceService {
             );
             (gain, Some(ret))
         } else {
-            (gain_loss_amount, Some(cumulative_mwr))
+            let (gain, ret) = Self::compute_transactions_period_metrics(
+                start_point,
+                end_point,
+                start_date_opt,
+                cumulative_mwr,
+            );
+            (gain, ret)
         };
 
         let wrap_non_holdings = |value: Decimal| {
@@ -1032,6 +1069,48 @@ mod tests {
         history
     }
 
+    fn fixture_all_time_embedded_first_row_gain() -> Vec<DailyAccountValuation> {
+        vec![
+            valuation("2026-01-10", dec!(1015), dec!(1000), dec!(915), dec!(900)),
+            valuation("2026-01-11", dec!(1025), dec!(1000), dec!(925), dec!(900)),
+            valuation("2026-01-12", dec!(1040), dec!(1000), dec!(940), dec!(900)),
+        ]
+    }
+
+    fn fixture_all_time_with_withdrawal_and_realized_gain() -> Vec<DailyAccountValuation> {
+        vec![
+            valuation("2026-02-01", dec!(1030), dec!(1000), dec!(930), dec!(900)),
+            valuation("2026-02-10", dec!(1250), dec!(1200), dec!(1050), dec!(900)),
+            valuation("2026-02-20", dec!(1180), dec!(900), dec!(780), dec!(700)),
+        ]
+    }
+
+    fn fixture_all_time_profit_fully_withdrawn() -> Vec<DailyAccountValuation> {
+        vec![
+            valuation(
+                "2026-02-01",
+                dec!(1030),
+                dec!(1000),
+                dec!(930),
+                dec!(900),
+            ),
+            valuation(
+                "2026-02-10",
+                dec!(1400),
+                dec!(1000),
+                dec!(1200),
+                dec!(900),
+            ),
+            valuation(
+                "2026-02-20",
+                dec!(50),
+                dec!(-400),
+                dec!(50),
+                Decimal::ZERO,
+            ),
+        ]
+    }
+
     fn date(s: &str) -> NaiveDate {
         NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap()
     }
@@ -1077,6 +1156,80 @@ mod tests {
         // path before the refactor).
         assert!(result.cumulative_twr.is_some());
         assert!(result.cumulative_mwr.is_some());
+    }
+
+    #[test]
+    fn perf_all_time_transactions_gain_uses_inception_pnl() {
+        let history = fixture_all_time_embedded_first_row_gain();
+
+        let result = PerformanceService::compute_account_performance(
+            &history,
+            Some(TrackingMode::Transactions),
+            None,
+            false,
+        )
+        .expect("all-time summary should compute");
+
+        assert_eq!(result.period_gain, dec!(40));
+        assert_eq!(result.period_return, Some(dec!(0.04)));
+        assert_eq!(result.gain_loss_amount, Some(dec!(25)));
+        assert_ne!(result.period_gain, result.gain_loss_amount.unwrap());
+    }
+
+    #[test]
+    fn perf_bounded_transactions_gain_keeps_point_to_point_math() {
+        let history = fixture_all_time_embedded_first_row_gain();
+
+        let result = PerformanceService::compute_account_performance(
+            &history,
+            Some(TrackingMode::Transactions),
+            Some(date("2026-01-10")),
+            false,
+        )
+        .expect("bounded summary should compute");
+
+        assert_eq!(result.period_gain, dec!(25));
+        assert_eq!(result.period_return, result.cumulative_mwr);
+        assert_eq!(result.gain_loss_amount, Some(dec!(25)));
+    }
+
+    #[test]
+    fn perf_all_time_transactions_gain_reflects_account_pnl_after_withdrawal() {
+        let history = fixture_all_time_with_withdrawal_and_realized_gain();
+
+        let result = PerformanceService::compute_account_performance(
+            &history,
+            Some(TrackingMode::Transactions),
+            None,
+            false,
+        )
+        .expect("all-time summary should compute");
+
+        assert_eq!(result.period_gain, dec!(280));
+        assert_eq!(
+            result.period_return,
+            Some((dec!(280) / dec!(900)).round_dp(DECIMAL_PRECISION))
+        );
+        assert_eq!(result.gain_loss_amount, Some(dec!(250)));
+        assert_ne!(result.period_gain, result.gain_loss_amount.unwrap());
+    }
+
+    #[test]
+    fn perf_all_time_transactions_with_negative_net_contribution_keeps_gain_but_hides_percent() {
+        let history = fixture_all_time_profit_fully_withdrawn();
+
+        let result = PerformanceService::compute_account_performance(
+            &history,
+            Some(TrackingMode::Transactions),
+            None,
+            false,
+        )
+        .expect("all-time summary should compute");
+
+        assert_eq!(result.period_gain, dec!(450));
+        assert_eq!(result.period_return, None);
+        assert_eq!(result.gain_loss_amount, Some(dec!(420)));
+        assert_ne!(result.period_gain, result.gain_loss_amount.unwrap());
     }
 
     /// Invariant: summary and full paths must agree on `period_return`. This is

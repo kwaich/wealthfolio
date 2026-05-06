@@ -69,4 +69,45 @@ describe("useCalculatePerformanceHistory", () => {
     expect(ends.every((e) => e === "2026-03-10")).toBe(true);
     expect(starts.some((s) => s === "2026-03-09")).toBe(false);
   });
+
+  it("allows all-time performance queries without explicit dates", async () => {
+    renderHook(
+      () =>
+        useCalculatePerformanceHistory({
+          selectedItems: [{ id: "TOTAL", type: "account", name: "Total Portfolio" }],
+          dateRange: undefined,
+        }),
+      { wrapper: createWrapper() },
+    );
+
+    await waitFor(() => {
+      expect(mocks.calculatePerformanceHistory).toHaveBeenCalled();
+    });
+
+    expect(mocks.calculatePerformanceHistory).toHaveBeenCalledWith(
+      "account",
+      "TOTAL",
+      undefined,
+      undefined,
+      undefined,
+    );
+  });
+
+  it("does not query when the date range is only partially populated", async () => {
+    renderHook(
+      () =>
+        useCalculatePerformanceHistory({
+          selectedItems: [{ id: "TOTAL", type: "account", name: "Total Portfolio" }],
+          dateRange: {
+            from: new Date(2026, 2, 4),
+            to: undefined,
+          },
+        }),
+      { wrapper: createWrapper() },
+    );
+
+    await waitFor(() => {
+      expect(mocks.calculatePerformanceHistory).not.toHaveBeenCalled();
+    });
+  });
 });
