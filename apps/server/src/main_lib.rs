@@ -126,6 +126,9 @@ pub struct AppState {
     >,
     pub drift_service:
         Arc<dyn wealthfolio_core::portfolio::allocation_targets::DriftServiceTrait + Send + Sync>,
+    pub rebalance_service: Arc<
+        dyn wealthfolio_core::portfolio::allocation_targets::RebalanceServiceTrait + Send + Sync,
+    >,
 }
 
 pub fn init_tracing() {
@@ -423,13 +426,16 @@ pub async fn build_state(config: &Config) -> anyhow::Result<Arc<AppState>> {
     ));
     let classification_service =
         Arc::new(AssetClassificationService::new(taxonomy_service.clone()));
-    let holdings_service = Arc::new(HoldingsService::new_with_timezone(
-        asset_service.clone(),
-        snapshot_service.clone(),
-        holdings_valuation_service.clone(),
-        classification_service.clone(),
-        timezone.clone(),
-    ));
+    let holdings_service = Arc::new(
+        HoldingsService::new_with_timezone(
+            asset_service.clone(),
+            snapshot_service.clone(),
+            holdings_valuation_service.clone(),
+            classification_service.clone(),
+            timezone.clone(),
+        )
+        .with_lot_repository(lots_repository.clone()),
+    );
 
     let allocation_service: Arc<dyn AllocationServiceTrait + Send + Sync> = Arc::new(
         AllocationService::new(holdings_service.clone(), taxonomy_service.clone()),
@@ -459,13 +465,25 @@ pub async fn build_state(config: &Config) -> anyhow::Result<Arc<AppState>> {
             allocation_service.clone(),
         ),
     );
+    let rebalance_service: Arc<
+        dyn wealthfolio_core::portfolio::allocation_targets::RebalanceServiceTrait + Send + Sync,
+    > = Arc::new(
+        wealthfolio_core::portfolio::allocation_targets::RebalanceService::new(
+            allocation_target_service.clone(),
+            drift_service.clone(),
+            allocation_service.clone(),
+            holdings_service.clone(),
+        ),
+    );
 
     let performance_service = Arc::new(
         wealthfolio_core::portfolio::performance::PerformanceService::new_with_timezone(
             valuation_service.clone(),
             quote_service.clone(),
             timezone.clone(),
-        ),
+        )
+        .with_activity_repository(activity_repository.clone(), fx_service.clone())
+        .with_lot_repository(lots_repository.clone()),
     );
 
     let income_service = Arc::new(IncomeService::new_with_timezone(
@@ -803,6 +821,7 @@ pub async fn build_state(config: &Config) -> anyhow::Result<Arc<AppState>> {
         spending_insight_service,
         allocation_target_service,
         drift_service,
+        rebalance_service,
     });
 
     #[cfg(feature = "device-sync")]

@@ -64,6 +64,7 @@ export const COMMANDS: CommandMap = {
   calculate_accounts_simple_performance: { method: "POST", path: "/performance/accounts/simple" },
   calculate_performance_history: { method: "POST", path: "/performance/history" },
   calculate_performance_summary: { method: "POST", path: "/performance/summary" },
+  get_performance_summaries: { method: "POST", path: "/performance/summaries" },
   get_income_summary: { method: "POST", path: "/income/summary/query" },
   // Goals
   get_goals: { method: "GET", path: "/goals" },
@@ -377,6 +378,7 @@ export const COMMANDS: CommandMap = {
     path: "/allocation-targets/save-with-weights",
   },
   get_allocation_target_drift: { method: "POST", path: "/allocation-targets" },
+  calculate_rebalance_plan: { method: "POST", path: "/allocation-targets/rebalance/calculate" },
   // Alternative Assets
   create_alternative_asset: { method: "POST", path: "/alternative-assets" },
   update_alternative_asset_valuation: { method: "PUT", path: "/alternative-assets" },
@@ -649,15 +651,34 @@ export const invoke = async <T>(command: string, payload?: Record<string, unknow
       break;
     }
     case "calculate_performance_summary": {
-      const { itemType, itemId, startDate, endDate, trackingMode, filter } = payload as {
+      const { itemType, itemId, startDate, endDate, trackingMode, filter, profile } = payload as {
         itemType: string;
         itemId: string;
         startDate?: string;
         endDate?: string;
         trackingMode?: string;
         filter?: unknown;
+        profile?: string;
       };
-      body = JSON.stringify({ itemType, itemId, startDate, endDate, trackingMode, filter });
+      body = JSON.stringify({
+        itemType,
+        itemId,
+        startDate,
+        endDate,
+        trackingMode,
+        filter,
+        profile,
+      });
+      break;
+    }
+    case "get_performance_summaries": {
+      const { scopes, startDate, endDate, profile } = payload as {
+        scopes: unknown[];
+        startDate?: string | null;
+        endDate?: string | null;
+        profile?: string;
+      };
+      body = JSON.stringify({ scopes, startDate, endDate, profile });
       break;
     }
     case "check_update": {
@@ -1815,6 +1836,15 @@ export const invoke = async <T>(command: string, payload?: Record<string, unknow
       };
       url += `/${encodeURIComponent(targetId)}/drift`;
       body = JSON.stringify({ filter, includeHoldings: includeHoldings ?? false });
+      break;
+    }
+    case "calculate_rebalance_plan": {
+      const { targetId, availableCash, filter } = payload as {
+        targetId: string;
+        availableCash: number;
+        filter: unknown;
+      };
+      body = JSON.stringify({ targetId, availableCash, filter });
       break;
     }
     // AI Providers

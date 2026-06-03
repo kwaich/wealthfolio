@@ -2,10 +2,11 @@ import { useAccounts } from "@/hooks/use-accounts";
 import { useHoldings } from "@/hooks/use-holdings";
 import { usePortfolioAllocations } from "@/hooks/use-portfolio-allocations";
 import { usePortfolios } from "@/hooks/use-portfolios";
-import { isAlternativeAssetKind } from "@/lib/constants";
+import { HoldingType, isAlternativeAssetKind } from "@/lib/constants";
 import { useSettingsContext } from "@/lib/settings-provider";
 import type { AccountScope, AllocationTarget, TaxonomyAllocation } from "@/lib/types";
 import { OverviewTab } from "@/pages/allocation-targets/components/overview-tab";
+import { RebalanceTab } from "@/pages/allocation-targets/components/rebalance-tab";
 import {
   TargetDetailHeader,
   TargetToolbarActions,
@@ -36,7 +37,7 @@ interface OverviewPageProps {
   onToolbarActionsChange?: (actions: ReactNode | null) => void;
 }
 
-type WorkspaceView = "current" | "details" | "targets";
+type WorkspaceView = "current" | "details" | "targets" | "rebalance";
 type TargetEditorMode = "create" | "edit";
 
 export function OverviewPage({
@@ -50,7 +51,11 @@ export function OverviewPage({
   const accountFilter: AccountScope = useMemo(() => filterProp ?? { type: "all" }, [filterProp]);
   const selectedAccountScopeKey = accountScopeKey(accountFilter);
 
-  const { holdings, isLoading: holdingsLoading } = useHoldings(accountFilter);
+  const {
+    holdings,
+    dataUpdatedAt: holdingsUpdatedAt,
+    isLoading: holdingsLoading,
+  } = useHoldings(accountFilter);
   const { allocations, isLoading: allocationsLoading } = usePortfolioAllocations(accountFilter);
   const { accounts } = useAccounts();
   const { data: portfolios = [] } = usePortfolios();
@@ -89,11 +94,13 @@ export function OverviewPage({
     ? accountFilter
     : (accountScopeFromTarget(effectiveTarget) ?? accountFilter);
 
-  const { driftReport, isLoading: driftLoading } = useAllocationTargetDrift(
-    effectiveTargetId,
-    accountFilter,
-    { includeHoldings: workspaceView === "details" },
-  );
+  const {
+    driftReport,
+    dataUpdatedAt: driftUpdatedAt,
+    isLoading: driftLoading,
+  } = useAllocationTargetDrift(effectiveTargetId, accountFilter, {
+    includeHoldings: workspaceView === "details",
+  });
 
   const isLoading = holdingsLoading || allocationsLoading;
   const targetLoading = targetsLoading || driftLoading;
@@ -120,6 +127,14 @@ export function OverviewPage({
     () => portfolioHoldings.filter((h) => h.holdingType?.toLowerCase() !== "cash"),
     [portfolioHoldings],
   );
+  const availableCash = useMemo(
+    () =>
+      holdings
+        .filter((h) => h.holdingType === HoldingType.CASH)
+        .reduce((sum, h) => sum + (h.marketValue.base ?? 0), 0),
+    [holdings],
+  );
+  const rebalanceSourceVersion = `${holdingsUpdatedAt}:${driftUpdatedAt}:${effectiveTarget?.updatedAt ?? ""}`;
 
   const valueStrip = useMemo(
     () => computeValueStrip(portfolioHoldings, accounts),
@@ -301,6 +316,29 @@ export function OverviewPage({
     );
   }
 
+  if (workspaceView === "rebalance") {
+    return (
+      <div>
+        <div className="mb-5 flex items-center gap-3">
+          <Button variant="ghost" size="sm" className="-ml-2" onClick={() => backTo("details")}>
+            <Icons.ArrowLeft className="mr-1.5 h-4 w-4" />
+            Back to overview
+          </Button>
+          <span className="bg-border hidden h-5 w-px sm:block" />
+          <h2 className="text-foreground text-[16px] font-semibold">Rebalance</h2>
+        </div>
+        <RebalanceTab
+          profile={effectiveTarget ?? null}
+          driftReport={driftReport ?? null}
+          accountScope={accountFilter}
+          availableCash={availableCash}
+          sourceVersion={rebalanceSourceVersion}
+          isSourceLoading={holdingsLoading || driftLoading || !driftReport}
+        />
+      </div>
+    );
+  }
+
   if (workspaceView === "details") {
     return (
       <div>
@@ -319,7 +357,7 @@ export function OverviewPage({
             report={driftReport}
             taxonomyId={effectiveTarget?.taxonomyId ?? "asset_classes"}
             targetName={effectiveTarget?.name}
-            onRebalanceClick={() => undefined}
+            onRebalanceClick={() => setWorkspaceView("rebalance")}
           />
         ) : targetLoading ? (
           <div className="space-y-5">

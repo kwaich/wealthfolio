@@ -511,6 +511,7 @@ pub fn run() {
             commands::portfolio::recalculate_portfolio,
             commands::portfolio::calculate_performance_summary,
             commands::portfolio::calculate_performance_history,
+            commands::portfolio::get_performance_summaries,
             commands::portfolio::save_manual_holdings,
             commands::portfolio::import_holdings_csv,
             commands::portfolio::check_holdings_import,
@@ -802,6 +803,7 @@ pub fn run() {
             commands::allocation_targets::save_allocation_target_weights,
             commands::allocation_targets::save_allocation_target_with_weights,
             commands::allocation_targets::get_allocation_target_drift,
+            commands::allocation_targets::calculate_rebalance_plan,
             // RetirementPlan-based FIRE commands
             commands::fire::calculate_retirement_projection,
             commands::fire::run_retirement_decision_sensitivity_map,
