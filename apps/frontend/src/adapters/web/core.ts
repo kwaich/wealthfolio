@@ -106,6 +106,8 @@ export const COMMANDS: CommandMap = {
   update_activity: { method: "PUT", path: "/activities" },
   save_activities: { method: "POST", path: "/activities/bulk" },
   delete_activity: { method: "DELETE", path: "/activities" },
+  get_transfer_pair_for_activity: { method: "GET", path: "/activities" },
+  save_internal_transfer_pair: { method: "POST", path: "/activities/transfer-pair" },
   link_transfer_activities: { method: "POST", path: "/activities/link" },
   unlink_transfer_activities: { method: "POST", path: "/activities/unlink" },
   // Activity import
@@ -173,6 +175,7 @@ export const COMMANDS: CommandMap = {
   export_taxonomy_json: { method: "GET", path: "/taxonomies" },
   get_asset_taxonomy_assignments: { method: "GET", path: "/taxonomies/assignments/asset" },
   assign_asset_to_category: { method: "POST", path: "/taxonomies/assignments" },
+  replace_asset_taxonomy_assignments: { method: "PUT", path: "/taxonomies/assignments/asset" },
   remove_asset_taxonomy_assignment: { method: "DELETE", path: "/taxonomies/assignments" },
   get_migration_status: { method: "GET", path: "/taxonomies/migration/status" },
   migrate_legacy_classifications: { method: "POST", path: "/taxonomies/migration/run" },
@@ -817,6 +820,16 @@ export const invoke = async <T>(command: string, payload?: Record<string, unknow
       url += `/${encodeURIComponent(activityId)}`;
       break;
     }
+    case "get_transfer_pair_for_activity": {
+      const { activityId } = payload as { activityId: string };
+      url += `/${encodeURIComponent(activityId)}/transfer-pair`;
+      break;
+    }
+    case "save_internal_transfer_pair": {
+      const { request } = payload as { request: Record<string, unknown> };
+      body = JSON.stringify(request);
+      break;
+    }
     case "link_transfer_activities": {
       const { activityAId, activityBId } = payload as {
         activityAId: string;
@@ -1126,6 +1139,16 @@ export const invoke = async <T>(command: string, payload?: Record<string, unknow
     case "assign_asset_to_category": {
       const { assignment } = payload as { assignment: Record<string, unknown> };
       body = JSON.stringify(assignment);
+      break;
+    }
+    case "replace_asset_taxonomy_assignments": {
+      const { assetId, taxonomyId, assignments } = payload as {
+        assetId: string;
+        taxonomyId: string;
+        assignments: Record<string, unknown>[];
+      };
+      url += `/${encodeURIComponent(assetId)}/taxonomy/${encodeURIComponent(taxonomyId)}`;
+      body = JSON.stringify(assignments);
       break;
     }
     case "remove_asset_taxonomy_assignment": {

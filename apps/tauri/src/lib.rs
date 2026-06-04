@@ -412,6 +412,8 @@ pub fn run() {
             commands::activity::update_activity,
             commands::activity::save_activities,
             commands::activity::delete_activity,
+            commands::activity::get_transfer_pair_for_activity,
+            commands::activity::save_internal_transfer_pair,
             commands::activity::link_transfer_activities,
             commands::activity::unlink_transfer_activities,
             commands::activity::check_activities_import,
@@ -583,6 +585,7 @@ pub fn run() {
             commands::taxonomy::export_taxonomy_json,
             commands::taxonomy::get_asset_taxonomy_assignments,
             commands::taxonomy::assign_asset_to_category,
+            commands::taxonomy::replace_asset_taxonomy_assignments,
             commands::taxonomy::remove_asset_taxonomy_assignment,
             // Taxonomy migration commands
             commands::taxonomy::get_migration_status,

@@ -232,6 +232,13 @@ export interface ActivityDetails {
   importRunId?: string;
   isUserModified?: boolean;
   metadata?: Record<string, unknown>;
+  transferOutId?: string;
+  transferInId?: string;
+  counterpartActivityId?: string;
+  counterpartAccountId?: string;
+  counterpartAmount?: string | null;
+  counterpartCurrency?: string | null;
+  counterpartFxRate?: string | null;
   subRows?: ActivityDetails[];
 }
 
@@ -327,6 +334,27 @@ export interface ActivityBulkMutationResult {
   deleted: Activity[];
   createdMappings: ActivityBulkIdentifierMapping[];
   errors: ActivityBulkMutationError[];
+}
+
+export interface InternalTransferPairRequest {
+  transferOutId?: string;
+  transferInId?: string;
+  sourceGroupId?: string;
+  fromAccountId: string;
+  toAccountId: string;
+  activityDate: string | Date;
+  sourceAmount: string | number;
+  destinationAmount: string | number;
+  sourceCurrency: string;
+  destinationCurrency: string;
+  fxRate?: string | number | null;
+  notes?: string | null;
+  transferMode?: "cash";
+}
+
+export interface InternalTransferPairResponse {
+  transferOut: Activity;
+  transferIn: Activity;
 }
 export type ActivityImport = z.infer<typeof importActivitySchema>;
 export type ImportMappingData = z.infer<typeof importMappingSchema>;
@@ -2408,7 +2436,11 @@ export interface DriftHoldingsReport {
   rows: DriftHoldingRow[];
 }
 
-export type RebalanceWarningKind = "missing_quote" | "no_buy_candidate" | "whole_share_residue";
+export type RebalanceWarningKind =
+  | "missing_quote"
+  | "no_buy_candidate"
+  | "unclassified_asset"
+  | "partial_classification";
 
 export interface RebalanceWarning {
   kind: RebalanceWarningKind;
@@ -2438,4 +2470,5 @@ export interface RebalancePlan {
   maxDriftBpsAfter: number;
   trades: SuggestedManualTrade[];
   warnings: RebalanceWarning[];
+  afterBpsByCategory: Record<string, number>;
 }
