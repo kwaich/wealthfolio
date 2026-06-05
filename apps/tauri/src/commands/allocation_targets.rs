@@ -7,7 +7,7 @@ use wealthfolio_core::{
     portfolio::allocation_targets::{
         AllocationTarget, AllocationTargetWeight, CalculateRebalancePlanInput, DriftReport,
         NewAllocationTarget, NewAllocationTargetWeight, RebalancePlan, SaveAllocationTargetResult,
-        ScopeType,
+        ScenarioMode, ScopeType,
     },
     portfolios::AccountScope,
 };
@@ -211,6 +211,7 @@ fn resolve_rebalance_input(
     state: &Arc<ServiceContext>,
     target_id: String,
     available_cash: Decimal,
+    scenario_mode: ScenarioMode,
     filter: AccountScopeInput,
 ) -> Result<CalculateRebalancePlanInput, String> {
     let filter = filter.into_account_filter()?;
@@ -221,12 +222,17 @@ fn resolve_rebalance_input(
         &base_currency,
     )
     .map_err(|e| e.to_string())?;
+    // Scope cash/holdings to the same accounts the holdings view uses (excludes
+    // non-Holdings accounts like credit cards), so tracked cash matches what the
+    // frontend reads from `get_holdings`.
+    let account_ids = holdings_account_ids(state, &resolved.account_ids)?;
     Ok(CalculateRebalancePlanInput {
         target_id,
         available_cash,
-        account_ids: resolved.account_ids,
+        account_ids,
         base_currency,
         aggregated_account_id: resolved.scope_id,
+        scenario_mode,
     })
 }
 
@@ -235,9 +241,16 @@ pub async fn calculate_rebalance_plan(
     state: State<'_, Arc<ServiceContext>>,
     target_id: String,
     available_cash: Decimal,
+    scenario_mode: Option<ScenarioMode>,
     filter: AccountScopeInput,
 ) -> Result<RebalancePlan, String> {
-    let input = resolve_rebalance_input(&state, target_id, available_cash, filter)?;
+    let input = resolve_rebalance_input(
+        &state,
+        target_id,
+        available_cash,
+        scenario_mode.unwrap_or_default(),
+        filter,
+    )?;
     state
         .rebalance_service()
         .calculate_plan(input)

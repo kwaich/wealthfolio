@@ -1,9 +1,10 @@
 use diesel::prelude::*;
+use serde::{Deserialize, Serialize};
 use wealthfolio_core::portfolio::allocation_targets::{
     AllocationTarget, AllocationTargetWeight, RebalanceGoal, ScopeType, TriggerType,
 };
 
-#[derive(Debug, Clone, Queryable, Insertable, AsChangeset)]
+#[derive(Debug, Clone, Queryable, Insertable, AsChangeset, Serialize, Deserialize)]
 #[diesel(table_name = crate::schema::allocation_targets)]
 pub struct AllocationTargetDB {
     pub id: String,
@@ -16,6 +17,7 @@ pub struct AllocationTargetDB {
     pub rebalance_goal: String,
     pub min_trade_amount: String,
     pub whole_shares_only: i32,
+    pub allow_sells: i32,
     pub created_at: String,
     pub updated_at: String,
     pub archived_at: Option<String>,
@@ -34,6 +36,7 @@ impl From<AllocationTarget> for AllocationTargetDB {
             rebalance_goal: target.rebalance_goal.as_str().to_string(),
             min_trade_amount: target.min_trade_amount,
             whole_shares_only: target.whole_shares_only as i32,
+            allow_sells: target.allow_sells as i32,
             created_at: target.created_at,
             updated_at: target.updated_at,
             archived_at: target.archived_at,
@@ -55,6 +58,7 @@ impl TryFrom<AllocationTargetDB> for AllocationTarget {
             rebalance_goal: RebalanceGoal::try_from(db.rebalance_goal.as_str())?,
             min_trade_amount: db.min_trade_amount,
             whole_shares_only: db.whole_shares_only != 0,
+            allow_sells: db.allow_sells != 0,
             created_at: db.created_at,
             updated_at: db.updated_at,
             archived_at: db.archived_at,
@@ -62,7 +66,7 @@ impl TryFrom<AllocationTargetDB> for AllocationTarget {
     }
 }
 
-#[derive(Debug, Clone, Queryable, Insertable, AsChangeset)]
+#[derive(Debug, Clone, Queryable, Insertable, AsChangeset, Serialize, Deserialize)]
 #[diesel(table_name = crate::schema::allocation_target_weights)]
 pub struct AllocationTargetWeightDB {
     pub id: String,
