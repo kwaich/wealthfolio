@@ -41,8 +41,8 @@ export function AmountInput<TFieldValues extends FieldValues = FieldValues>({
       control={control}
       name={name}
       render={({ field }) => (
-        <FormItem>
-          <div className="flex items-center gap-1.5">
+        <FormItem className="min-w-0">
+          <div className="flex min-w-0 items-center gap-1.5">
             <FormLabel>{label}</FormLabel>
             {labelHelpText && (
               <Tooltip>
@@ -61,10 +61,10 @@ export function AmountInput<TFieldValues extends FieldValues = FieldValues>({
           </div>
           <FormControl>
             {currency ? (
-              <InputGroup className="bg-input-bg h-input-height shadow-xs rounded-md">
+              <InputGroup className="bg-input-bg h-input-height shadow-xs min-w-0 rounded-md">
                 <MoneyInput
                   data-slot="input-group-control"
-                  className="aria-invalid:ring-0 flex-1 rounded-none border-0 bg-transparent shadow-none ring-0 focus-visible:ring-0"
+                  className="aria-invalid:ring-0 min-w-0 flex-1 rounded-none border-0 bg-transparent shadow-none ring-0 focus-visible:ring-0"
                   ref={field.ref}
                   name={field.name}
                   value={field.value}
@@ -74,8 +74,8 @@ export function AmountInput<TFieldValues extends FieldValues = FieldValues>({
                   aria-label={label}
                   data-testid={`${label.toLowerCase().replace(/\s+/g, "-")}-input`}
                 />
-                <InputGroupAddon align="inline-end">
-                  <InputGroupText>{currency}</InputGroupText>
+                <InputGroupAddon align="inline-end" className="shrink-0">
+                  <InputGroupText className="shrink-0">{currency}</InputGroupText>
                 </InputGroupAddon>
               </InputGroup>
             ) : (

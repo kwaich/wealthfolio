@@ -19,4 +19,16 @@ describe("TickerAvatar", () => {
 
     expect(screen.getByTitle("CASH:CAD")).toHaveTextContent("C$");
   });
+
+  it("preserves four-character non-cash fallback labels", () => {
+    render(<TickerAvatar symbol="TEST" />);
+
+    expect(screen.getByTitle("TEST")).toHaveTextContent("TEST");
+  });
+
+  it("limits longer non-cash fallback labels to four characters", () => {
+    render(<TickerAvatar symbol="ABCDE" />);
+
+    expect(screen.getByTitle("ABCDE")).toHaveTextContent("ABCD");
+  });
 });

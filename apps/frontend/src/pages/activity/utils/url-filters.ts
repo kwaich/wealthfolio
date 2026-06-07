@@ -10,6 +10,8 @@ interface ActivityUrlFilters {
   dateTo?: string;
 }
 
+export type ActivityTab = "investments" | "spending";
+
 export function resolveActivityUrlFilters(searchParams: URLSearchParams): ActivityUrlFilters {
   const accountId = searchParams.get("account")?.trim();
   const needsReview = searchParams.get("needsReview") === "true";
@@ -31,6 +33,15 @@ export function resolveActivityUrlFilters(searchParams: URLSearchParams): Activi
     ...(dateFrom ? { dateFrom } : {}),
     ...(dateTo ? { dateTo } : {}),
   };
+}
+
+export function resolveActivityTabFromUrlFilters(
+  searchParams: URLSearchParams,
+  spendingAccountIds: readonly string[],
+): ActivityTab | undefined {
+  const accountId = searchParams.get("account")?.trim();
+  if (!accountId) return undefined;
+  return spendingAccountIds.includes(accountId) ? "spending" : "investments";
 }
 
 export function clearActivityUrlFilters(searchParams: URLSearchParams): URLSearchParams {

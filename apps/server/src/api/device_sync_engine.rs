@@ -1408,9 +1408,19 @@ pub async fn generate_snapshot_now(
         }
     }
 
+    let sync_tables = APP_SYNC_TABLES
+        .iter()
+        .map(|value| value.to_string())
+        .collect::<Vec<_>>();
+    state
+        .app_sync_repository
+        .validate_snapshot_upload_integrity(sync_tables.clone())
+        .await
+        .map_err(|e| format!("Cannot upload snapshot: {}", e))?;
+
     let sqlite_bytes = state
         .app_sync_repository
-        .export_snapshot_sqlite_image(APP_SYNC_TABLES.iter().map(|v| v.to_string()).collect())
+        .export_snapshot_sqlite_image(sync_tables)
         .await
         .map_err(|e| format!("Failed to export snapshot SQLite image: {}", e))?;
     if state

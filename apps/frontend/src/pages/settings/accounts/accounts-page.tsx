@@ -154,7 +154,11 @@ const SettingsAccountsPage = () => {
   return (
     <>
       <div className="space-y-6">
-        <SettingsHeader heading="Accounts" text=" Manage your investment and saving accounts.">
+        <SettingsHeader
+          heading="Accounts"
+          text=" Manage your investment and saving accounts."
+          actionsInline
+        >
           {/* Mobile: icon button; Desktop: full button */}
           <>
             <Button

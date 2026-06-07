@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { clearActivityUrlFilters, resolveActivityUrlFilters } from "./url-filters";
+import {
+  clearActivityUrlFilters,
+  resolveActivityTabFromUrlFilters,
+  resolveActivityUrlFilters,
+} from "./url-filters";
 
 describe("resolveActivityUrlFilters", () => {
   it("maps review links to an account pending-review filter", () => {
@@ -30,6 +34,24 @@ describe("resolveActivityUrlFilters", () => {
 
   it("ignores an empty types param", () => {
     expect(resolveActivityUrlFilters(new URLSearchParams("types="))).toEqual({});
+  });
+
+  it("maps account-filtered links to the spending tab for spending accounts", () => {
+    expect(
+      resolveActivityTabFromUrlFilters(new URLSearchParams("account=cash-1"), ["cash-1"]),
+    ).toBe("spending");
+  });
+
+  it("maps account-filtered links to the investments tab for non-spending accounts", () => {
+    expect(
+      resolveActivityTabFromUrlFilters(new URLSearchParams("account=brokerage-1"), ["cash-1"]),
+    ).toBe("investments");
+  });
+
+  it("does not choose a tab without an account filter", () => {
+    expect(
+      resolveActivityTabFromUrlFilters(new URLSearchParams("types=TRANSFER_IN"), ["cash-1"]),
+    ).toBeUndefined();
   });
 
   it("clears broker review filter params without dropping unrelated params", () => {

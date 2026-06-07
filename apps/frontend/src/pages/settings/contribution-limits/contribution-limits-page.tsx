@@ -54,7 +54,11 @@ const SettingsContributionLimitPage = () => {
   return (
     <>
       <div className="space-y-6">
-        <SettingsHeader heading="Contribution Limits" text="Manage your contribution limits.">
+        <SettingsHeader
+          heading="Contribution Limits"
+          text="Manage your contribution limits."
+          actionsInline
+        >
           <>
             <Button
               size="icon"

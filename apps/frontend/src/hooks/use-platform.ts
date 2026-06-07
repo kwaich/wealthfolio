@@ -161,24 +161,34 @@ export async function isMobileDevice(): Promise<boolean> {
   return platform.is_mobile;
 }
 
-// Viewport-based mobile detection (responsive design)
-// Initialize synchronously to avoid flash of wrong state
-const getInitialMobileViewport = () => {
+const MOBILE_VIEWPORT_BREAKPOINT = 768;
+const COMPACT_VIEWPORT_BREAKPOINT = 1024;
+
+// Viewport-based responsive detection. Initialize synchronously to avoid flash of wrong state.
+const getInitialViewportBelow = (breakpoint: number) => {
   if (typeof window === "undefined") return false;
-  return window.innerWidth < 768; // Same as Tailwind's 'md' breakpoint
+  return window.innerWidth < breakpoint;
 };
 
-export function useIsMobileViewport() {
-  const [isMobile, setIsMobile] = useState<boolean>(getInitialMobileViewport);
+function useViewportBelow(breakpoint: number) {
+  const [matches, setMatches] = useState<boolean>(() => getInitialViewportBelow(breakpoint));
 
   useEffect(() => {
     const checkViewport = () => {
-      setIsMobile(window.innerWidth < 768);
+      setMatches(window.innerWidth < breakpoint);
     };
 
     window.addEventListener("resize", checkViewport);
     return () => window.removeEventListener("resize", checkViewport);
-  }, []);
+  }, [breakpoint]);
 
-  return isMobile;
+  return matches;
+}
+
+export function useIsMobileViewport() {
+  return useViewportBelow(MOBILE_VIEWPORT_BREAKPOINT);
+}
+
+export function useIsCompactTableViewport() {
+  return useViewportBelow(COMPACT_VIEWPORT_BREAKPOINT);
 }

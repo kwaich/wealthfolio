@@ -695,7 +695,11 @@ export default function MarketDataSettingsPage() {
 
   return (
     <div className="text-foreground space-y-6">
-      <SettingsHeader heading="Market Data" text="Configure your market data providers.">
+      <SettingsHeader
+        heading="Market Data"
+        text="Configure your market data providers."
+        actionsInline
+      >
         <div className="flex items-center gap-2">
           <Button
             asChild

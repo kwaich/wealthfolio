@@ -1,7 +1,7 @@
 import { getAccounts, getTransferPairForActivity } from "@/adapters";
 import { usePersistentState } from "@/hooks/use-persistent-state";
 import { usePortfolios } from "@/hooks/use-portfolios";
-import { useIsMobileViewport } from "@/hooks/use-platform";
+import { useIsCompactTableViewport, useIsMobileViewport } from "@/hooks/use-platform";
 import { debounce } from "@/lib/debounce";
 import { ActivityType } from "@/lib/constants";
 import { QueryKeys } from "@/lib/query-keys";
@@ -33,7 +33,11 @@ import {
   SpendingTransactionsTab,
   type SpendingTransactionsTabHandle,
 } from "@/features/spending/components/spending-transactions-tab";
-import { clearActivityUrlFilters, resolveActivityUrlFilters } from "./utils/url-filters";
+import {
+  clearActivityUrlFilters,
+  resolveActivityTabFromUrlFilters,
+  resolveActivityUrlFilters,
+} from "./utils/url-filters";
 
 const ActivityPage = () => {
   const [showForm, setShowForm] = useState(false);
@@ -44,6 +48,7 @@ const ActivityPage = () => {
   const [showActionPalette, setShowActionPalette] = useState(false);
   const [showSpendingActionPalette, setShowSpendingActionPalette] = useState(false);
   const isMobileViewport = useIsMobileViewport();
+  const isCompactTableViewport = useIsCompactTableViewport();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const activityUrlFilterKey = searchParams.toString();
@@ -152,6 +157,29 @@ const ActivityPage = () => {
     }
   }, [urlTab, isSpendingSettingsLoading, isSpendingEnabled, searchParams, setSearchParams]);
 
+  useEffect(() => {
+    if (!isSpendingEnabled || isSpendingSettingsLoading) return;
+
+    const targetTab = resolveActivityTabFromUrlFilters(searchParams, spendingAccountIds);
+    if (!targetTab || urlTab === targetTab) return;
+
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.set("tab", targetTab);
+        return next;
+      },
+      { replace: true },
+    );
+  }, [
+    isSpendingEnabled,
+    isSpendingSettingsLoading,
+    searchParams,
+    setSearchParams,
+    spendingAccountIds,
+    urlTab,
+  ]);
+
   const spendingTabRef = useRef<SpendingTransactionsTabHandle | null>(null);
 
   // Debounced search handler
@@ -186,6 +214,7 @@ const ActivityPage = () => {
   const { deleteActivityMutation, duplicateActivityMutation } = useActivityMutations();
 
   const isDatagridView = viewMode === "datagrid";
+  const shouldUseDatagridView = isDatagridView && !isCompactTableViewport;
 
   // Resolve the typed scope to a flat account ID list for the activity search.
   const effectiveAccountIds = useMemo<string[] | undefined>(() => {
@@ -226,6 +255,7 @@ const ActivityPage = () => {
         value: account.id,
         label: account.name,
         currency: account.currency,
+        accountType: account.accountType,
         restrictionLevel: getActivityRestrictionLevel(account),
       }));
   }, [accounts, investmentAccounts, isSpendingEnabled, selectedActivity?.accountId]);
@@ -242,6 +272,7 @@ const ActivityPage = () => {
           value: account.id,
           label: account.name,
           currency: account.currency,
+          accountType: account.accountType,
           restrictionLevel: getActivityRestrictionLevel(account),
         })),
     [accounts],
@@ -312,7 +343,7 @@ const ActivityPage = () => {
   const tableActivities = infiniteSearch.data;
   const datagridActivities = paginatedSearch.data;
   const totalFetched = tableActivities.length;
-  const totalRowCount = isDatagridView
+  const totalRowCount = shouldUseDatagridView
     ? paginatedSearch.totalRowCount
     : infiniteSearch.totalRowCount;
 
@@ -573,13 +604,15 @@ const ActivityPage = () => {
           onStatusFilterChange={setStatusFilter}
           viewMode={viewMode}
           onViewModeChange={setViewMode}
-          totalFetched={isDatagridView ? undefined : totalFetched}
-          totalRowCount={isDatagridView ? undefined : totalRowCount}
-          isFetching={isDatagridView ? paginatedSearch.isFetching : infiniteSearch.isFetching}
+          totalFetched={shouldUseDatagridView ? undefined : totalFetched}
+          totalRowCount={shouldUseDatagridView ? undefined : totalRowCount}
+          isFetching={
+            shouldUseDatagridView ? paginatedSearch.isFetching : infiniteSearch.isFetching
+          }
         />
       )}
 
-      {isMobileViewport ? (
+      {isCompactTableViewport ? (
         <ActivityTableMobile
           activities={tableActivities}
           isCompactView={isCompactView}
@@ -590,7 +623,7 @@ const ActivityPage = () => {
           onAdd={() => handleEdit(undefined)}
           onClearFilters={clearInvestmentsFilters}
         />
-      ) : isDatagridView ? (
+      ) : shouldUseDatagridView ? (
         <ActivityDataGrid
           accounts={investmentAccounts}
           activities={datagridActivities}
@@ -620,7 +653,7 @@ const ActivityPage = () => {
         />
       )}
 
-      {!isDatagridView && (
+      {!shouldUseDatagridView && (
         <ActivityPagination
           hasMore={infiniteSearch.hasNextPage ?? false}
           onLoadMore={infiniteSearch.fetchNextPage}
@@ -706,12 +739,7 @@ const ActivityPage = () => {
 
   return (
     <>
-      <SwipablePage
-        views={views}
-        defaultView="investments"
-        persistKey="activity-page-tab"
-        title="Activity"
-      />
+      <SwipablePage views={views} defaultView="investments" persistKey="activity-page-tab" />
       {sharedModals}
     </>
   );

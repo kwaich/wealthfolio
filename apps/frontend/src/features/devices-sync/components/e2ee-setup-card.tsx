@@ -15,6 +15,7 @@ import {
 } from "@wealthfolio/ui/components/ui/card";
 import { useSyncActions, useSyncStatus } from "../hooks";
 import { SyncStates } from "../types";
+import { logSyncError, userFacingSyncErrorMessage } from "../utils/error-messages";
 
 interface E2EESetupCardProps {
   onPairingNeeded?: () => void;
@@ -27,9 +28,13 @@ export function E2EESetupCard({ onPairingNeeded }: E2EESetupCardProps) {
   const trustedDevicePreview = trustedDevices.slice(0, 3);
 
   const handleEnable = async () => {
-    const result = await enableSync.mutateAsync();
-    if (result.needsPairing) {
-      onPairingNeeded?.();
+    try {
+      const result = await enableSync.mutateAsync();
+      if (result.needsPairing) {
+        onPairingNeeded?.();
+      }
+    } catch (err) {
+      logSyncError("Enable sync failed", err);
     }
   };
 
@@ -76,11 +81,7 @@ export function E2EESetupCard({ onPairingNeeded }: E2EESetupCardProps) {
 
           {enableSync.error && (
             <Alert variant="destructive" className="mt-4">
-              <AlertDescription>
-                {enableSync.error instanceof Error
-                  ? enableSync.error.message
-                  : "Failed to enable device sync"}
-              </AlertDescription>
+              <AlertDescription>{userFacingSyncErrorMessage(enableSync.error)}</AlertDescription>
             </Alert>
           )}
 

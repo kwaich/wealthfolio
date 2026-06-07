@@ -5,6 +5,7 @@
 import { useEffect, useRef } from "react";
 import { Button } from "@wealthfolio/ui/components/ui/button";
 import { Icons } from "@wealthfolio/ui";
+import { logSyncError, userFacingSyncErrorMessage } from "../../utils/error-messages";
 
 interface PairingResultProps {
   success: boolean;
@@ -16,22 +17,7 @@ interface PairingResultProps {
 }
 
 function formatError(error: string | null | undefined): string {
-  if (!error) return "Something went wrong. Please try again.";
-  const e = error.toLowerCase();
-
-  if (e.includes("sync_source_restore_required"))
-    return "Sync needs to be restored from this device before you can connect another device.";
-  if (e.includes("snapshot") && e.includes("failed"))
-    return "Devices paired but data sync failed. Please try pairing again.";
-  if (e.includes("invalid") && e.includes("code")) return "Invalid code. Check and try again.";
-  if (e.includes("expired")) return "Session expired. Please start again.";
-  if (e.includes("cancel")) return "Pairing was canceled.";
-  if (e.includes("network") || e.includes("fetch")) return "Network error. Check your connection.";
-  if (e.includes("timeout")) return "Connection timed out.";
-  if (e.includes("not found")) return "Session not found or expired.";
-  if (e.includes("decrypt") || e.includes("authentication")) return "Security verification failed.";
-
-  return error.length > 100 ? error.slice(0, 97) + "..." : error;
+  return userFacingSyncErrorMessage(error);
 }
 
 export function PairingResult({
@@ -43,6 +29,11 @@ export function PairingResult({
   doneLabel,
 }: PairingResultProps) {
   const hasCalledDone = useRef(false);
+
+  useEffect(() => {
+    if (!error) return;
+    logSyncError("Pairing failed", error);
+  }, [error]);
 
   // Auto-close on success - call immediately
   useEffect(() => {
@@ -78,7 +69,9 @@ export function PairingResult({
       </div>
       <div className="mb-6 text-center">
         <p className="text-foreground text-base font-semibold">Connection failed</p>
-        <p className="text-muted-foreground mt-2 max-w-[240px] text-sm">{formatError(error)}</p>
+        <p className="text-muted-foreground mt-2 max-h-40 max-w-[320px] overflow-y-auto whitespace-pre-wrap break-words text-sm">
+          {formatError(error)}
+        </p>
       </div>
       <div className="flex gap-3">
         {onRetry && (

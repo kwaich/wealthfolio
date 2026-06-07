@@ -29,13 +29,13 @@ pub enum StorageError {
     SerializationError(String),
 
     #[error("Core error: {0}")]
-    CoreError(String),
+    CoreError(Error),
 }
 
 /// Convert core Error to StorageError (for write_actor transaction wrapper)
 impl From<Error> for StorageError {
     fn from(err: Error) -> Self {
-        StorageError::CoreError(err.to_string())
+        StorageError::CoreError(err)
     }
 }
 
@@ -66,10 +66,7 @@ impl From<StorageError> for Error {
             }
             StorageError::MigrationFailed(e) => Error::Database(DatabaseError::MigrationFailed(e)),
             StorageError::SerializationError(e) => Error::Database(DatabaseError::Internal(e)),
-            StorageError::CoreError(e) => {
-                // CoreError already contains a stringified core error, wrap it
-                Error::Database(DatabaseError::Internal(e))
-            }
+            StorageError::CoreError(e) => e,
         }
     }
 }

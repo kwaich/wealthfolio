@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useAccounts } from "@/hooks/use-accounts";
 import { usePortfolioMutations, usePortfolios } from "@/hooks/use-portfolios";
 import type { NewPortfolio, PortfolioWithAccounts } from "@/lib/types";
@@ -35,8 +35,15 @@ import { SettingsHeader } from "../settings-header";
 
 export default function PortfoliosPage() {
   const { data: portfolios = [], isLoading } = usePortfolios();
-  const { accounts } = useAccounts({ filterActive: false, includeArchived: false });
+  const { accounts, isLoading: isAccountsLoading } = useAccounts({
+    filterActive: false,
+    includeArchived: true,
+  });
   const { createMutation, updateMutation, deleteMutation } = usePortfolioMutations();
+  const existingAccountIds = useMemo(
+    () => new Set(accounts.map((account) => account.id)),
+    [accounts],
+  );
 
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<PortfolioWithAccounts | null>(null);
@@ -57,7 +64,7 @@ export default function PortfoliosPage() {
     deleteMutation.mutate(deleting.id, { onSuccess: () => setDeleting(null) });
   };
 
-  if (isLoading) {
+  if (isLoading || isAccountsLoading) {
     return (
       <div>
         <Skeleton className="h-12" />
@@ -69,7 +76,11 @@ export default function PortfoliosPage() {
   return (
     <>
       <div className="space-y-6">
-        <SettingsHeader heading="Portfolios" text="Create named reporting scopes across accounts.">
+        <SettingsHeader
+          heading="Portfolios"
+          text="Create named reporting scopes across accounts."
+          actionsInline
+        >
           <>
             <Button
               size="icon"
@@ -102,51 +113,75 @@ export default function PortfoliosPage() {
           </EmptyPlaceholder>
         ) : (
           <div className="divide-border bg-card divide-y rounded-md border">
-            {portfolios.map((p) => (
-              <div key={p.id} className="flex items-center justify-between p-4">
-                <div className="flex items-center gap-3">
-                  <Avatar className="h-10 w-10 rounded-lg">
-                    <AvatarFallback className="rounded-lg bg-violet-500/10">
-                      <Icons.Folder className="h-5 w-5 text-violet-500" />
-                    </AvatarFallback>
-                  </Avatar>
+            {portfolios.map((p) => {
+              const missingAccountCount = p.accountIds.filter(
+                (id) => !existingAccountIds.has(id),
+              ).length;
+              const existingAccountCount = p.accountIds.length - missingAccountCount;
 
-                  <div className="grid gap-1">
-                    <div className="font-semibold">{p.name}</div>
-                    <div className="text-muted-foreground flex items-center gap-1.5 text-sm">
-                      <span>
-                        {p.accountIds.length} account{p.accountIds.length !== 1 ? "s" : ""}
-                      </span>
-                      {p.description && (
-                        <>
-                          <span>·</span>
-                          <span className="truncate">{p.description}</span>
-                        </>
-                      )}
+              return (
+                <div key={p.id} className="flex items-center justify-between p-4">
+                  <div className="flex items-center gap-3">
+                    <Avatar className="h-10 w-10 rounded-lg">
+                      <AvatarFallback className="rounded-lg bg-violet-500/10">
+                        <Icons.Folder className="h-5 w-5 text-violet-500" />
+                      </AvatarFallback>
+                    </Avatar>
+
+                    <div className="grid gap-1">
+                      <div className="flex items-center gap-2 font-semibold">
+                        <span>{p.name}</span>
+                        {missingAccountCount > 0 && (
+                          <Icons.AlertTriangle
+                            className="text-warning h-4 w-4"
+                            aria-label="Portfolio has deleted account links"
+                          />
+                        )}
+                      </div>
+                      <div className="text-muted-foreground flex items-center gap-1.5 text-sm">
+                        <span>
+                          {existingAccountCount} account{existingAccountCount !== 1 ? "s" : ""}
+                        </span>
+                        {missingAccountCount > 0 && (
+                          <>
+                            <span>·</span>
+                            <span className="text-warning">
+                              {missingAccountCount} deleted link
+                              {missingAccountCount !== 1 ? "s" : ""}
+                            </span>
+                          </>
+                        )}
+                        {p.description && (
+                          <>
+                            <span>·</span>
+                            <span className="truncate">{p.description}</span>
+                          </>
+                        )}
+                      </div>
                     </div>
                   </div>
-                </div>
 
-                <div className="flex items-center space-x-2">
-                  <DropdownMenu>
-                    <DropdownMenuTrigger className="hover:bg-muted flex h-8 w-8 items-center justify-center rounded-md border transition-colors">
-                      <Icons.MoreVertical className="h-4 w-4" />
-                      <span className="sr-only">Open</span>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem onClick={() => openEdit(p)}>Edit</DropdownMenuItem>
-                      <DropdownMenuSeparator />
-                      <DropdownMenuItem
-                        className="text-destructive focus:text-destructive flex cursor-pointer items-center"
-                        onSelect={() => setDeleting(p)}
-                      >
-                        Delete
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
+                  <div className="flex items-center space-x-2">
+                    <DropdownMenu>
+                      <DropdownMenuTrigger className="hover:bg-muted flex h-8 w-8 items-center justify-center rounded-md border transition-colors">
+                        <Icons.MoreVertical className="h-4 w-4" />
+                        <span className="sr-only">Open</span>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem onClick={() => openEdit(p)}>Edit</DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem
+                          className="text-destructive focus:text-destructive flex cursor-pointer items-center"
+                          onSelect={() => setDeleting(p)}
+                        >
+                          Delete
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
@@ -211,9 +246,19 @@ function PortfolioDialog({
   onSave,
   isSaving,
 }: PortfolioDialogProps) {
+  const existingAccountIds = useMemo(
+    () => new Set(accountOptions.map((account) => account.id)),
+    [accountOptions],
+  );
+  const missingAccountIds = useMemo(
+    () => portfolio?.accountIds.filter((id) => !existingAccountIds.has(id)) ?? [],
+    [existingAccountIds, portfolio],
+  );
   const [name, setName] = useState(portfolio?.name ?? "");
   const [description, setDescription] = useState(portfolio?.description ?? "");
-  const [selectedIds, setSelectedIds] = useState<string[]>(portfolio?.accountIds ?? []);
+  const [selectedIds, setSelectedIds] = useState<string[]>(
+    portfolio?.accountIds.filter((id) => existingAccountIds.has(id)) ?? [],
+  );
 
   const toggle = (id: string) =>
     setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
@@ -282,6 +327,21 @@ function PortfolioDialog({
             </div>
             {selectedIds.length === 0 && (
               <p className="text-destructive text-xs">Select at least one account.</p>
+            )}
+            {missingAccountIds.length > 0 && (
+              <div className="border-warning/30 bg-warning/10 text-warning rounded-md border p-3 text-xs">
+                <div className="mb-2 flex items-center gap-2 font-medium">
+                  <Icons.AlertTriangle className="h-3.5 w-3.5" />
+                  Saving will remove deleted account links.
+                </div>
+                <div className="text-muted-foreground space-y-1">
+                  {missingAccountIds.map((id) => (
+                    <div key={id} className="break-all">
+                      Deleted account: {id}
+                    </div>
+                  ))}
+                </div>
+              </div>
             )}
           </div>
         </div>

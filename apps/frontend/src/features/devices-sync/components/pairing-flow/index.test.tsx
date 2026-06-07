@@ -81,6 +81,95 @@ describe("PairingFlow", () => {
     ).toBeInTheDocument();
   });
 
+  it("hides technical pairing error details from users", () => {
+    const error =
+      "Database operation failed: Internal database error: Database operation failed: Foreign key violation: spending_activity_events.activity_id references missing broker activity broker-local-id-1234567890";
+    hookMocks.useSyncStatus.mockReturnValue({
+      device: { trustState: "trusted" },
+    });
+    hookMocks.usePairingIssuer.mockReturnValue({
+      step: "error",
+      error,
+      needsRestore: false,
+      sas: null,
+      pairingCode: null,
+      expiresAt: null,
+      startPairing: vi.fn(),
+      confirmSAS: vi.fn(),
+      rejectSAS: vi.fn(),
+      cancel: vi.fn(),
+      reset: vi.fn(),
+    });
+    hookMocks.usePairingClaimer.mockReturnValue({});
+
+    render(<PairingFlow />);
+
+    expect(screen.queryByText(error)).not.toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Sync could not finish. Please try again. If this keeps happening, check the app logs.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("shows portfolio repair guidance without database details", () => {
+    const error =
+      'Cannot upload snapshot: Database operation failed: Foreign key violation: Portfolio "Retirement" contains a deleted account link (account_id=acc-upload-missing). Open Settings > Portfolios, edit the portfolio, then save.';
+    hookMocks.useSyncStatus.mockReturnValue({
+      device: { trustState: "trusted" },
+    });
+    hookMocks.usePairingIssuer.mockReturnValue({
+      step: "error",
+      error,
+      needsRestore: false,
+      sas: null,
+      pairingCode: null,
+      expiresAt: null,
+      startPairing: vi.fn(),
+      confirmSAS: vi.fn(),
+      rejectSAS: vi.fn(),
+      cancel: vi.fn(),
+      reset: vi.fn(),
+    });
+    hookMocks.usePairingClaimer.mockReturnValue({});
+
+    render(<PairingFlow />);
+
+    expect(screen.queryByText(error)).not.toBeInTheDocument();
+    expect(screen.queryByText(/account_id=acc-upload-missing/)).not.toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'Portfolio "Retirement" contains a deleted account link. Open Settings > Portfolios, edit the portfolio, then save.',
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("does not render unrecognized technical pairing errors", () => {
+    const error = "No device ID configured";
+    hookMocks.useSyncStatus.mockReturnValue({
+      device: { trustState: "trusted" },
+    });
+    hookMocks.usePairingIssuer.mockReturnValue({
+      step: "error",
+      error,
+      needsRestore: false,
+      sas: null,
+      pairingCode: null,
+      expiresAt: null,
+      startPairing: vi.fn(),
+      confirmSAS: vi.fn(),
+      rejectSAS: vi.fn(),
+      cancel: vi.fn(),
+      reset: vi.fn(),
+    });
+    hookMocks.usePairingClaimer.mockReturnValue({});
+
+    render(<PairingFlow />);
+
+    expect(screen.queryByText(error)).not.toBeInTheDocument();
+    expect(screen.getByText("Something went wrong. Please try again.")).toBeInTheDocument();
+  });
+
   it("shows claimer overwrite prompt and approves overwrite once", () => {
     const approveOverwrite = vi.fn();
     hookMocks.useSyncStatus.mockReturnValue({

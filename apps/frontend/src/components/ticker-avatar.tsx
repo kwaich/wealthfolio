@@ -1,3 +1,5 @@
+import { useEffect, useState } from "react";
+
 import { cn } from "@/lib/utils";
 import { parseOccSymbol } from "@/lib/occ-symbol";
 import { Avatar, AvatarFallback, AvatarImage } from "@wealthfolio/ui";
@@ -27,6 +29,8 @@ const getCashAvatarLabel = (symbol: string): string | null => {
   return CASH_AVATAR_LABELS[currency] ?? currency;
 };
 
+const getFallbackAvatarLabel = (symbol: string): string => symbol.slice(0, 4);
+
 export const TickerAvatar = ({
   symbol,
   className = "size-8",
@@ -44,6 +48,12 @@ export const TickerAvatar = ({
   const primaryLogoUrl = fullSymbol ? `/ticker-logos/${fullSymbol}.png` : "";
   const fallbackLogoUrl = baseSymbol ? `/ticker-logos/${baseSymbol}.png` : "";
   const cashAvatarLabel = getCashAvatarLabel(fullSymbol);
+  const fallbackAvatarLabel = baseSymbol ? getFallbackAvatarLabel(baseSymbol) : "•";
+  const [logoUrl, setLogoUrl] = useState(primaryLogoUrl);
+
+  useEffect(() => {
+    setLogoUrl(primaryLogoUrl);
+  }, [primaryLogoUrl]);
 
   if (cashAvatarLabel) {
     return (
@@ -61,16 +71,30 @@ export const TickerAvatar = ({
     <Avatar
       className={cn("bg-primary/80 dark:bg-primary/20 border-white/20 backdrop-blur-md", className)}
     >
-      <AvatarImage src={primaryLogoUrl} alt={fullSymbol} className={imageClassName} />
-      <AvatarFallback>
-        <Avatar className="bg-primary/80 dark:bg-primary/20 h-full w-full border-white/20 text-white backdrop-blur-md">
-          <AvatarImage src={fallbackLogoUrl} alt={fullSymbol} className={imageClassName} />
-          <AvatarFallback className="bg-transparent text-xs font-medium">
-            <span className="p-1" title={fullSymbol}>
-              {baseSymbol ? baseSymbol.slice(0, 4) : "•"}
-            </span>
-          </AvatarFallback>
-        </Avatar>
+      <AvatarImage
+        src={logoUrl}
+        alt={fullSymbol}
+        className={imageClassName}
+        onLoadingStatusChange={(status) => {
+          if (
+            status === "error" &&
+            logoUrl === primaryLogoUrl &&
+            fallbackLogoUrl !== primaryLogoUrl
+          ) {
+            setLogoUrl(fallbackLogoUrl);
+          }
+        }}
+      />
+      <AvatarFallback className="bg-primary/80 dark:bg-primary/20 font-medium text-white">
+        <span
+          className={cn(
+            "px-0.5 leading-none",
+            fallbackAvatarLabel.length >= 4 ? "text-[10px]" : "text-xs",
+          )}
+          title={fullSymbol}
+        >
+          {fallbackAvatarLabel}
+        </span>
       </AvatarFallback>
     </Avatar>
   );

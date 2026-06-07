@@ -22,6 +22,9 @@ use crate::schema::{
     sync_engine_state, sync_entity_metadata, sync_outbox, sync_table_state,
 };
 use crate::spending::deterministic_ids::preset_rule_deletion_id;
+use crate::sync::broker_activity_patch::{
+    apply_broker_activity_user_patch_tx, BrokerActivityUserPatchApplyOutcome,
+};
 
 use super::model::{
     SyncAppliedEventDB, SyncCursorDB, SyncDeviceConfigDB, SyncEngineStateDB, SyncEntityMetadataDB,
@@ -109,6 +112,43 @@ struct TextIdRow {
     id: String,
 }
 
+#[derive(diesel::QueryableByName)]
+struct ForeignKeyCheckRow {
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    table: String,
+    #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::BigInt>)]
+    rowid: Option<i64>,
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    parent: String,
+    #[diesel(sql_type = diesel::sql_types::Integer)]
+    fkid: i32,
+}
+
+#[derive(diesel::QueryableByName)]
+struct PortfolioAccountForeignKeyContext {
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    portfolio_id: String,
+    #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
+    portfolio_name: Option<String>,
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    account_id: String,
+}
+
+const USER_SYNCABLE_ACTIVITIES_FILTER_SQL: &str = "\
+    UPPER(COALESCE(source_system, '')) IN ('MANUAL', 'CSV') \
+    OR ((source_system IS NULL OR TRIM(source_system) = '') \
+        AND (import_run_id IS NULL OR TRIM(import_run_id) = '') \
+        AND (source_record_id IS NULL OR TRIM(source_record_id) = ''))";
+
+const ROWS_WITH_USER_SYNCABLE_ACTIVITY_FILTER_SQL: &str = "\
+    activity_id IN (
+        SELECT id FROM activities
+        WHERE UPPER(COALESCE(source_system, '')) IN ('MANUAL', 'CSV')
+           OR ((source_system IS NULL OR TRIM(source_system) = '')
+               AND (import_run_id IS NULL OR TRIM(import_run_id) = '')
+               AND (source_record_id IS NULL OR TRIM(source_record_id) = ''))
+    )";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SyncRowFilter {
     UserSyncableHoldingsSnapshots,
@@ -123,7 +163,11 @@ enum SyncRowFilter {
     UserModifiedBudgetGroups,
     UserModifiedBudgetGroupAssignments,
     UserModifiedSpendingEventTypes,
+    OverwriteRiskAccounts,
+    OverwriteRiskPlatforms,
     OverwriteRiskAssets,
+    ValidPortfolioAccounts,
+    RowsWithUserSyncableActivity,
 }
 
 impl SyncRowFilter {
@@ -136,12 +180,7 @@ impl SyncRowFilter {
             Self::UserImportRuns => {
                 "UPPER(run_type) = 'IMPORT' AND UPPER(source_system) IN ('CSV', 'MANUAL')"
             }
-            Self::UserSyncableActivities => {
-                "is_user_modified = 1 \
-                 OR UPPER(COALESCE(source_system, '')) IN ('MANUAL', 'CSV') \
-                 OR ((import_run_id IS NULL OR TRIM(import_run_id) = '') \
-                     AND (source_record_id IS NULL OR TRIM(source_record_id) = ''))"
-            }
+            Self::UserSyncableActivities => USER_SYNCABLE_ACTIVITIES_FILTER_SQL,
             Self::UserImportTemplates => "UPPER(scope) != 'SYSTEM'",
             Self::SpendingSettings => "setting_key IN ('spending.enabled', 'spending.account_ids')",
             Self::SpendingSettingsOverwriteRisk => {
@@ -157,9 +196,17 @@ impl SyncRowFilter {
                 "is_system = 0 OR updated_at != created_at"
             }
             Self::UserModifiedSpendingEventTypes => "key IS NULL OR updated_at != created_at",
+            Self::OverwriteRiskAccounts => {
+                "provider_account_id IS NULL OR TRIM(provider_account_id) = ''"
+            }
+            Self::OverwriteRiskPlatforms => "external_id IS NULL OR TRIM(external_id) = ''",
             Self::OverwriteRiskAssets => {
                 "kind IN ('PROPERTY', 'VEHICLE', 'COLLECTIBLE', 'PRECIOUS_METAL', 'PRIVATE_EQUITY', 'LIABILITY', 'OTHER')"
             }
+            Self::ValidPortfolioAccounts => {
+                "account_id IN (SELECT id FROM accounts) AND portfolio_id IN (SELECT id FROM portfolios)"
+            }
+            Self::RowsWithUserSyncableActivity => ROWS_WITH_USER_SYNCABLE_ACTIVITY_FILTER_SQL,
         }
     }
 }
@@ -170,9 +217,7 @@ struct SyncTableFilterSpec {
 }
 
 const OVERWRITE_RISK_UNFILTERED_TABLES: &[&str] = &[
-    "platforms",
     "market_data_custom_providers",
-    "accounts",
     "goals",
     "goal_plans",
     "ai_threads",
@@ -194,6 +239,14 @@ const OVERWRITE_RISK_UNFILTERED_TABLES: &[&str] = &[
 ];
 
 const OVERWRITE_RISK_FILTERED_TABLES: &[SyncTableFilterSpec] = &[
+    SyncTableFilterSpec {
+        table: "platforms",
+        filter: SyncRowFilter::OverwriteRiskPlatforms,
+    },
+    SyncTableFilterSpec {
+        table: "accounts",
+        filter: SyncRowFilter::OverwriteRiskAccounts,
+    },
     SyncTableFilterSpec {
         table: "assets",
         filter: SyncRowFilter::OverwriteRiskAssets,
@@ -563,7 +616,7 @@ fn normalize_outbox_payload(payload: serde_json::Value) -> Result<serde_json::Va
 /// During restore: only rows matching the filter are deleted before importing snapshot data,
 /// so that unfiltered rows (e.g. system taxonomies) are preserved.
 /// Tables not listed here are exported/restored unfiltered.
-const SYNC_TABLE_SNAPSHOT_FILTERS: &[SyncTableFilterSpec] = &[
+const SYNC_TABLE_SNAPSHOT_COPY_FILTERS: &[SyncTableFilterSpec] = &[
     SyncTableFilterSpec {
         table: "holdings_snapshots",
         filter: SyncRowFilter::UserSyncableHoldingsSnapshots,
@@ -594,15 +647,75 @@ const SYNC_TABLE_SNAPSHOT_FILTERS: &[SyncTableFilterSpec] = &[
         table: "activities",
         filter: SyncRowFilter::UserSyncableActivities,
     },
+    SyncTableFilterSpec {
+        table: "activity_taxonomy_assignments",
+        filter: SyncRowFilter::RowsWithUserSyncableActivity,
+    },
+    SyncTableFilterSpec {
+        table: "spending_activity_events",
+        filter: SyncRowFilter::RowsWithUserSyncableActivity,
+    },
     // Only the spending module's app_settings keys participate in sync.
+    SyncTableFilterSpec {
+        table: "app_settings",
+        filter: SyncRowFilter::SpendingSettings,
+    },
+    // Drop legacy orphan membership rows at snapshot boundaries. Portfolio
+    // settings remains the user-facing repair surface for the source DB.
+    SyncTableFilterSpec {
+        table: "portfolio_accounts",
+        filter: SyncRowFilter::ValidPortfolioAccounts,
+    },
+];
+
+const SYNC_TABLE_SNAPSHOT_CLEAR_FILTERS: &[SyncTableFilterSpec] = &[
+    SyncTableFilterSpec {
+        table: "holdings_snapshots",
+        filter: SyncRowFilter::UserSyncableHoldingsSnapshots,
+    },
+    SyncTableFilterSpec {
+        table: "quotes",
+        filter: SyncRowFilter::ManualQuotes,
+    },
+    SyncTableFilterSpec {
+        table: "taxonomies",
+        filter: SyncRowFilter::UserTaxonomies,
+    },
+    SyncTableFilterSpec {
+        table: "taxonomy_categories",
+        filter: SyncRowFilter::SyncableTaxonomyCategories,
+    },
+    SyncTableFilterSpec {
+        table: "import_runs",
+        filter: SyncRowFilter::UserImportRuns,
+    },
+    SyncTableFilterSpec {
+        table: "activities",
+        filter: SyncRowFilter::UserSyncableActivities,
+    },
+    SyncTableFilterSpec {
+        table: "activity_taxonomy_assignments",
+        filter: SyncRowFilter::RowsWithUserSyncableActivity,
+    },
+    SyncTableFilterSpec {
+        table: "spending_activity_events",
+        filter: SyncRowFilter::RowsWithUserSyncableActivity,
+    },
     SyncTableFilterSpec {
         table: "app_settings",
         filter: SyncRowFilter::SpendingSettings,
     },
 ];
 
-fn snapshot_filter_for_table(table: &str) -> Option<&'static str> {
-    SYNC_TABLE_SNAPSHOT_FILTERS
+fn snapshot_copy_filter_for_table(table: &str) -> Option<&'static str> {
+    SYNC_TABLE_SNAPSHOT_COPY_FILTERS
+        .iter()
+        .find(|spec| spec.table == table)
+        .map(|spec| spec.filter.sql())
+}
+
+fn snapshot_clear_filter_for_table(table: &str) -> Option<&'static str> {
+    SYNC_TABLE_SNAPSHOT_CLEAR_FILTERS
         .iter()
         .find(|spec| spec.table == table)
         .map(|spec| spec.filter.sql())
@@ -636,6 +749,8 @@ fn entity_storage_mapping(entity: &SyncEntity) -> Option<(&'static str, &'static
         SyncEntity::Quote => Some(("quotes", "id")),
         SyncEntity::AssetTaxonomyAssignment => Some(("asset_taxonomy_assignments", "id")),
         SyncEntity::Activity => Some(("activities", "id")),
+        // Broker activity user patches update an existing local broker row by provider identity.
+        SyncEntity::BrokerActivityUserPatch => None,
         SyncEntity::ActivityImportProfile => Some(("import_account_templates", "id")),
         SyncEntity::ImportTemplate => Some(("import_templates", "id")),
         SyncEntity::Goal => Some(("goals", "id")),
@@ -671,6 +786,154 @@ fn entity_storage_mapping(entity: &SyncEntity) -> Option<(&'static str, &'static
     }
 }
 
+fn replay_apply_error(
+    entity: SyncEntity,
+    entity_id: &str,
+    op: SyncOperation,
+    event_id: &str,
+    seq: i64,
+    err: Error,
+) -> Error {
+    let table_context = entity_storage_mapping(&entity)
+        .map(|(table, pk)| format!(" table={table} pk={pk}"))
+        .unwrap_or_default();
+    let message = format!(
+        "Replay apply failed for entity={entity:?}{table_context} entity_id={entity_id} op={op:?} event_id={event_id} seq={seq}: {err}"
+    );
+    if is_foreign_key_error_message(&message) {
+        Error::Database(DatabaseError::ForeignKeyViolation(message))
+    } else {
+        Error::Database(DatabaseError::Internal(message))
+    }
+}
+
+fn is_foreign_key_error_message(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    lower.contains("foreign key")
+}
+
+fn collect_foreign_key_violations_tx<'a, I>(
+    conn: &mut SqliteConnection,
+    tables: I,
+) -> Result<Vec<ForeignKeyCheckRow>>
+where
+    I: IntoIterator<Item = &'a str>,
+{
+    let mut rows = Vec::new();
+    for table in tables {
+        let sql = format!("PRAGMA foreign_key_check({})", quote_identifier(table));
+        rows.extend(
+            diesel::sql_query(sql)
+                .load::<ForeignKeyCheckRow>(conn)
+                .map_err(StorageError::from)?,
+        );
+    }
+    Ok(rows)
+}
+
+fn foreign_key_violation_details(rows: &[ForeignKeyCheckRow]) -> String {
+    let details = rows
+        .iter()
+        .take(10)
+        .map(|row| {
+            format!(
+                "table={} rowid={} parent={} fkid={}",
+                row.table,
+                row.rowid
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "NULL".to_string()),
+                row.parent,
+                row.fkid
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("; ");
+    let suffix = if rows.len() > 10 {
+        format!("; +{} more", rows.len() - 10)
+    } else {
+        String::new()
+    };
+
+    format!("{details}{suffix}")
+}
+
+fn ensure_no_foreign_key_violations_tx<'a, I>(conn: &mut SqliteConnection, tables: I) -> Result<()>
+where
+    I: IntoIterator<Item = &'a str>,
+{
+    let rows = collect_foreign_key_violations_tx(conn, tables)?;
+    if rows.is_empty() {
+        return Ok(());
+    }
+
+    Err(Error::Database(DatabaseError::ForeignKeyViolation(
+        format!(
+            "Replay batch foreign key check failed: {}",
+            foreign_key_violation_details(&rows)
+        ),
+    )))
+}
+
+fn portfolio_account_foreign_key_message_tx(
+    conn: &mut SqliteConnection,
+    row: &ForeignKeyCheckRow,
+) -> Option<String> {
+    if row.table != "portfolio_accounts" || row.parent != "accounts" {
+        return None;
+    }
+
+    let rowid = row.rowid?;
+    let sql = format!(
+        "SELECT pa.portfolio_id, p.name AS portfolio_name, pa.account_id \
+         FROM portfolio_accounts pa \
+         LEFT JOIN portfolios p ON p.id = pa.portfolio_id \
+         WHERE pa.rowid = {}",
+        rowid
+    );
+    let context = diesel::sql_query(sql)
+        .get_result::<PortfolioAccountForeignKeyContext>(conn)
+        .ok()?;
+    let portfolio_name = context
+        .portfolio_name
+        .as_deref()
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or(context.portfolio_id.as_str());
+
+    Some(format!(
+        "Portfolio \"{}\" contains a deleted account link (account_id={}). Open Settings > Portfolios, edit the portfolio, then save.",
+        portfolio_name, context.account_id
+    ))
+}
+
+fn snapshot_upload_integrity_error_tx(
+    conn: &mut SqliteConnection,
+    rows: &[ForeignKeyCheckRow],
+) -> Error {
+    let mut portfolio_messages = Vec::new();
+    for row in rows {
+        if let Some(message) = portfolio_account_foreign_key_message_tx(conn, row) {
+            if !portfolio_messages.contains(&message) {
+                portfolio_messages.push(message);
+            }
+        }
+    }
+
+    if !portfolio_messages.is_empty() {
+        return Error::Database(DatabaseError::ForeignKeyViolation(
+            portfolio_messages.join(" "),
+        ));
+    }
+
+    Error::Database(DatabaseError::ForeignKeyViolation(format!(
+        "Local data has foreign key violations. Fix data health issues before syncing: {}",
+        foreign_key_violation_details(rows)
+    )))
+}
+
+fn should_ignore_snapshot_upload_fk_violation(row: &ForeignKeyCheckRow) -> bool {
+    row.table == "portfolio_accounts" && row.parent == "portfolios"
+}
+
 fn json_value_to_sql_literal(value: &serde_json::Value) -> String {
     match value {
         serde_json::Value::Null => "NULL".to_string(),
@@ -689,6 +952,16 @@ fn json_value_to_sql_literal(value: &serde_json::Value) -> String {
                 escape_sqlite_str(&serde_json::to_string(value).unwrap_or_default())
             )
         }
+    }
+}
+
+fn snapshot_restore_error(table: &str, err: StorageError) -> Error {
+    let error: Error = err.into();
+    let message = format!("Snapshot restore failed for table={table}: {error}");
+    if is_foreign_key_error_message(&message) {
+        Error::Database(DatabaseError::ForeignKeyViolation(message))
+    } else {
+        Error::Database(DatabaseError::Internal(message))
     }
 }
 
@@ -1447,6 +1720,7 @@ fn apply_remote_event_lww_tx(
         None => true,
     };
 
+    let mut record_applied_event = true;
     if should_apply {
         let mut applied_entity_change = true;
         if entity == SyncEntity::CustomTaxonomy {
@@ -1459,6 +1733,31 @@ fn apply_remote_event_lww_tx(
                 &client_timestamp_value,
                 seq_value,
             )?;
+        } else if entity == SyncEntity::BrokerActivityUserPatch {
+            match op {
+                SyncOperation::Create | SyncOperation::Update => {
+                    match apply_broker_activity_user_patch_tx(
+                        conn,
+                        &entity_id_value,
+                        &event_id_value,
+                        &payload_json,
+                        &client_timestamp_value,
+                        seq_value,
+                        op,
+                    )? {
+                        BrokerActivityUserPatchApplyOutcome::Applied => {
+                            mark_table_incremental_applied_tx(conn, "activities")?;
+                        }
+                        BrokerActivityUserPatchApplyOutcome::MissingTarget => {
+                            applied_entity_change = false;
+                            record_applied_event = false;
+                        }
+                    }
+                }
+                SyncOperation::Delete => {
+                    applied_entity_change = false;
+                }
+            }
         } else if entity == SyncEntity::SpendingSetting
             && !is_syncable_spending_setting_key(&entity_id_value)
         {
@@ -1598,18 +1897,20 @@ fn apply_remote_event_lww_tx(
         }
     }
 
-    diesel::insert_into(sync_applied_events::table)
-        .values(SyncAppliedEventDB {
-            event_id: event_id_value,
-            seq: seq_value,
-            entity: entity_db,
-            entity_id: entity_id_value,
-            applied_at: Utc::now().to_rfc3339(),
-        })
-        .on_conflict(sync_applied_events::event_id)
-        .do_nothing()
-        .execute(conn)
-        .map_err(StorageError::from)?;
+    if record_applied_event {
+        diesel::insert_into(sync_applied_events::table)
+            .values(SyncAppliedEventDB {
+                event_id: event_id_value,
+                seq: seq_value,
+                entity: entity_db,
+                entity_id: entity_id_value,
+                applied_at: Utc::now().to_rfc3339(),
+            })
+            .on_conflict(sync_applied_events::event_id)
+            .do_nothing()
+            .execute(conn)
+            .map_err(StorageError::from)?;
+    }
 
     Ok(should_apply)
 }
@@ -1712,7 +2013,7 @@ impl AppSyncRepository {
 
         for table in APP_SYNC_TABLES {
             let table_ident = quote_identifier(table);
-            let count_sql = match snapshot_filter_for_table(table) {
+            let count_sql = match snapshot_copy_filter_for_table(table) {
                 Some(where_clause) => {
                     format!("SELECT COUNT(*) AS count FROM {table_ident} WHERE {where_clause}")
                 }
@@ -2137,13 +2438,23 @@ impl AppSyncRepository {
                 apply_remote_event_lww_tx(
                     conn,
                     entity,
-                    entity_id_value,
+                    entity_id_value.clone(),
                     op,
-                    event_id_value,
+                    event_id_value.clone(),
                     client_timestamp_value,
                     seq_value,
                     payload_json,
                 )
+                .map_err(|err| {
+                    replay_apply_error(
+                        entity,
+                        &entity_id_value,
+                        op,
+                        &event_id_value,
+                        seq_value,
+                        err,
+                    )
+                })
             })
             .await
     }
@@ -2177,6 +2488,15 @@ impl AppSyncRepository {
                     .map_err(StorageError::from)?;
 
                 let result = (|| -> Result<usize> {
+                    let mut fk_check_tables = Vec::new();
+                    for (entity, ..) in &events {
+                        if let Some((table, _)) = entity_storage_mapping(entity) {
+                            if !fk_check_tables.contains(&table) {
+                                fk_check_tables.push(table);
+                            }
+                        }
+                    }
+
                     let mut applied = 0usize;
                     for (entity, entity_id, op, event_id, client_timestamp, seq, payload) in events
                     {
@@ -2191,15 +2511,12 @@ impl AppSyncRepository {
                             payload,
                         )
                         .map_err(|err| {
-                            Error::Database(DatabaseError::Internal(format!(
-                                "Replay apply failed for entity={:?} entity_id={} op={:?} event_id={} seq={}: {}",
-                                entity, entity_id, op, event_id, seq, err
-                            )))
-                        })?
-                        {
+                            replay_apply_error(entity, &entity_id, op, &event_id, seq, err)
+                        })? {
                             applied += 1;
                         }
                     }
+                    ensure_no_foreign_key_violations_tx(conn, fk_check_tables.iter().copied())?;
                     Ok(applied)
                 })();
 
@@ -2523,6 +2840,34 @@ impl AppSyncRepository {
             .await
     }
 
+    pub async fn validate_snapshot_upload_integrity(&self, tables: Vec<String>) -> Result<()> {
+        let pool = Arc::clone(&self.pool);
+        tokio::task::spawn_blocking(move || -> Result<()> {
+            let mut conn = get_connection(&pool)?;
+            let table_set = canonical_sync_table_set(tables)?;
+            let rows = collect_foreign_key_violations_tx(
+                &mut conn,
+                table_set.iter().map(|table| table.as_str()),
+            )?;
+            let rows = rows
+                .into_iter()
+                .filter(|row| !should_ignore_snapshot_upload_fk_violation(row))
+                .collect::<Vec<_>>();
+            if rows.is_empty() {
+                return Ok(());
+            }
+
+            Err(snapshot_upload_integrity_error_tx(&mut conn, &rows))
+        })
+        .await
+        .map_err(|e| {
+            Error::Database(DatabaseError::Internal(format!(
+                "Snapshot upload integrity worker failed: {}",
+                e
+            )))
+        })?
+    }
+
     pub async fn export_snapshot_sqlite_image(&self, tables: Vec<String>) -> Result<Vec<u8>> {
         let pool = Arc::clone(&self.pool);
         tokio::task::spawn_blocking(move || -> Result<Vec<u8>> {
@@ -2552,7 +2897,7 @@ impl AppSyncRepository {
                 let run_export = (|| -> Result<()> {
                     for table in &table_set {
                         let table_ident = quote_identifier(table);
-                        let filter = snapshot_filter_for_table(table);
+                        let filter = snapshot_copy_filter_for_table(table);
                         let copy_sql = match filter {
                             Some(where_clause) => format!(
                                 "CREATE TABLE {snapshot_alias}.{table_ident} AS SELECT * FROM main.{table_ident} WHERE {where_clause}"
@@ -2684,7 +3029,7 @@ impl AppSyncRepository {
                             .map(|column| quote_identifier(column))
                             .collect::<Vec<_>>()
                             .join(", ");
-                        let copy_sql = match snapshot_filter_for_table(table) {
+                        let copy_sql = match snapshot_copy_filter_for_table(table) {
                             Some(where_clause) => format!(
                                 "INSERT INTO {table_ident} ({columns_sql}) SELECT {columns_sql} FROM {alias_ident}.{table_ident} WHERE {where_clause}"
                             ),
@@ -2694,7 +3039,7 @@ impl AppSyncRepository {
                         };
                         // For filtered tables, only delete rows matching the filter so
                         // unfiltered rows (e.g. system taxonomies) are preserved.
-                        let clear_sql = match snapshot_filter_for_table(table) {
+                        let clear_sql = match snapshot_clear_filter_for_table(table) {
                             Some(where_clause) => {
                                 format!("DELETE FROM {table_ident} WHERE {where_clause}")
                             }
@@ -2719,7 +3064,7 @@ impl AppSyncRepository {
                     for plan in &restore_plans {
                         diesel::sql_query(&plan.copy_sql)
                             .execute(conn)
-                            .map_err(StorageError::from)?;
+                            .map_err(|err| snapshot_restore_error(&plan.table, err.into()))?;
 
                         let state_row = SyncTableStateDB {
                             table_name: plan.table.clone(),
@@ -2738,6 +3083,10 @@ impl AppSyncRepository {
                             .execute(conn)
                             .map_err(StorageError::from)?;
                     }
+                    ensure_no_foreign_key_violations_tx(
+                        conn,
+                        restore_plans.iter().map(|plan| plan.table.as_str()),
+                    )?;
 
                     diesel::insert_into(sync_cursor::table)
                         .values(SyncCursorDB {
@@ -2816,14 +3165,21 @@ mod tests {
     use std::collections::BTreeSet;
     use tempfile::tempdir;
 
+    use crate::activities::ActivityRepository;
     use crate::db::{create_pool, get_connection, init, run_migrations, write_actor::spawn_writer};
     use crate::goals::GoalRepository;
     use crate::schema::{
-        accounts, app_settings, assets, goals, goals_allocation, import_account_templates,
-        import_templates, platforms, spending_preset_rule_deletions, sync_applied_events,
-        sync_device_config, sync_entity_metadata, sync_outbox, taxonomies, taxonomy_categories,
+        accounts, activities, app_settings, assets, goals, goals_allocation,
+        import_account_templates, import_templates, platforms, spending_preset_rule_deletions,
+        sync_applied_events, sync_device_config, sync_entity_metadata, sync_outbox, taxonomies,
+        taxonomy_categories,
+    };
+    use crate::sync::broker_activity_patch::{
+        broker_activity_identity, broker_activity_user_patch_entity_id,
+        clear_pending_broker_activity_user_patches,
     };
     use wealthfolio_core::accounts::account_types;
+    use wealthfolio_core::activities::{ActivityRepositoryTrait, ActivityUpsert};
     use wealthfolio_core::goals::{GoalRepositoryTrait, GoalSummaryUpdate};
 
     fn setup_db() -> (
@@ -2847,7 +3203,7 @@ mod tests {
 
     #[test]
     fn taxonomy_category_snapshot_filter_includes_user_category_taxonomies() {
-        let filter = snapshot_filter_for_table("taxonomy_categories").expect("filter");
+        let filter = snapshot_copy_filter_for_table("taxonomy_categories").expect("filter");
 
         assert!(filter.contains("custom_groups"));
         assert!(filter.contains("spending_categories"));
@@ -3000,6 +3356,265 @@ mod tests {
         Ok(())
     }
 
+    #[tokio::test]
+    async fn broker_activity_user_patch_updates_only_overlay_fields() {
+        let (pool, _writer) = setup_db();
+        let mut conn = get_connection(&pool).expect("conn");
+
+        diesel::sql_query(
+            "INSERT INTO accounts \
+             (id, name, account_type, `group`, currency, is_default, is_active, created_at, updated_at, \
+              platform_id, account_number, meta, provider, provider_account_id, is_archived, tracking_mode) \
+             VALUES ('broker-local-account', 'Broker Account', 'cash', NULL, 'USD', 0, 1, \
+                     CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, NULL, NULL, NULL, 'SNAPTRADE', \
+                     'provider-account-1', 0, 'portfolio')",
+        )
+        .execute(&mut conn)
+        .expect("insert broker account");
+
+        diesel::sql_query(
+            "INSERT INTO import_runs \
+             (id, account_id, source_system, run_type, mode, status, started_at, finished_at, \
+              review_mode, applied_at, checkpoint_in, checkpoint_out, summary, warnings, error, \
+              created_at, updated_at) \
+             VALUES ('local-import-run', 'broker-local-account', 'SNAPTRADE', 'SYNC', \
+                     'INCREMENTAL', 'COMPLETED', '2026-01-01T00:00:00Z', \
+                     '2026-01-01T00:00:01Z', 'NEVER', '2026-01-01T00:00:01Z', \
+                     NULL, NULL, NULL, NULL, NULL, \
+                     '2026-01-01T00:00:00Z', '2026-01-01T00:00:01Z')",
+        )
+        .execute(&mut conn)
+        .expect("insert broker import run");
+
+        diesel::sql_query(
+            "INSERT INTO activities \
+             (id, account_id, asset_id, activity_type, activity_type_override, source_type, subtype, \
+              status, activity_date, settlement_date, quantity, unit_price, amount, fee, currency, \
+              fx_rate, notes, metadata, source_system, source_record_id, source_group_id, \
+              idempotency_key, import_run_id, is_user_modified, needs_review, created_at, updated_at) \
+             VALUES ('broker-local-activity', 'broker-local-account', NULL, 'BUY', NULL, NULL, NULL, \
+                     'POSTED', '2026-01-01T00:00:00Z', NULL, '10', '5', '50', '1', 'USD', \
+                     NULL, 'Broker note', '{\"broker\":\"keep\"}', 'snaptrade', 'broker-record-1', \
+                     'local-group-id', 'local-idempotency-key', 'local-import-run', 0, 1, \
+                     '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+        )
+        .execute(&mut conn)
+        .expect("insert broker activity");
+
+        let identity = broker_activity_identity(
+            Some("SNAPTRADE"),
+            Some("provider-account-1"),
+            Some("broker-record-1"),
+        )
+        .expect("broker identity");
+        let entity_id = broker_activity_user_patch_entity_id(&identity);
+
+        let applied = apply_remote_event_lww_tx(
+            &mut conn,
+            SyncEntity::BrokerActivityUserPatch,
+            entity_id,
+            SyncOperation::Update,
+            "broker-patch-event-1".to_string(),
+            "2026-02-01T00:00:00Z".to_string(),
+            1,
+            serde_json::json!({
+                "sourceSystem": "SNAPTRADE",
+                "providerAccountId": "provider-account-1",
+                "sourceRecordId": "broker-record-1",
+                "overlay": {
+                    "notes": "Synced user note",
+                    "activityTypeOverride": "SELL",
+                    "subtype": "DRIP",
+                    "needsReview": false
+                }
+            }),
+        )
+        .expect("apply broker activity user patch");
+
+        assert!(applied);
+
+        let row = activities::table
+            .find("broker-local-activity")
+            .select((
+                activities::activity_type,
+                activities::activity_type_override,
+                activities::subtype,
+                activities::notes,
+                activities::needs_review,
+                activities::is_user_modified,
+                activities::amount,
+                activities::source_group_id,
+                activities::import_run_id,
+                activities::updated_at,
+            ))
+            .first::<(
+                String,
+                Option<String>,
+                Option<String>,
+                Option<String>,
+                i32,
+                i32,
+                Option<String>,
+                Option<String>,
+                Option<String>,
+                String,
+            )>(&mut conn)
+            .expect("broker activity row");
+
+        assert_eq!(row.0, "BUY");
+        assert_eq!(row.1.as_deref(), Some("SELL"));
+        assert_eq!(row.2.as_deref(), Some("DRIP"));
+        assert_eq!(row.3.as_deref(), Some("Synced user note"));
+        assert_eq!(row.4, 0);
+        assert_eq!(row.5, 1);
+        assert_eq!(row.6.as_deref(), Some("50"));
+        assert_eq!(row.7.as_deref(), Some("local-group-id"));
+        assert_eq!(row.8.as_deref(), Some("local-import-run"));
+        assert_eq!(row.9, "2026-02-01T00:00:00Z");
+    }
+
+    #[tokio::test]
+    async fn broker_activity_user_patch_missing_target_defers_until_broker_import() {
+        clear_pending_broker_activity_user_patches();
+        let (pool, writer) = setup_db();
+        let mut conn = get_connection(&pool).expect("conn");
+
+        diesel::sql_query(
+            "INSERT INTO accounts \
+             (id, name, account_type, `group`, currency, is_default, is_active, created_at, updated_at, \
+              platform_id, account_number, meta, provider, provider_account_id, is_archived, tracking_mode) \
+             VALUES ('broker-local-account', 'Broker Account', 'cash', NULL, 'USD', 0, 1, \
+                     CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, NULL, NULL, NULL, 'SNAPTRADE', \
+                     'provider-account-1', 0, 'portfolio')",
+        )
+        .execute(&mut conn)
+        .expect("insert broker account");
+
+        let identity = broker_activity_identity(
+            Some("SNAPTRADE"),
+            Some("provider-account-1"),
+            Some("broker-record-missing-first"),
+        )
+        .expect("broker identity");
+        let entity_id = broker_activity_user_patch_entity_id(&identity);
+        let entity_db = enum_to_db(&SyncEntity::BrokerActivityUserPatch).expect("entity db");
+
+        let applied = apply_remote_event_lww_tx(
+            &mut conn,
+            SyncEntity::BrokerActivityUserPatch,
+            entity_id.clone(),
+            SyncOperation::Update,
+            "broker-patch-event-missing-first".to_string(),
+            "2026-02-01T00:00:00Z".to_string(),
+            9,
+            serde_json::json!({
+                "sourceSystem": "SNAPTRADE",
+                "providerAccountId": "provider-account-1",
+                "sourceRecordId": "broker-record-missing-first",
+                "overlay": {
+                    "notes": "Synced pending note",
+                    "activityTypeOverride": "SELL",
+                    "subtype": "DRIP",
+                    "needsReview": false
+                }
+            }),
+        )
+        .expect("defer missing broker activity patch");
+
+        assert!(!applied);
+        let metadata_count: i64 = sync_entity_metadata::table
+            .filter(sync_entity_metadata::entity.eq(&entity_db))
+            .filter(sync_entity_metadata::entity_id.eq(&entity_id))
+            .count()
+            .get_result(&mut conn)
+            .expect("metadata count");
+        assert_eq!(metadata_count, 0);
+        let applied_event_count: i64 = sync_applied_events::table
+            .filter(sync_applied_events::event_id.eq("broker-patch-event-missing-first"))
+            .count()
+            .get_result(&mut conn)
+            .expect("applied event count");
+        assert_eq!(applied_event_count, 0);
+        drop(conn);
+
+        let activity_repo = ActivityRepository::new(pool.clone(), writer);
+        activity_repo
+            .bulk_upsert(vec![ActivityUpsert {
+                id: "broker-local-activity-imported-later".to_string(),
+                account_id: "broker-local-account".to_string(),
+                asset_id: None,
+                activity_type: "BUY".to_string(),
+                subtype: None,
+                activity_date: "2026-01-01T00:00:00Z".to_string(),
+                quantity: Some(Decimal::new(10, 0)),
+                unit_price: Some(Decimal::new(5, 0)),
+                currency: "USD".to_string(),
+                fee: Some(Decimal::new(1, 0)),
+                amount: Some(Decimal::new(50, 0)),
+                status: None,
+                notes: Some("Broker note".to_string()),
+                fx_rate: None,
+                metadata: Some("{\"broker\":\"keep\"}".to_string()),
+                needs_review: Some(true),
+                source_system: Some("SNAPTRADE".to_string()),
+                source_record_id: Some("broker-record-missing-first".to_string()),
+                source_group_id: Some("broker-group".to_string()),
+                idempotency_key: Some("broker-idempotency-missing-first".to_string()),
+                import_run_id: None,
+            }])
+            .await
+            .expect("import broker activity");
+
+        let mut conn = get_connection(&pool).expect("conn");
+        let row = activities::table
+            .find("broker-local-activity-imported-later")
+            .select((
+                activities::activity_type,
+                activities::activity_type_override,
+                activities::subtype,
+                activities::notes,
+                activities::needs_review,
+                activities::is_user_modified,
+                activities::amount,
+                activities::source_group_id,
+            ))
+            .first::<(
+                String,
+                Option<String>,
+                Option<String>,
+                Option<String>,
+                i32,
+                i32,
+                Option<String>,
+                Option<String>,
+            )>(&mut conn)
+            .expect("imported broker activity");
+
+        assert_eq!(row.0, "BUY");
+        assert_eq!(row.1.as_deref(), Some("SELL"));
+        assert_eq!(row.2.as_deref(), Some("DRIP"));
+        assert_eq!(row.3.as_deref(), Some("Synced pending note"));
+        assert_eq!(row.4, 0);
+        assert_eq!(row.5, 1);
+        assert_eq!(row.6.as_deref(), Some("50"));
+        assert_eq!(row.7.as_deref(), Some("broker-group"));
+
+        let metadata_count: i64 = sync_entity_metadata::table
+            .filter(sync_entity_metadata::entity.eq(&entity_db))
+            .filter(sync_entity_metadata::entity_id.eq(&entity_id))
+            .count()
+            .get_result(&mut conn)
+            .expect("metadata count after replay");
+        assert_eq!(metadata_count, 1);
+        let applied_event_count: i64 = sync_applied_events::table
+            .filter(sync_applied_events::event_id.eq("broker-patch-event-missing-first"))
+            .count()
+            .get_result(&mut conn)
+            .expect("applied event count after replay");
+        assert_eq!(applied_event_count, 1);
+        clear_pending_broker_activity_user_patches();
+    }
+
     fn insert_goal_for_test(conn: &mut SqliteConnection, goal_id: &str) -> Result<()> {
         let sql = format!(
             "INSERT INTO goals (id, title, description, target_amount, goal_type, status_lifecycle, status_health, priority, cover_image_key, currency, start_date, target_date, summary_current_value, summary_progress, projected_completion_date, projected_value_at_target_date, created_at, updated_at, summary_target_amount) VALUES ('{}', 'Sync Goal', NULL, 1000, 'custom', 'active', 'on_track', 1, NULL, 'USD', NULL, NULL, 0, 0, NULL, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 1000)",
@@ -3067,6 +3682,260 @@ mod tests {
         diesel::sql_query(sql)
             .execute(&mut conn)
             .expect("insert snapshot");
+        db_path
+    }
+
+    fn insert_portfolio_for_test(
+        conn: &mut SqliteConnection,
+        portfolio_id: &str,
+        name: &str,
+    ) -> Result<()> {
+        let sql = format!(
+            "INSERT INTO portfolios (id, name, description, sort_order, created_at, updated_at) \
+             VALUES ('{}', '{}', NULL, 0, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+            escape_sqlite_str(portfolio_id),
+            escape_sqlite_str(name)
+        );
+        diesel::sql_query(sql)
+            .execute(conn)
+            .map_err(StorageError::from)?;
+        Ok(())
+    }
+
+    fn insert_portfolio_account_for_test(
+        conn: &mut SqliteConnection,
+        membership_id: &str,
+        portfolio_id: &str,
+        account_id: &str,
+        sort_order: i32,
+    ) -> Result<()> {
+        let sql = format!(
+            "INSERT INTO portfolio_accounts (id, portfolio_id, account_id, sort_order, created_at) \
+             VALUES ('{}', '{}', '{}', {}, '2026-01-01T00:00:00Z')",
+            escape_sqlite_str(membership_id),
+            escape_sqlite_str(portfolio_id),
+            escape_sqlite_str(account_id),
+            sort_order
+        );
+        diesel::sql_query(sql)
+            .execute(conn)
+            .map_err(StorageError::from)?;
+        Ok(())
+    }
+
+    fn sql_value(value: Option<&str>) -> String {
+        value
+            .map(|value| format!("'{}'", escape_sqlite_str(value)))
+            .unwrap_or_else(|| "NULL".to_string())
+    }
+
+    fn insert_broker_import_run_for_test(
+        conn: &mut SqliteConnection,
+        import_run_id: &str,
+        account_id: &str,
+    ) -> Result<()> {
+        let sql = format!(
+            "INSERT INTO import_runs \
+             (id, account_id, source_system, run_type, mode, status, started_at, finished_at, \
+              review_mode, applied_at, checkpoint_in, checkpoint_out, summary, warnings, error, \
+              created_at, updated_at) \
+             VALUES ('{}', '{}', 'SNAPTRADE', 'SYNC', 'INCREMENTAL', 'COMPLETED', \
+                     '2026-01-01T00:00:00Z', '2026-01-01T00:00:01Z', 'NEVER', \
+                     '2026-01-01T00:00:01Z', NULL, NULL, NULL, NULL, NULL, \
+                     '2026-01-01T00:00:00Z', '2026-01-01T00:00:01Z')",
+            escape_sqlite_str(import_run_id),
+            escape_sqlite_str(account_id)
+        );
+        diesel::sql_query(sql)
+            .execute(conn)
+            .map_err(StorageError::from)?;
+        Ok(())
+    }
+
+    fn insert_activity_for_snapshot_filter_test(
+        conn: &mut SqliteConnection,
+        activity_id: &str,
+        account_id: &str,
+        source_system: &str,
+        import_run_id: Option<&str>,
+        source_record_id: Option<&str>,
+        is_user_modified: i32,
+    ) -> Result<()> {
+        let sql = format!(
+            "INSERT INTO activities \
+             (id, account_id, asset_id, activity_type, activity_type_override, source_type, subtype, \
+              status, activity_date, settlement_date, quantity, unit_price, amount, fee, currency, \
+              fx_rate, notes, metadata, source_system, source_record_id, source_group_id, \
+              idempotency_key, import_run_id, is_user_modified, needs_review, created_at, updated_at) \
+             VALUES ('{}', '{}', NULL, 'DEPOSIT', NULL, NULL, NULL, 'POSTED', \
+                     '2026-01-01T00:00:00Z', NULL, NULL, NULL, '100', '0', 'USD', \
+                     NULL, NULL, NULL, '{}', {}, NULL, NULL, {}, {}, 0, \
+                     '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+            escape_sqlite_str(activity_id),
+            escape_sqlite_str(account_id),
+            escape_sqlite_str(source_system),
+            sql_value(source_record_id),
+            sql_value(import_run_id),
+            is_user_modified,
+        );
+        diesel::sql_query(sql)
+            .execute(conn)
+            .map_err(StorageError::from)?;
+        Ok(())
+    }
+
+    fn insert_spending_event_for_snapshot_filter_test(
+        conn: &mut SqliteConnection,
+        event_id: &str,
+    ) -> Result<()> {
+        let sql = format!(
+            "INSERT INTO spending_event_types (id, key, name, color, created_at, updated_at) \
+             VALUES ('event-type-{}', NULL, 'Snapshot Event Type', NULL, \
+                     '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'); \
+             INSERT INTO spending_events \
+             (id, name, description, event_type_id, start_date, end_date, created_at, updated_at) \
+             VALUES ('{}', 'Snapshot Event', NULL, 'event-type-{}', '2026-01-01', '2026-01-02', \
+                     '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+            escape_sqlite_str(event_id),
+            escape_sqlite_str(event_id),
+            escape_sqlite_str(event_id)
+        );
+        conn.batch_execute(&sql).map_err(StorageError::from)?;
+        Ok(())
+    }
+
+    fn insert_activity_sidecars_for_snapshot_filter_test(
+        conn: &mut SqliteConnection,
+        activity_id: &str,
+        suffix: &str,
+        event_id: &str,
+    ) -> Result<()> {
+        let sql = format!(
+            "INSERT INTO activity_taxonomy_assignments \
+             (id, activity_id, taxonomy_id, category_id, weight, source, created_at, updated_at) \
+             VALUES ('assignment-{}', '{}', 'spending_categories', 'cat_food', 10000, 'manual', \
+                     '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'); \
+             INSERT INTO spending_activity_events (activity_id, event_id, created_at, updated_at) \
+             VALUES ('{}', '{}', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+            escape_sqlite_str(suffix),
+            escape_sqlite_str(activity_id),
+            escape_sqlite_str(activity_id),
+            escape_sqlite_str(event_id)
+        );
+        conn.batch_execute(&sql).map_err(StorageError::from)?;
+        Ok(())
+    }
+
+    fn insert_orphan_portfolio_account_for_test(
+        conn: &mut SqliteConnection,
+        membership_id: &str,
+        portfolio_id: &str,
+        missing_account_id: &str,
+    ) {
+        conn.batch_execute(&format!(
+            "PRAGMA foreign_keys = OFF;
+             INSERT INTO portfolio_accounts (id, portfolio_id, account_id, sort_order, created_at)
+             VALUES ('{}', '{}', '{}', 99, '2026-01-01T00:00:00Z');
+             PRAGMA foreign_keys = ON;",
+            escape_sqlite_str(membership_id),
+            escape_sqlite_str(portfolio_id),
+            escape_sqlite_str(missing_account_id),
+        ))
+        .expect("insert orphan portfolio account");
+    }
+
+    fn insert_missing_portfolio_account_for_test(
+        conn: &mut SqliteConnection,
+        membership_id: &str,
+        missing_portfolio_id: &str,
+        account_id: &str,
+    ) {
+        conn.batch_execute(&format!(
+            "PRAGMA foreign_keys = OFF;
+             INSERT INTO portfolio_accounts (id, portfolio_id, account_id, sort_order, created_at)
+             VALUES ('{}', '{}', '{}', 99, '2026-01-01T00:00:00Z');
+             PRAGMA foreign_keys = ON;",
+            escape_sqlite_str(membership_id),
+            escape_sqlite_str(missing_portfolio_id),
+            escape_sqlite_str(account_id),
+        ))
+        .expect("insert missing-portfolio account membership");
+    }
+
+    fn create_snapshot_db_with_portfolio_accounts() -> String {
+        let app_data = tempdir()
+            .expect("tempdir")
+            .keep()
+            .to_string_lossy()
+            .to_string();
+        let db_path = init(&app_data).expect("init db");
+        run_migrations(&db_path).expect("migrate db");
+        let pool = create_pool(&db_path).expect("create pool");
+        let mut conn = get_connection(&pool).expect("conn");
+        insert_account_for_test(&mut conn, "acc-snapshot-valid").expect("insert account");
+        insert_portfolio_for_test(&mut conn, "portfolio-snapshot", "Snapshot Portfolio")
+            .expect("insert portfolio");
+        insert_portfolio_account_for_test(
+            &mut conn,
+            "membership-snapshot-valid",
+            "portfolio-snapshot",
+            "acc-snapshot-valid",
+            0,
+        )
+        .expect("insert valid membership");
+        insert_orphan_portfolio_account_for_test(
+            &mut conn,
+            "membership-snapshot-orphan",
+            "portfolio-snapshot",
+            "acc-snapshot-missing",
+        );
+        db_path
+    }
+
+    fn create_snapshot_db_with_orphan_activity_sidecars() -> String {
+        let app_data = tempdir()
+            .expect("tempdir")
+            .keep()
+            .to_string_lossy()
+            .to_string();
+        let db_path = init(&app_data).expect("init db");
+        run_migrations(&db_path).expect("migrate db");
+        let pool = create_pool(&db_path).expect("create pool");
+        let mut conn = get_connection(&pool).expect("conn");
+        insert_spending_event_for_snapshot_filter_test(&mut conn, "event-orphan-sidecar")
+            .expect("insert event");
+        conn.batch_execute(
+            "PRAGMA foreign_keys = OFF;
+             INSERT INTO activity_taxonomy_assignments
+             (id, activity_id, taxonomy_id, category_id, weight, source, created_at, updated_at)
+             VALUES ('assignment-orphan-activity', 'missing-broker-activity', 'spending_categories',
+                     'cat_food', 10000, 'manual', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');
+             INSERT INTO spending_activity_events (activity_id, event_id, created_at, updated_at)
+             VALUES ('missing-broker-activity', 'event-orphan-sidecar',
+                     '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');
+             PRAGMA foreign_keys = ON;",
+        )
+        .expect("insert orphan activity sidecars");
+        db_path
+    }
+
+    fn create_snapshot_db_with_invalid_spending_activity_event() -> String {
+        let app_data = tempdir()
+            .expect("tempdir")
+            .keep()
+            .to_string_lossy()
+            .to_string();
+        let db_path = init(&app_data).expect("init db");
+        run_migrations(&db_path).expect("migrate db");
+        let pool = create_pool(&db_path).expect("create pool");
+        let mut conn = get_connection(&pool).expect("conn");
+        conn.batch_execute(
+            "PRAGMA foreign_keys = OFF;
+             INSERT INTO spending_activity_events (activity_id, event_id, created_at, updated_at)
+             VALUES ('local-existing-activity-for-invalid-event', 'missing-snapshot-event', '2026-02-01T00:00:00Z', '2026-02-01T00:00:00Z');
+             PRAGMA foreign_keys = ON;",
+        )
+        .expect("insert invalid spending activity event");
         db_path
     }
 
@@ -3399,6 +4268,79 @@ mod tests {
             .first(&mut conn)
             .expect("count applied event");
         assert_eq!(applied_count, 1);
+    }
+
+    #[tokio::test]
+    async fn replay_single_event_foreign_key_error_includes_entity_table_context() {
+        let (pool, writer) = setup_db();
+        let repo = AppSyncRepository::new(pool, writer);
+
+        let err = repo
+            .apply_remote_event_lww(
+                SyncEntity::SpendingActivityEvent,
+                "missing-activity-for-event".to_string(),
+                SyncOperation::Create,
+                "evt-missing-spending-activity-event".to_string(),
+                "2026-02-01T00:00:00Z".to_string(),
+                1,
+                serde_json::json!({
+                    "activity_id": "missing-activity-for-event",
+                    "event_id": "missing-spending-event",
+                    "created_at": "2026-02-01T00:00:00Z",
+                    "updated_at": "2026-02-01T00:00:00Z",
+                }),
+            )
+            .await
+            .expect_err("missing FK should fail");
+
+        let message = err.to_string();
+        assert!(
+            message.contains("entity=SpendingActivityEvent"),
+            "{message}"
+        );
+        assert!(
+            message.contains("table=spending_activity_events"),
+            "{message}"
+        );
+        assert!(
+            message.to_ascii_lowercase().contains("foreign key"),
+            "{message}"
+        );
+    }
+
+    #[tokio::test]
+    async fn replay_batch_foreign_key_error_includes_fk_check_table() {
+        let (pool, writer) = setup_db();
+        let repo = AppSyncRepository::new(pool, writer);
+
+        let err = repo
+            .apply_remote_events_lww_batch(vec![(
+                SyncEntity::SpendingActivityEvent,
+                "missing-activity-in-batch".to_string(),
+                SyncOperation::Create,
+                "evt-missing-spending-activity-event-batch".to_string(),
+                "2026-02-01T00:00:00Z".to_string(),
+                1,
+                serde_json::json!({
+                    "activity_id": "missing-activity-in-batch",
+                    "event_id": "missing-spending-event-in-batch",
+                    "created_at": "2026-02-01T00:00:00Z",
+                    "updated_at": "2026-02-01T00:00:00Z",
+                }),
+            )])
+            .await
+            .expect_err("missing FK should fail");
+
+        let message = err.to_string();
+        assert!(
+            message.contains("Replay batch foreign key check failed"),
+            "{message}"
+        );
+        assert!(
+            message.contains("table=spending_activity_events"),
+            "{message}"
+        );
+        assert!(message.contains("parent="), "{message}");
     }
 
     #[tokio::test]
@@ -3751,6 +4693,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn snapshot_restore_foreign_key_error_includes_table_context() {
+        let (pool, writer) = setup_db();
+        {
+            let mut conn = get_connection(&pool).expect("conn");
+            insert_account_for_test(&mut conn, "acc-invalid-event").expect("insert account");
+            insert_activity_for_snapshot_filter_test(
+                &mut conn,
+                "local-existing-activity-for-invalid-event",
+                "acc-invalid-event",
+                "MANUAL",
+                None,
+                None,
+                0,
+            )
+            .expect("insert local activity");
+        }
+        let repo = AppSyncRepository::new(pool, writer);
+        let snapshot_path = create_snapshot_db_with_invalid_spending_activity_event();
+
+        let err = repo
+            .restore_snapshot_tables_from_file(
+                snapshot_path,
+                vec!["spending_activity_events".to_string()],
+                92,
+                "device-invalid-spending-event-restore".to_string(),
+                Some(1),
+            )
+            .await
+            .expect_err("restore should fail for invalid FK");
+
+        let message = err.to_string();
+        assert!(
+            message.contains("Snapshot restore failed for table=spending_activity_events")
+                || message.contains("table=spending_activity_events"),
+            "{message}"
+        );
+        assert!(
+            message.to_ascii_lowercase().contains("foreign key"),
+            "{message}"
+        );
+    }
+
+    #[tokio::test]
     async fn snapshot_restore_drops_orphan_snapshot_rows() {
         #[derive(diesel::QueryableByName)]
         struct CountRow {
@@ -3823,6 +4808,168 @@ mod tests {
         .get_result(&mut conn)
         .expect("count restored snapshots");
         assert_eq!(snapshot_count.c, 1);
+    }
+
+    #[tokio::test]
+    async fn snapshot_restore_skips_orphan_portfolio_accounts_and_clears_existing_rows() {
+        #[derive(diesel::QueryableByName)]
+        struct CountRow {
+            #[diesel(sql_type = diesel::sql_types::BigInt)]
+            c: i64,
+        }
+
+        let (pool, writer) = setup_db();
+        let repo = AppSyncRepository::new(pool.clone(), writer);
+        let snapshot_path = create_snapshot_db_with_portfolio_accounts();
+
+        {
+            let mut conn = get_connection(&pool).expect("conn");
+            insert_account_for_test(&mut conn, "acc-local-stale").expect("insert local account");
+            insert_portfolio_for_test(&mut conn, "portfolio-local-stale", "Local Stale")
+                .expect("insert local portfolio");
+            insert_portfolio_account_for_test(
+                &mut conn,
+                "membership-local-stale",
+                "portfolio-local-stale",
+                "acc-local-stale",
+                0,
+            )
+            .expect("insert local membership");
+        }
+
+        repo.restore_snapshot_tables_from_file(
+            snapshot_path,
+            vec![
+                "accounts".to_string(),
+                "portfolios".to_string(),
+                "portfolio_accounts".to_string(),
+            ],
+            94,
+            "device-portfolio-accounts-restore".to_string(),
+            Some(1),
+        )
+        .await
+        .expect("restore portfolio account snapshot");
+
+        let mut conn = get_connection(&pool).expect("conn");
+        let restored_count: CountRow =
+            diesel::sql_query("SELECT COUNT(*) AS c FROM portfolio_accounts")
+                .get_result(&mut conn)
+                .expect("count memberships");
+        assert_eq!(restored_count.c, 1);
+
+        let valid_count: CountRow = diesel::sql_query(
+            "SELECT COUNT(*) AS c FROM portfolio_accounts WHERE id = 'membership-snapshot-valid'",
+        )
+        .get_result(&mut conn)
+        .expect("count valid membership");
+        assert_eq!(valid_count.c, 1);
+
+        let stale_count: CountRow = diesel::sql_query(
+            "SELECT COUNT(*) AS c FROM portfolio_accounts WHERE id = 'membership-local-stale'",
+        )
+        .get_result(&mut conn)
+        .expect("count stale membership");
+        assert_eq!(stale_count.c, 0);
+    }
+
+    #[tokio::test]
+    async fn snapshot_restore_portfolio_accounts_only_does_not_clear_parent_tables() {
+        #[derive(diesel::QueryableByName)]
+        struct CountRow {
+            #[diesel(sql_type = diesel::sql_types::BigInt)]
+            c: i64,
+        }
+
+        let (pool, writer) = setup_db();
+        let repo = AppSyncRepository::new(pool.clone(), writer);
+        let snapshot_path = create_snapshot_db_with_portfolio_accounts();
+
+        {
+            let mut conn = get_connection(&pool).expect("conn");
+            insert_account_for_test(&mut conn, "acc-local-stale").expect("insert local account");
+            insert_portfolio_for_test(&mut conn, "portfolio-local-stale", "Local Stale")
+                .expect("insert local portfolio");
+            insert_portfolio_account_for_test(
+                &mut conn,
+                "membership-local-stale",
+                "portfolio-local-stale",
+                "acc-local-stale",
+                0,
+            )
+            .expect("insert local membership");
+        }
+
+        repo.restore_snapshot_tables_from_file(
+            snapshot_path,
+            vec!["portfolio_accounts".to_string()],
+            95,
+            "device-portfolio-accounts-only-restore".to_string(),
+            Some(1),
+        )
+        .await
+        .expect("restore portfolio memberships only");
+
+        let mut conn = get_connection(&pool).expect("conn");
+        let local_account_count: CountRow =
+            diesel::sql_query("SELECT COUNT(*) AS c FROM accounts WHERE id = 'acc-local-stale'")
+                .get_result(&mut conn)
+                .expect("count local account");
+        assert_eq!(local_account_count.c, 1);
+
+        let local_portfolio_count: CountRow = diesel::sql_query(
+            "SELECT COUNT(*) AS c FROM portfolios WHERE id = 'portfolio-local-stale'",
+        )
+        .get_result(&mut conn)
+        .expect("count local portfolio");
+        assert_eq!(local_portfolio_count.c, 1);
+
+        let membership_count: CountRow =
+            diesel::sql_query("SELECT COUNT(*) AS c FROM portfolio_accounts")
+                .get_result(&mut conn)
+                .expect("count memberships");
+        assert_eq!(membership_count.c, 0);
+    }
+
+    #[tokio::test]
+    async fn snapshot_restore_skips_activity_sidecars_without_syncable_activity() {
+        #[derive(diesel::QueryableByName)]
+        struct CountRow {
+            #[diesel(sql_type = diesel::sql_types::BigInt)]
+            c: i64,
+        }
+
+        let (pool, writer) = setup_db();
+        let repo = AppSyncRepository::new(pool.clone(), writer);
+        let snapshot_path = create_snapshot_db_with_orphan_activity_sidecars();
+
+        repo.restore_snapshot_tables_from_file(
+            snapshot_path,
+            vec![
+                "spending_event_types".to_string(),
+                "spending_events".to_string(),
+                "activity_taxonomy_assignments".to_string(),
+                "spending_activity_events".to_string(),
+            ],
+            96,
+            "device-orphan-activity-sidecars-restore".to_string(),
+            Some(1),
+        )
+        .await
+        .expect("restore should skip sidecars without syncable activity");
+
+        let mut conn = get_connection(&pool).expect("conn");
+        let assignment_count: CountRow =
+            diesel::sql_query("SELECT COUNT(*) AS c FROM activity_taxonomy_assignments")
+                .get_result(&mut conn)
+                .expect("count activity assignments");
+        assert_eq!(assignment_count.c, 0);
+
+        let event_tag_count: CountRow =
+            diesel::sql_query("SELECT COUNT(*) AS c FROM spending_activity_events")
+                .get_result(&mut conn)
+                .expect("count activity events");
+        assert_eq!(event_tag_count.c, 0);
     }
 
     #[tokio::test]
@@ -3924,6 +5071,40 @@ mod tests {
             .non_empty_tables
             .iter()
             .any(|row| row.table == "goals" && row.rows == 1));
+    }
+
+    #[tokio::test]
+    async fn overwrite_risk_summary_ignores_broker_rehydratable_accounts() {
+        let (pool, writer) = setup_db();
+        let repo = AppSyncRepository::new(pool.clone(), writer);
+
+        {
+            let mut conn = get_connection(&pool).expect("conn");
+            diesel::sql_query(
+                "INSERT INTO platforms (id, name, url, external_id, kind, website_url, logo_url) \
+                 VALUES ('broker-platform-risk', 'Broker Platform', '', 'external-platform-risk', \
+                         'BROKERAGE', NULL, NULL)",
+            )
+            .execute(&mut conn)
+            .expect("insert broker platform");
+            diesel::sql_query(
+                "INSERT INTO accounts \
+                 (id, name, account_type, `group`, currency, is_default, is_active, created_at, updated_at, \
+                  platform_id, account_number, meta, provider, provider_account_id, is_archived, tracking_mode) \
+                 VALUES ('broker-account-risk', 'Broker Account', 'cash', NULL, 'USD', 0, 1, \
+                         CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 'broker-platform-risk', NULL, NULL, \
+                         'SNAPTRADE', 'broker-provider-account-risk', 0, 'portfolio')",
+            )
+            .execute(&mut conn)
+            .expect("insert broker account");
+        }
+
+        let summary = repo
+            .get_local_sync_overwrite_risk_summary()
+            .expect("overwrite risk summary");
+
+        assert_eq!(summary.total_rows, 0);
+        assert!(summary.non_empty_tables.is_empty());
     }
 
     #[tokio::test]
@@ -5422,6 +6603,227 @@ mod tests {
             provider_quote_count.c, 0,
             "provider quotes should not export"
         );
+    }
+
+    #[tokio::test]
+    async fn snapshot_export_skips_orphan_portfolio_accounts() {
+        #[derive(diesel::QueryableByName)]
+        struct CountRow {
+            #[diesel(sql_type = diesel::sql_types::BigInt)]
+            c: i64,
+        }
+
+        let (pool, writer) = setup_db();
+        let repo = AppSyncRepository::new(pool.clone(), writer);
+        let mut conn = get_connection(&pool).expect("conn");
+
+        insert_account_for_test(&mut conn, "acc-export-portfolio").expect("insert account");
+        insert_portfolio_for_test(&mut conn, "portfolio-export", "Export Portfolio")
+            .expect("insert portfolio");
+        insert_portfolio_account_for_test(
+            &mut conn,
+            "membership-export-valid",
+            "portfolio-export",
+            "acc-export-portfolio",
+            0,
+        )
+        .expect("insert valid membership");
+        insert_orphan_portfolio_account_for_test(
+            &mut conn,
+            "membership-export-orphan",
+            "portfolio-export",
+            "acc-export-missing",
+        );
+        drop(conn);
+
+        let payload = repo
+            .export_snapshot_sqlite_image(vec!["portfolio_accounts".to_string()])
+            .await
+            .expect("export portfolio memberships");
+
+        let exported_dir = tempdir().expect("tempdir");
+        let exported_path = exported_dir.path().join("portfolio-accounts-snapshot.db");
+        std::fs::write(&exported_path, payload).expect("write snapshot db");
+        let mut exported_conn =
+            SqliteConnection::establish(exported_path.to_string_lossy().as_ref())
+                .expect("open snapshot db");
+
+        let membership_count: CountRow =
+            diesel::sql_query("SELECT COUNT(*) AS c FROM portfolio_accounts")
+                .get_result(&mut exported_conn)
+                .expect("count memberships");
+        assert_eq!(membership_count.c, 1);
+
+        let orphan_count: CountRow = diesel::sql_query(
+            "SELECT COUNT(*) AS c FROM portfolio_accounts WHERE id = 'membership-export-orphan'",
+        )
+        .get_result(&mut exported_conn)
+        .expect("count orphan membership");
+        assert_eq!(orphan_count.c, 0);
+    }
+
+    #[tokio::test]
+    async fn snapshot_export_filters_activity_sidecars_to_user_syncable_activities() {
+        #[derive(diesel::QueryableByName)]
+        struct CountRow {
+            #[diesel(sql_type = diesel::sql_types::BigInt)]
+            c: i64,
+        }
+
+        let (pool, writer) = setup_db();
+        let repo = AppSyncRepository::new(pool.clone(), writer);
+        let mut conn = get_connection(&pool).expect("conn");
+
+        insert_account_for_test(&mut conn, "acc-activity-sidecar").expect("insert account");
+        insert_broker_import_run_for_test(
+            &mut conn,
+            "broker-import-sidecar",
+            "acc-activity-sidecar",
+        )
+        .expect("insert broker import run");
+        insert_activity_for_snapshot_filter_test(
+            &mut conn,
+            "manual-activity-sidecar",
+            "acc-activity-sidecar",
+            "MANUAL",
+            None,
+            None,
+            0,
+        )
+        .expect("insert manual activity");
+        insert_activity_for_snapshot_filter_test(
+            &mut conn,
+            "broker-activity-sidecar",
+            "acc-activity-sidecar",
+            "SNAPTRADE",
+            Some("broker-import-sidecar"),
+            Some("broker-record-sidecar"),
+            1,
+        )
+        .expect("insert user-modified broker activity");
+        insert_spending_event_for_snapshot_filter_test(&mut conn, "event-sidecar")
+            .expect("insert event");
+        insert_activity_sidecars_for_snapshot_filter_test(
+            &mut conn,
+            "manual-activity-sidecar",
+            "manual-sidecar",
+            "event-sidecar",
+        )
+        .expect("insert manual sidecars");
+        insert_activity_sidecars_for_snapshot_filter_test(
+            &mut conn,
+            "broker-activity-sidecar",
+            "broker-sidecar",
+            "event-sidecar",
+        )
+        .expect("insert broker sidecars");
+        drop(conn);
+
+        let payload = repo
+            .export_snapshot_sqlite_image(vec![
+                "activities".to_string(),
+                "spending_event_types".to_string(),
+                "spending_events".to_string(),
+                "activity_taxonomy_assignments".to_string(),
+                "spending_activity_events".to_string(),
+            ])
+            .await
+            .expect("export activity sidecar snapshot");
+
+        let exported_dir = tempdir().expect("tempdir");
+        let exported_path = exported_dir.path().join("activity-sidecars-snapshot.db");
+        std::fs::write(&exported_path, payload).expect("write snapshot db");
+        let mut exported_conn =
+            SqliteConnection::establish(exported_path.to_string_lossy().as_ref())
+                .expect("open snapshot db");
+
+        let activity_count: CountRow = diesel::sql_query("SELECT COUNT(*) AS c FROM activities")
+            .get_result(&mut exported_conn)
+            .expect("count activities");
+        assert_eq!(activity_count.c, 1);
+
+        let broker_activity_count: CountRow = diesel::sql_query(
+            "SELECT COUNT(*) AS c FROM activities WHERE id = 'broker-activity-sidecar'",
+        )
+        .get_result(&mut exported_conn)
+        .expect("count broker activity");
+        assert_eq!(broker_activity_count.c, 0);
+
+        let assignment_count: CountRow =
+            diesel::sql_query("SELECT COUNT(*) AS c FROM activity_taxonomy_assignments")
+                .get_result(&mut exported_conn)
+                .expect("count activity assignments");
+        assert_eq!(assignment_count.c, 1);
+
+        let broker_assignment_count: CountRow = diesel::sql_query(
+            "SELECT COUNT(*) AS c FROM activity_taxonomy_assignments WHERE activity_id = 'broker-activity-sidecar'",
+        )
+        .get_result(&mut exported_conn)
+        .expect("count broker activity assignment");
+        assert_eq!(broker_assignment_count.c, 0);
+
+        let event_tag_count: CountRow =
+            diesel::sql_query("SELECT COUNT(*) AS c FROM spending_activity_events")
+                .get_result(&mut exported_conn)
+                .expect("count activity event tags");
+        assert_eq!(event_tag_count.c, 1);
+
+        let broker_event_tag_count: CountRow = diesel::sql_query(
+            "SELECT COUNT(*) AS c FROM spending_activity_events WHERE activity_id = 'broker-activity-sidecar'",
+        )
+        .get_result(&mut exported_conn)
+        .expect("count broker activity event tag");
+        assert_eq!(broker_event_tag_count.c, 0);
+    }
+
+    #[tokio::test]
+    async fn snapshot_upload_validation_fails_with_portfolio_repair_message() {
+        let (pool, writer) = setup_db();
+        let repo = AppSyncRepository::new(pool.clone(), writer);
+        let mut conn = get_connection(&pool).expect("conn");
+
+        insert_portfolio_for_test(&mut conn, "portfolio-upload", "Retirement")
+            .expect("insert portfolio");
+        insert_orphan_portfolio_account_for_test(
+            &mut conn,
+            "membership-upload-orphan",
+            "portfolio-upload",
+            "acc-upload-missing",
+        );
+        drop(conn);
+
+        let err = repo
+            .validate_snapshot_upload_integrity(vec!["portfolio_accounts".to_string()])
+            .await
+            .expect_err("upload validation should fail");
+        let message = err.to_string();
+
+        assert!(
+            message.contains("Portfolio \"Retirement\" contains a deleted account link"),
+            "{message}"
+        );
+        assert!(message.contains("Settings > Portfolios"), "{message}");
+        assert!(message.contains("acc-upload-missing"), "{message}");
+    }
+
+    #[tokio::test]
+    async fn snapshot_upload_validation_ignores_missing_portfolio_memberships() {
+        let (pool, writer) = setup_db();
+        let repo = AppSyncRepository::new(pool.clone(), writer);
+        let mut conn = get_connection(&pool).expect("conn");
+
+        insert_account_for_test(&mut conn, "acc-upload-existing").expect("insert account");
+        insert_missing_portfolio_account_for_test(
+            &mut conn,
+            "membership-upload-missing-portfolio",
+            "portfolio-upload-missing",
+            "acc-upload-existing",
+        );
+        drop(conn);
+
+        repo.validate_snapshot_upload_integrity(vec!["portfolio_accounts".to_string()])
+            .await
+            .expect("missing portfolio membership should be skipped by snapshot upload validation");
     }
 
     #[tokio::test]

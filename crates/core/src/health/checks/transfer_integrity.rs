@@ -65,12 +65,12 @@ impl TransferIntegrityCheck {
         let count = groups.len();
         let data_hash = compute_data_hash(groups);
 
-        // One affected item per leg, routed to its account. Labels carry the
-        // transaction detail; the internal group_id is never exposed.
+        // One affected item per leg, routed to Activities with focused filters.
+        // Labels carry the transaction detail; the internal group_id is never exposed.
         let affected_items: Vec<AffectedItem> = groups
             .iter()
             .flat_map(|g| g.legs.iter())
-            .map(|leg| AffectedItem::account(leg.account_id.clone(), describe_leg(leg)))
+            .map(affected_item_for_leg)
             .collect();
 
         let details = groups
@@ -164,6 +164,31 @@ fn describe_leg(leg: &TransferLegDetail) -> String {
     )
 }
 
+fn affected_item_for_leg(leg: &TransferLegDetail) -> AffectedItem {
+    let date = leg.date.format("%Y-%m-%d").to_string();
+    AffectedItem {
+        id: format!(
+            "{}:{}:{}:{}:{}",
+            leg.account_id,
+            leg.activity_type,
+            date,
+            leg.amount
+                .map(|amount| amount.round_dp(2).to_string())
+                .unwrap_or_default(),
+            leg.currency
+        ),
+        name: describe_leg(leg),
+        symbol: None,
+        route: Some(format!(
+            "/activities?account={}&from={}&to={}&types={}",
+            urlencoding::encode(&leg.account_id),
+            urlencoding::encode(&date),
+            urlencoding::encode(&date),
+            urlencoding::encode(&leg.activity_type),
+        )),
+    }
+}
+
 fn format_group_details(group: &InvalidTransferGroupInfo) -> String {
     let when = match group.date_range() {
         Some((from, to)) if from == to => {
@@ -255,6 +280,13 @@ mod tests {
             .unwrap()
             .iter()
             .all(|item| !item.name.contains(id)));
+        let item = &issue.affected_items.as_ref().unwrap()[0];
+        assert_eq!(
+            item.route.as_deref(),
+            Some(
+                "/activities?account=acc_checking&from=2026-06-02&to=2026-06-02&types=TRANSFER_OUT"
+            )
+        );
         // ...but the issue id (internal) still ties to the data hash for dismissal.
         assert!(issue.id.starts_with("invalid_transfer_group:"));
     }
