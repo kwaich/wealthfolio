@@ -61,12 +61,13 @@ import {
   useRevokeDevice,
   useSyncActions,
   useSyncStatus,
+  type PairingBootstrapState,
 } from "../hooks";
 import { syncService } from "../services/sync-service";
 import { SyncStates, type Device } from "../types";
 import { logSyncError, userFacingSyncErrorMessage } from "../utils/error-messages";
 import { E2EESetupCard } from "./e2ee-setup-card";
-import { PairingFlow, WaitingState, type PairingBootstrapState } from "./pairing-flow";
+import { PairingFlow, WaitingState } from "./pairing-flow";
 import { RecoveryDialog } from "./recovery-dialog";
 
 const PORTAL_DEVICES_URL = "https://connect.wealthfolio.app/settings/devices";
@@ -103,6 +104,7 @@ export function DeviceSyncSection() {
   const [isBackingUpBeforeBootstrap, setIsBackingUpBeforeBootstrap] = useState(false);
   const [isUploadingSnapshot, setIsUploadingSnapshot] = useState(false);
   const [bootstrapOwner, setBootstrapOwner] = useState<BootstrapOwner>("none");
+  const [suppressReadyStateBootstrapPrompt, setSuppressReadyStateBootstrapPrompt] = useState(false);
 
   // Bootstrap overwrite state — set when bootstrapSync returns overwrite_required
   const [overwriteRisk, setOverwriteRisk] = useState<{
@@ -115,6 +117,7 @@ export function DeviceSyncSection() {
   const bootstrapOwnerRef = useRef<BootstrapOwner>(bootstrapOwner);
   const isPairingOpenRef = useRef(isPairingOpen);
   const isCurrentDeviceTrustedRef = useRef(isCurrentDeviceTrusted);
+  const suppressReadyStateBootstrapPromptRef = useRef(suppressReadyStateBootstrapPrompt);
 
   useEffect(() => {
     bootstrapOwnerRef.current = bootstrapOwner;
@@ -128,11 +131,25 @@ export function DeviceSyncSection() {
     isCurrentDeviceTrustedRef.current = isCurrentDeviceTrusted;
   }, [isCurrentDeviceTrusted]);
 
-  const canRunReadyStateBootstrap = useCallback(() => {
+  useEffect(() => {
+    suppressReadyStateBootstrapPromptRef.current = suppressReadyStateBootstrapPrompt;
+  }, [suppressReadyStateBootstrapPrompt]);
+
+  const releasePairingBootstrapOwner = useCallback(() => {
+    if (bootstrapOwnerRef.current === "pairing" || bootstrapOwnerRef.current === "pairing_failed") {
+      bootstrapOwnerRef.current = "none";
+    }
+    setBootstrapOwner((owner) =>
+      owner === "pairing" || owner === "pairing_failed" ? "none" : owner,
+    );
+  }, []);
+
+  const canRunReadyStateBootstrap = useCallback((ignorePromptSuppression = false) => {
     return (
       bootstrapOwnerRef.current === "none" &&
       !isPairingOpenRef.current &&
-      isCurrentDeviceTrustedRef.current
+      isCurrentDeviceTrustedRef.current &&
+      (ignorePromptSuppression || !suppressReadyStateBootstrapPromptRef.current)
     );
   }, []);
 
@@ -175,36 +192,45 @@ export function DeviceSyncSection() {
   );
 
   const handlePairingComplete = useCallback(() => {
-    setBootstrapOwner((owner) =>
-      owner === "pairing" || owner === "pairing_failed" ? "none" : owner,
-    );
+    setSuppressReadyStateBootstrapPrompt(true);
+    setShowBootstrapOverwriteDialog(false);
+    setOverwriteRisk(null);
+    releasePairingBootstrapOwner();
     isPairingOpenRef.current = false;
     setIsPairingOpen(false);
     setIsPreparing(false);
     setPrepareError(null);
     queryClient.invalidateQueries({ queryKey: ["sync", "device", "current"] });
     status.refetch();
-  }, [queryClient, status.refetch]);
+  }, [queryClient, releasePairingBootstrapOwner, status.refetch]);
 
   const handlePairingCancel = useCallback(() => {
-    setBootstrapOwner((owner) => (owner === "pairing" ? "none" : owner));
+    releasePairingBootstrapOwner();
     isPairingOpenRef.current = false;
     setIsPairingOpen(false);
     setIsPreparing(false);
     setPrepareError(null);
-  }, []);
+  }, [releasePairingBootstrapOwner]);
 
-  const handlePairingBootstrapStateChange = useCallback((state: PairingBootstrapState) => {
-    if (state === "active" || state === "failed") {
-      setShowBootstrapOverwriteDialog(false);
-      setOverwriteRisk(null);
-    }
-    setBootstrapOwner((owner) => {
-      if (state === "active") return "pairing";
-      if (state === "failed") return "pairing_failed";
-      return owner === "pairing" ? "none" : owner;
-    });
-  }, []);
+  const handlePairingBootstrapStateChange = useCallback(
+    (state: PairingBootstrapState) => {
+      if (state === "active" || state === "failed") {
+        setShowBootstrapOverwriteDialog(false);
+        setOverwriteRisk(null);
+      }
+      if (state === "idle") {
+        releasePairingBootstrapOwner();
+        return;
+      }
+      bootstrapOwnerRef.current = state === "active" ? "pairing" : "pairing_failed";
+      setBootstrapOwner((owner) => {
+        if (state === "active") return "pairing";
+        if (state === "failed") return "pairing_failed";
+        return owner === "pairing" ? "none" : owner;
+      });
+    },
+    [releasePairingBootstrapOwner],
+  );
 
   const handleRefresh = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ["sync", "device", "current"] });
@@ -322,13 +348,16 @@ export function DeviceSyncSection() {
   );
 
   const runBootstrapCheck = useCallback(
-    async (showToast: boolean, autoOpenDialog = false) => {
-      if (!canRunReadyStateBootstrap()) return;
+    async (showToast: boolean, autoOpenDialog = false, ignorePromptSuppression = false) => {
+      if (!canRunReadyStateBootstrap(ignorePromptSuppression)) return;
 
       try {
         const result = await actions.bootstrapSync.mutateAsync({ allowOverwrite: false });
-        if (!canRunReadyStateBootstrap()) return;
+        if (!canRunReadyStateBootstrap(ignorePromptSuppression)) return;
         if (result.status === "overwrite_required") {
+          if (ignorePromptSuppression) {
+            setSuppressReadyStateBootstrapPrompt(false);
+          }
           setOverwriteRisk({
             localRows: result.localRows,
             nonEmptyTables: result.nonEmptyTables,
@@ -373,7 +402,12 @@ export function DeviceSyncSection() {
   );
 
   const handleRetryBootstrap = useCallback(async () => {
-    await runBootstrapCheck(true);
+    setSuppressReadyStateBootstrapPrompt(false);
+    if (bootstrapOwnerRef.current === "pairing_failed") {
+      bootstrapOwnerRef.current = "none";
+    }
+    setBootstrapOwner((owner) => (owner === "pairing_failed" ? "none" : owner));
+    await runBootstrapCheck(true, true, true);
   }, [runBootstrapCheck]);
 
   const handleUploadSnapshotNow = useCallback(async () => {
@@ -510,6 +544,26 @@ export function DeviceSyncSection() {
     runBootstrapCheck,
   ]);
 
+  useEffect(() => {
+    if (!suppressReadyStateBootstrapPrompt) return;
+    if (status.engineIsFetching || !status.engineStatus) return;
+
+    const engineNeedsBootstrap =
+      status.engineStatus.lastCycleStatus === "wait_snapshot" ||
+      status.engineStatus.lastCycleStatus === "stale_cursor" ||
+      status.engineStatus.bootstrapRequired === true;
+
+    if (!engineNeedsBootstrap) {
+      setSuppressReadyStateBootstrapPrompt(false);
+    }
+  }, [
+    suppressReadyStateBootstrapPrompt,
+    status.engineIsFetching,
+    status.engineStatus?.lastCycleStatus,
+    status.engineStatus?.bootstrapRequired,
+    status.engineStatus,
+  ]);
+
   // Loading state (detecting)
   if (status.isLoading) {
     return (
@@ -603,7 +657,7 @@ export function DeviceSyncSection() {
         {/* Pairing Dialog */}
         <Dialog open={isPairingOpen} onOpenChange={handlePairingDialogOpenChange}>
           <DialogContent
-            className="md:max-w-lg"
+            className="sm:max-w-[420px]"
             mobileClassName="pb-8"
             showCloseButton={false}
             onEscapeKeyDown={(e) => e.preventDefault()}
@@ -658,7 +712,7 @@ export function DeviceSyncSection() {
         {/* Pairing Dialog */}
         <Dialog open={isPairingOpen} onOpenChange={handlePairingDialogOpenChange}>
           <DialogContent
-            className="md:max-w-lg"
+            className="sm:max-w-[420px]"
             mobileClassName="pb-8"
             showCloseButton={false}
             onEscapeKeyDown={(e) => e.preventDefault()}
@@ -895,7 +949,7 @@ export function DeviceSyncSection() {
         {/* Pairing Dialog */}
         <Dialog open={isPairingOpen} onOpenChange={handleReadyPairingDialogOpenChange}>
           <DialogContent
-            className="md:max-w-lg"
+            className="sm:max-w-[420px]"
             mobileClassName="pb-8"
             showCloseButton={false}
             onEscapeKeyDown={(e) => e.preventDefault()}
@@ -961,6 +1015,12 @@ export function DeviceSyncSection() {
               <AlertDialogDescription className="text-center text-sm">
                 Your local data will be replaced with data from your other connected device.
               </AlertDialogDescription>
+              {overwriteRisk && overwriteRisk.localRows > 0 && (
+                <p className="text-muted-foreground text-center text-xs">
+                  {overwriteRisk.localRows} local {overwriteRisk.localRows === 1 ? "row" : "rows"}{" "}
+                  will be replaced.
+                </p>
+              )}
             </AlertDialogHeader>
 
             <div className="flex flex-col gap-2 sm:flex-row sm:justify-center">

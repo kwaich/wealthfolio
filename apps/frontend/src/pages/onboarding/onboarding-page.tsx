@@ -1,3 +1,4 @@
+import { StartupError } from "@/components/startup-error";
 import { usePlatform } from "@/hooks/use-platform";
 import { useSettings } from "@/hooks/use-settings";
 import { WEALTHFOLIO_CONNECT_PORTAL_URL } from "@/lib/constants";
@@ -16,7 +17,14 @@ const DESKTOP_MAX_STEPS = 4;
 const MOBILE_MAX_STEPS = 3;
 
 const OnboardingPage = () => {
-  const { data: settings, isLoading: isSettingsLoading } = useSettings();
+  const {
+    data: settings,
+    error: settingsError,
+    isError: isSettingsError,
+    isFetching: isSettingsFetching,
+    isLoading: isSettingsLoading,
+    refetch: refetchSettings,
+  } = useSettings();
   const { isMobile } = usePlatform();
   const { updateSettings } = useSettingsContext();
   const [currentStep, setCurrentStep] = useState(1);
@@ -28,6 +36,15 @@ const OnboardingPage = () => {
   const isFinalStep = currentStep === maxSteps;
 
   if (isSettingsLoading) return null;
+  if (isSettingsError) {
+    return (
+      <StartupError
+        error={settingsError}
+        isRetrying={isSettingsFetching}
+        onRetry={() => void refetchSettings()}
+      />
+    );
+  }
   if (settings?.onboardingCompleted) {
     return <Navigate to={completionRoute} replace />;
   }

@@ -69,7 +69,7 @@ interface ToggleGroupItem<T extends string = string> {
 interface AnimatedToggleGroupProps<T extends string = string> extends VariantProps<typeof animatedToggleVariants> {
   items: ToggleGroupItem<T>[];
   defaultValue?: T;
-  value?: T;
+  value?: T | null;
   onValueChange?: (value: T) => void;
   className?: string;
 }
@@ -80,7 +80,7 @@ export function AnimatedToggleGroup<T extends string = string>(props: AnimatedTo
   const uniqueId = useId();
 
   const isControlled = controlledValue !== undefined;
-  const selected = controlledValue ?? internalValue;
+  const selected = isControlled ? controlledValue : internalValue;
 
   const handleSelect = (value: T) => {
     if (!isControlled) {

@@ -3,9 +3,11 @@ import { listAllocationTargets } from "@/adapters";
 import { QueryKeys } from "@/lib/query-keys";
 import type { AllocationTarget } from "@/lib/types";
 
+const EMPTY_ALLOCATION_TARGETS: AllocationTarget[] = [];
+
 export function useAllocationTargets() {
   const {
-    data: targets = [],
+    data: targets,
     isLoading,
     isError,
   } = useQuery<AllocationTarget[], Error>({
@@ -13,5 +15,5 @@ export function useAllocationTargets() {
     queryFn: listAllocationTargets,
   });
 
-  return { targets, isLoading, isError };
+  return { targets: targets ?? EMPTY_ALLOCATION_TARGETS, isLoading, isError };
 }

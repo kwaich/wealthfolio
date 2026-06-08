@@ -1,19 +1,30 @@
 import { getAccounts, getTransferPairForActivity } from "@/adapters";
+import { ActionPalette, type ActionPaletteGroup } from "@/components/action-palette";
+import { SwipablePage, type SwipablePageView } from "@/components/page";
+import {
+  SpendingTransactionsTab,
+  type SpendingTransactionsTabHandle,
+} from "@/features/spending/components/spending-transactions-tab";
+import { useSpendingSettings } from "@/features/spending/hooks/use-spending-settings";
+import { SyncButton } from "@/features/wealthfolio-connect/components/sync-button";
 import { usePersistentState } from "@/hooks/use-persistent-state";
 import { usePortfolios } from "@/hooks/use-portfolios";
 import { useIsCompactTableViewport, useIsMobileViewport } from "@/hooks/use-platform";
-import { debounce } from "@/lib/debounce";
+import { getActivityRestrictionLevel } from "@/lib/activity-restrictions";
 import { ActivityType } from "@/lib/constants";
+import { debounce } from "@/lib/debounce";
 import { QueryKeys } from "@/lib/query-keys";
 import { Account, AccountScope, ActivityDetails } from "@/lib/types";
+import { formatDateISO } from "@/lib/utils";
+import { AlternativeAssetQuickAddModal } from "@/pages/asset/alternative-assets";
 import { useQuery } from "@tanstack/react-query";
 import type { SortingState } from "@tanstack/react-table";
 import { Button, Icons, Page, PageContent, PageHeader } from "@wealthfolio/ui";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { DateRange } from "react-day-picker";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { getActivityRestrictionLevel } from "@/lib/activity-restrictions";
-import { ActivityDeleteModal } from "./components/activity-delete-modal";
 import { ActivityDataGrid } from "./components/activity-data-grid/activity-data-grid";
+import { ActivityDeleteModal } from "./components/activity-delete-modal";
 import { ActivityForm } from "./components/activity-form";
 import { ActivityMobileControls } from "./components/activity-mobile-controls";
 import { ActivityPagination } from "./components/activity-pagination";
@@ -24,20 +35,38 @@ import { BulkHoldingsModal } from "./components/forms/bulk-holdings-modal";
 import { MobileActivityForm } from "./components/mobile-forms/mobile-activity-form";
 import { useActivityMutations } from "./hooks/use-activity-mutations";
 import { useActivitySearch, type ActivityStatusFilter } from "./hooks/use-activity-search";
-import { SyncButton } from "@/features/wealthfolio-connect/components/sync-button";
-import { AlternativeAssetQuickAddModal } from "@/pages/asset/alternative-assets";
-import { ActionPalette, type ActionPaletteGroup } from "@/components/action-palette";
-import { SwipablePage, type SwipablePageView } from "@/components/page";
-import { useSpendingSettings } from "@/features/spending/hooks/use-spending-settings";
 import {
-  SpendingTransactionsTab,
-  type SpendingTransactionsTabHandle,
-} from "@/features/spending/components/spending-transactions-tab";
-import {
+  clearActivityUrlDateFilters,
   clearActivityUrlFilters,
+  clearActivityUrlTypeFilters,
   resolveActivityTabFromUrlFilters,
   resolveActivityUrlFilters,
 } from "./utils/url-filters";
+
+interface ActivityDateRangeFilter {
+  from?: string;
+  to?: string;
+}
+
+function parseLocalDate(value?: string): Date | undefined {
+  if (!value) return undefined;
+  const [year, month, day] = value.split("-").map(Number);
+  if (!year || !month || !day) return undefined;
+  return new Date(year, month - 1, day);
+}
+
+function toDateRange(value: ActivityDateRangeFilter): DateRange | undefined {
+  const from = parseLocalDate(value.from);
+  const to = parseLocalDate(value.to);
+  return from || to ? { from, to } : undefined;
+}
+
+function fromDateRange(range: DateRange | undefined): ActivityDateRangeFilter {
+  return {
+    ...(range?.from ? { from: formatDateISO(range.from) } : {}),
+    ...(range?.to ? { to: formatDateISO(range.to) } : {}),
+  };
+}
 
 const ActivityPage = () => {
   const [showForm, setShowForm] = useState(false);
@@ -73,6 +102,10 @@ const ActivityPage = () => {
   );
   const [persistedStatusFilter, setPersistedStatusFilter] =
     usePersistentState<ActivityStatusFilter>("activity-filter-status", "all");
+  const [selectedDateRange, setSelectedDateRange] = usePersistentState<ActivityDateRangeFilter>(
+    "activity-filter-date-range",
+    {},
+  );
   const [searchInput, setSearchInput] = usePersistentState<string>("activity-filter-search", "");
   const [searchQuery, setSearchQuery] = useState(searchInput);
   const [viewMode, setViewMode] = usePersistentState<ActivityViewMode>(
@@ -101,9 +134,16 @@ const ActivityPage = () => {
   const statusFilter = activityUrlFilters.statusFilter ?? persistedStatusFilter;
   // Health Center deeplinks can scope the list to specific activity types / a date
   // window (e.g. transfers around an incomplete-transfer issue). URL wins over persisted.
-  const effectiveActivityTypes = activityUrlFilters.activityTypes ?? selectedActivityTypes;
+  const urlActivityTypes = activityUrlFilters.activityTypes;
+  const effectiveActivityTypes = urlActivityTypes ?? selectedActivityTypes;
   const urlDateFrom = activityUrlFilters.dateFrom;
   const urlDateTo = activityUrlFilters.dateTo;
+  const effectiveDateFrom = urlDateFrom ?? selectedDateRange.from;
+  const effectiveDateTo = urlDateTo ?? selectedDateRange.to;
+  const effectiveDateRange = useMemo(
+    () => toDateRange({ from: effectiveDateFrom, to: effectiveDateTo }),
+    [effectiveDateFrom, effectiveDateTo],
+  );
 
   const clearBrokerReviewUrlFilters = useCallback(() => {
     setSearchParams(
@@ -145,6 +185,38 @@ const ActivityPage = () => {
       setPersistedAccountScope,
       setPersistedStatusFilter,
     ],
+  );
+
+  const setInvestmentDateRange = useCallback(
+    (range: DateRange | undefined) => {
+      setSelectedDateRange(fromDateRange(range));
+      if (urlDateFrom || urlDateTo) {
+        setSearchParams(
+          (prev) => {
+            const next = clearActivityUrlDateFilters(prev);
+            return next.toString() === prev.toString() ? prev : next;
+          },
+          { replace: true },
+        );
+      }
+    },
+    [setSearchParams, setSelectedDateRange, urlDateFrom, urlDateTo],
+  );
+
+  const setInvestmentActivityTypes = useCallback(
+    (types: ActivityType[]) => {
+      setSelectedActivityTypes(types);
+      if (urlActivityTypes) {
+        setSearchParams(
+          (prev) => {
+            const next = clearActivityUrlTypeFilters(prev);
+            return next.toString() === prev.toString() ? prev : next;
+          },
+          { replace: true },
+        );
+      }
+    },
+    [setSearchParams, setSelectedActivityTypes, urlActivityTypes],
   );
 
   // Coerce "spending" URL state back to investments when the module is disabled.
@@ -298,8 +370,8 @@ const ActivityPage = () => {
       activityTypes: effectiveActivityTypes,
       instrumentTypes: selectedInstrumentTypes,
       status: statusFilter,
-      dateFrom: urlDateFrom,
-      dateTo: urlDateTo,
+      dateFrom: effectiveDateFrom,
+      dateTo: effectiveDateTo,
     },
     searchQuery,
     sorting,
@@ -313,8 +385,8 @@ const ActivityPage = () => {
       activityTypes: effectiveActivityTypes,
       instrumentTypes: selectedInstrumentTypes,
       status: statusFilter,
-      dateFrom: urlDateFrom,
-      dateTo: urlDateTo,
+      dateFrom: effectiveDateFrom,
+      dateTo: effectiveDateTo,
     },
     searchQuery,
     sorting,
@@ -331,9 +403,11 @@ const ActivityPage = () => {
     effectiveInvestmentAccountIds,
     isDatagridView,
     pageIndex,
-    selectedActivityTypes,
+    effectiveActivityTypes,
     selectedInstrumentTypes,
     statusFilter,
+    effectiveDateFrom,
+    effectiveDateTo,
     searchQuery,
     setPageIndex,
     sorting,
@@ -422,9 +496,11 @@ const ActivityPage = () => {
 
   const investmentsFiltersActive =
     accountScope.type !== "all" ||
-    selectedActivityTypes.length > 0 ||
+    effectiveActivityTypes.length > 0 ||
     selectedInstrumentTypes.length > 0 ||
     statusFilter !== "all" ||
+    !!effectiveDateFrom ||
+    !!effectiveDateTo ||
     searchInput.trim().length > 0;
 
   const clearInvestmentsFilters = useCallback(() => {
@@ -432,6 +508,7 @@ const ActivityPage = () => {
     setSelectedActivityTypes([]);
     setSelectedInstrumentTypes([]);
     setPersistedStatusFilter("all");
+    setSelectedDateRange({});
     setSearchInput("");
     setSearchQuery("");
     clearBrokerReviewUrlFilters();
@@ -441,6 +518,7 @@ const ActivityPage = () => {
     setSelectedActivityTypes,
     setSelectedInstrumentTypes,
     setPersistedStatusFilter,
+    setSelectedDateRange,
     setSearchInput,
   ]);
 
@@ -583,8 +661,10 @@ const ActivityPage = () => {
           onSearchQueryChange={handleSearchChange}
           accountScope={accountScope}
           onAccountScopeChange={setAccountScope}
-          selectedActivityTypes={selectedActivityTypes}
-          onActivityTypesChange={setSelectedActivityTypes}
+          selectedActivityTypes={effectiveActivityTypes}
+          onActivityTypesChange={setInvestmentActivityTypes}
+          dateRange={effectiveDateRange}
+          onDateRangeChange={setInvestmentDateRange}
           isCompactView={isCompactView}
           onCompactViewChange={setIsCompactView}
         />
@@ -596,12 +676,14 @@ const ActivityPage = () => {
           onSearchQueryChange={handleSearchChange}
           accountScope={accountScope}
           onAccountScopeChange={setAccountScope}
-          selectedActivityTypes={selectedActivityTypes}
-          onActivityTypesChange={setSelectedActivityTypes}
+          selectedActivityTypes={effectiveActivityTypes}
+          onActivityTypesChange={setInvestmentActivityTypes}
           selectedInstrumentTypes={selectedInstrumentTypes}
           onInstrumentTypesChange={setSelectedInstrumentTypes}
           statusFilter={statusFilter}
           onStatusFilterChange={setStatusFilter}
+          dateRange={effectiveDateRange}
+          onDateRangeChange={setInvestmentDateRange}
           viewMode={viewMode}
           onViewModeChange={setViewMode}
           totalFetched={shouldUseDatagridView ? undefined : totalFetched}
@@ -713,7 +795,7 @@ const ActivityPage = () => {
   if (!isSpendingEnabled) {
     return (
       <Page>
-        <PageHeader heading="Activity" actions={investmentActions} />
+        <PageHeader actions={investmentActions} />
         <PageContent className="pb-2 md:pb-4 lg:pb-5">{investmentContent}</PageContent>
         {sharedModals}
       </Page>

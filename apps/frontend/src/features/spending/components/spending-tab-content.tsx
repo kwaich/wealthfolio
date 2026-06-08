@@ -23,7 +23,16 @@ import Balance from "@/pages/dashboard/balance";
 import {
   AnimatedToggleGroup,
   Icons,
+  MonthYearPicker,
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
   PrivacyAmount,
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
   Skeleton,
   formatCompactAmount,
   useIsMobile,
@@ -57,11 +66,25 @@ import { RecentActivityCard } from "./recent-activity-card";
 
 const FUTURE_BAR = "#E5E7EB";
 const SPENDING_TAXONOMY = "spending_categories";
-type SpendingDashboardPeriod = "MTD" | "30D" | "3M" | "6M" | "YTD" | "1Y";
+type SpendingDashboardPeriod = "MTD" | "LAST_MONTH" | "30D" | "3M" | "6M" | "YTD" | "1Y";
+
+type SpendingSelection =
+  | { kind: "period"; code: SpendingDashboardPeriod }
+  | { kind: "month"; monthKey: string; restoreCode: SpendingDashboardPeriod };
 
 const SPENDING_DASHBOARD_PERIODS: SpendingDashboardPeriod[] = [
   "MTD",
+  "LAST_MONTH",
   "30D",
+  "3M",
+  "6M",
+  "YTD",
+  "1Y",
+];
+
+const VISIBLE_SPENDING_DASHBOARD_PERIODS: SpendingDashboardPeriod[] = [
+  "MTD",
+  "LAST_MONTH",
   "3M",
   "6M",
   "YTD",
@@ -70,8 +93,10 @@ const SPENDING_DASHBOARD_PERIODS: SpendingDashboardPeriod[] = [
 
 const DEFAULT_INTERVAL: SpendingDashboardPeriod = "MTD";
 const INTERVAL_STORAGE_KEY = "spending-interval";
+const MONTH_PARAM = "spendingMonth";
 const INTERVAL_DESCRIPTIONS: Record<SpendingDashboardPeriod, string> = {
   MTD: "this month",
+  LAST_MONTH: "last month",
   "30D": "past 30 days",
   "3M": "past 3 months",
   "6M": "past 6 months",
@@ -83,6 +108,12 @@ const SPENDING_DASHBOARD_PERIOD_LABELS: Record<SpendingDashboardPeriod, ReactNod
     <>
       <span className="hidden sm:inline">This month</span>
       <span className="sm:hidden">MTD</span>
+    </>
+  ),
+  LAST_MONTH: (
+    <>
+      <span className="hidden sm:inline">Last month</span>
+      <span className="sm:hidden">Prev</span>
     </>
   ),
   "30D": "30D",
@@ -128,6 +159,52 @@ function localDateFromParts(date: ZonedCalendarDate): Date {
   return new Date(date.year, date.month - 1, date.day);
 }
 
+function monthKeyFromParts(date: Pick<ZonedCalendarDate, "year" | "month">): string {
+  return `${date.year}-${String(date.month).padStart(2, "0")}`;
+}
+
+function parseMonthKey(value: string | null | undefined): { year: number; month: number } | null {
+  if (!value || !/^\d{4}-(0[1-9]|1[0-2])$/.test(value)) return null;
+  const [year, month] = value.split("-").map(Number);
+  return { year, month };
+}
+
+function currentMonthKey(timezone?: string | null): string {
+  return monthKeyFromParts(getZonedDateParts(new Date(), timezone));
+}
+
+function addMonthsToMonthKey(monthKey: string, months: number): string {
+  const parts = parseMonthKey(monthKey);
+  if (!parts) return monthKey;
+  return monthKeyFromParts(addCalendarMonths({ ...parts, day: 1 }, months));
+}
+
+function monthRange(monthKey: string): DateRange {
+  const parts = parseMonthKey(monthKey) ?? parseMonthKey(currentMonthKey());
+  const month = parts ?? getZonedDateParts(new Date());
+  const start = { ...month, day: 1 };
+  const end = { ...month, day: daysInCalendarMonth(month.year, month.month) };
+  return { from: localDateFromParts(start), to: localDateFromParts(end) };
+}
+
+function monthLabel(monthKey: string, format: "long" | "short" = "long"): string {
+  const parts = parseMonthKey(monthKey);
+  if (!parts) return "";
+  return new Date(parts.year, parts.month - 1, 1).toLocaleString(undefined, {
+    month: format,
+    year: "numeric",
+  });
+}
+
+function compactMonthLabel(monthKey: string): string {
+  const parts = parseMonthKey(monthKey);
+  if (!parts) return "";
+  const month = new Date(parts.year, parts.month - 1, 1).toLocaleString(undefined, {
+    month: "short",
+  });
+  return `${month} '${String(parts.year).slice(2)}`;
+}
+
 function isSpendingDashboardPeriod(
   value: string | null | undefined,
 ): value is SpendingDashboardPeriod {
@@ -145,20 +222,31 @@ function normalizeSpendingDashboardPeriod(
 
 function spendingIntervalData(code: SpendingDashboardPeriod, timezone?: string | null) {
   const today = getZonedDateParts(new Date(), timezone);
-  const start = (() => {
+  const { start, end } = (() => {
     switch (code) {
       case "MTD":
-        return { year: today.year, month: today.month, day: 1 };
+        return { start: { year: today.year, month: today.month, day: 1 }, end: today };
+      case "LAST_MONTH": {
+        const lastMonth = addCalendarMonths({ year: today.year, month: today.month, day: 1 }, -1);
+        return {
+          start: { year: lastMonth.year, month: lastMonth.month, day: 1 },
+          end: {
+            year: lastMonth.year,
+            month: lastMonth.month,
+            day: daysInCalendarMonth(lastMonth.year, lastMonth.month),
+          },
+        };
+      }
       case "30D":
-        return addCalendarDays(today, -29);
+        return { start: addCalendarDays(today, -29), end: today };
       case "3M":
-        return addCalendarMonths(today, -3);
+        return { start: addCalendarMonths(today, -3), end: today };
       case "6M":
-        return addCalendarMonths(today, -6);
+        return { start: addCalendarMonths(today, -6), end: today };
       case "YTD":
-        return { year: today.year, month: 1, day: 1 };
+        return { start: { year: today.year, month: 1, day: 1 }, end: today };
       case "1Y":
-        return { ...today, year: today.year - 1 };
+        return { start: { ...today, year: today.year - 1 }, end: today };
     }
   })();
 
@@ -167,18 +255,64 @@ function spendingIntervalData(code: SpendingDashboardPeriod, timezone?: string |
     description: INTERVAL_DESCRIPTIONS[code],
     range: {
       from: localDateFromParts(start),
-      to: localDateFromParts(today),
+      to: localDateFromParts(end),
     },
   };
 }
 
 function insightPeriodForDashboardInterval(code: SpendingDashboardPeriod): ReportsPeriod {
+  if (code === "LAST_MONTH") return "MTD";
   return code;
 }
 
+function selectionFromParams(
+  params: URLSearchParams,
+  persistedInterval: string,
+): SpendingSelection {
+  const restoreCode = normalizeSpendingDashboardPeriod(
+    params.get("spendingInterval") ?? persistedInterval,
+  );
+  const monthKey = params.get(MONTH_PARAM);
+  if (monthKey && parseMonthKey(monthKey)) return { kind: "month", monthKey, restoreCode };
+  return { kind: "period", code: restoreCode };
+}
+
+function selectionData(selection: SpendingSelection, timezone?: string | null) {
+  if (selection.kind === "month") {
+    return {
+      range: monthRange(selection.monthKey),
+      description: monthLabel(selection.monthKey),
+      insightPeriod: "MTD" as ReportsPeriod,
+    };
+  }
+
+  const interval = spendingIntervalData(selection.code, timezone);
+  return {
+    range: interval.range,
+    description: interval.description,
+    insightPeriod: insightPeriodForDashboardInterval(selection.code),
+  };
+}
+
+function previousFullMonthRange(range: DateRange): DateRange | undefined {
+  if (!range.from) return undefined;
+  const start = localDateParts(range.from);
+  const priorMonth = addCalendarMonths({ year: start.year, month: start.month, day: 1 }, -1);
+  return monthRange(monthKeyFromParts(priorMonth));
+}
+
+function usesCalendarMonthComparison(selection: SpendingSelection) {
+  return (
+    selection.kind === "month" || (selection.kind === "period" && selection.code === "LAST_MONTH")
+  );
+}
+
 interface SpendingDashboardPeriodSelectorProps {
-  value: SpendingDashboardPeriod;
+  value: SpendingDashboardPeriod | null;
   onValueChange: (next: SpendingDashboardPeriod) => void;
+  customMonth: string | null;
+  maxMonth: string;
+  onCustomMonthChange: (monthKey: string | null) => void;
   isLoading?: boolean;
   className?: string;
 }
@@ -186,11 +320,14 @@ interface SpendingDashboardPeriodSelectorProps {
 function SpendingDashboardPeriodSelector({
   value,
   onValueChange,
+  customMonth,
+  maxMonth,
+  onCustomMonthChange,
   isLoading,
   className,
 }: SpendingDashboardPeriodSelectorProps) {
   const isMobile = useIsMobile();
-  const items = SPENDING_DASHBOARD_PERIODS.map((period) => ({
+  const items = VISIBLE_SPENDING_DASHBOARD_PERIODS.map((period) => ({
     value: period,
     label: SPENDING_DASHBOARD_PERIOD_LABELS[period],
     title: INTERVAL_DESCRIPTIONS[period],
@@ -211,21 +348,36 @@ function SpendingDashboardPeriodSelector({
           "[-webkit-overflow-scrolling:touch]",
         )}
       >
-        <AnimatedToggleGroup
-          items={items}
-          value={value}
-          onValueChange={onValueChange}
-          size={isMobile ? "compact" : "sm"}
-          variant="default"
-          className="pointer-events-auto bg-transparent"
-        />
+        <div className="pointer-events-auto flex items-center gap-1.5">
+          <AnimatedToggleGroup
+            items={items}
+            value={value}
+            onValueChange={onValueChange}
+            size={isMobile ? "compact" : "sm"}
+            variant="default"
+            className="bg-transparent"
+          />
+          <MonthPickerButton
+            value={customMonth}
+            defaultViewMonth={maxMonth}
+            maxDate={maxMonth}
+            onSelect={onCustomMonthChange}
+            onClear={customMonth ? () => onCustomMonthChange(null) : undefined}
+          />
+        </div>
       </div>
     </div>
   );
 }
 
-function priorRange(range: DateRange | undefined): DateRange | undefined {
+function priorRange(
+  range: DateRange | undefined,
+  selection?: SpendingSelection,
+): DateRange | undefined {
   if (!range?.from || !range?.to) return undefined;
+  if (selection && usesCalendarMonthComparison(selection)) {
+    return previousFullMonthRange(range);
+  }
   const start = localDateParts(range.from);
   const end = localDateParts(range.to);
   const days = calendarDaysBetweenInclusive(start, end);
@@ -277,30 +429,24 @@ export default function SpendingTabContent() {
     INTERVAL_STORAGE_KEY,
     DEFAULT_INTERVAL,
   );
-  const intervalCode = normalizeSpendingDashboardPeriod(
-    searchParams.get("spendingInterval") ?? persistedInterval,
+  const selection = useMemo(
+    () => selectionFromParams(searchParams, persistedInterval),
+    [searchParams, persistedInterval],
   );
-  const [activeCode, setActiveCode] = useState<SpendingDashboardPeriod>(intervalCode);
+  const selectedPeriod = selection.kind === "period" ? selection.code : null;
+  const customMonth = selection.kind === "month" ? selection.monthKey : null;
+  const restoreCode = selection.kind === "month" ? selection.restoreCode : selection.code;
+  const {
+    range: dateRange,
+    description: selectedIntervalDescription,
+    insightPeriod,
+  } = useMemo(() => selectionData(selection, appTimezone), [selection, appTimezone]);
   const theme: Palette = FOREST_THEME;
 
   const [whereItWentView, setWhereItWentView] = usePersistentState<"list" | "map">(
     "spending-where-view",
     "list",
   );
-
-  const [dateRange, setDateRange] = useState<DateRange | undefined>(
-    () => spendingIntervalData(intervalCode, appTimezone).range,
-  );
-  const [selectedIntervalDescription, setSelectedIntervalDescription] = useState<string>(
-    () => spendingIntervalData(intervalCode, appTimezone).description,
-  );
-
-  useEffect(() => {
-    const initial = spendingIntervalData(intervalCode, appTimezone);
-    setActiveCode(intervalCode);
-    setDateRange(initial.range);
-    setSelectedIntervalDescription(initial.description);
-  }, [intervalCode, appTimezone]);
 
   const reportReq = useMemo(
     () => rangeToReportRequest(dateRange, appTimezone),
@@ -312,7 +458,10 @@ export default function SpendingTabContent() {
   // currentReport (priorSpending == totalSpending) and surface a misleading
   // "About the same as prior period" delta line. Track whether we actually
   // have a prior window and gate the query on it.
-  const priorRangeForReport = useMemo(() => priorRange(dateRange), [dateRange]);
+  const priorRangeForReport = useMemo(
+    () => priorRange(dateRange, selection),
+    [dateRange, selection],
+  );
   const priorReportReq = useMemo(
     () =>
       priorRangeForReport ? rangeToReportRequest(priorRangeForReport, appTimezone) : reportReq,
@@ -335,6 +484,17 @@ export default function SpendingTabContent() {
   });
   const taxonomy = useTaxonomy(SPENDING_TAXONOMY);
   const { data: budget, isError: budgetErrored } = useBudget();
+  const todayParts = useMemo(() => getZonedDateParts(new Date(), appTimezone), [appTimezone]);
+  const currentBudgetMonthKey = useMemo(() => monthKeyFromParts(todayParts), [todayParts]);
+  const [budgetMonthKey, setBudgetMonthKey] = useState(() => monthKeyFromParts(todayParts));
+  const [budgetMonthTouched, setBudgetMonthTouched] = useState(false);
+  useEffect(() => {
+    setBudgetMonthKey((monthKey) => {
+      if (!budgetMonthTouched) return currentBudgetMonthKey;
+      return monthKey > currentBudgetMonthKey ? currentBudgetMonthKey : monthKey;
+    });
+  }, [budgetMonthTouched, currentBudgetMonthKey]);
+  const { data: budgetCardBudget, isError: budgetCardBudgetErrored } = useBudget(budgetMonthKey);
   const { accounts = [] } = useAccounts({ filterActive: false });
   const { data: categorizationRules = [], isLoading: categorizationRulesLoading } =
     useCategorizationRules();
@@ -345,36 +505,44 @@ export default function SpendingTabContent() {
   // Aggregated error state for the headline banner. Activities / budget
   // failures degrade more silently than report (their absence shows up as
   // a flat treemap or hidden chips), but the user deserves a signal.
-  const dataErrored = reportErrored || activitiesErrored || budgetErrored;
+  const dataErrored =
+    reportErrored || activitiesErrored || budgetErrored || budgetCardBudgetErrored;
   const hasNoIncludedAccounts = !spendingSettingsLoading && spendingAccountIds.length === 0;
 
-  const monthReportReq = useMemo(() => {
-    const today = getZonedDateParts(new Date(), appTimezone);
-    const start = { year: today.year, month: today.month, day: 1 };
-    return {
-      startDate: zonedCalendarDateBoundaryToDate(start, "start", appTimezone).toISOString(),
-      endDate: zonedCalendarDateBoundaryToDate(today, "end", appTimezone).toISOString(),
-    };
-  }, [appTimezone]);
+  const budgetMonthRange = useMemo(() => {
+    const month = parseMonthKey(budgetMonthKey) ?? todayParts;
+    const start = { year: month.year, month: month.month, day: 1 };
+    const end =
+      budgetMonthKey === currentBudgetMonthKey
+        ? todayParts
+        : { ...month, day: daysInCalendarMonth(month.year, month.month) };
+    return { from: localDateFromParts(start), to: localDateFromParts(end) };
+  }, [budgetMonthKey, currentBudgetMonthKey, todayParts]);
+  const monthReportReq = useMemo(
+    () => rangeToReportRequest(budgetMonthRange, appTimezone),
+    [budgetMonthRange, appTimezone],
+  );
   const { data: monthReport } = useSpendingReport(monthReportReq);
-
-  const subsActivitiesReq = useMemo(() => {
-    const end = getZonedDateParts(new Date(), appTimezone);
-    const start = addCalendarDays(end, -90);
-    return {
-      startDate: zonedCalendarDateBoundaryToDate(start, "start", appTimezone).toISOString(),
-      endDate: zonedCalendarDateBoundaryToDate(end, "end", appTimezone).toISOString(),
-    };
-  }, [appTimezone]);
-  const { data: subsActivities = [] } = useCashActivities({
-    startDate: subsActivitiesReq.startDate,
-    endDate: subsActivitiesReq.endDate,
-  });
+  const budgetMonthActivityRange = useMemo(
+    () => ({
+      from: formatDateISO(budgetMonthRange.from),
+      to: formatDateISO(budgetMonthRange.to),
+    }),
+    [budgetMonthRange],
+  );
+  const shiftBudgetMonth = (months: number) => {
+    setBudgetMonthTouched(true);
+    setBudgetMonthKey((monthKey) => {
+      const next = addMonthsToMonthKey(monthKey, months);
+      return next > currentBudgetMonthKey ? currentBudgetMonthKey : next;
+    });
+  };
 
   const historyReportReq = useMemo(() => {
-    const today = getZonedDateParts(new Date(), appTimezone);
-    const historyStart = addCalendarMonths({ year: today.year, month: today.month, day: 1 }, -3);
-    const historyEndMonth = addCalendarMonths({ year: today.year, month: today.month, day: 1 }, -1);
+    const month = parseMonthKey(budgetMonthKey) ?? todayParts;
+    const monthStart = { year: month.year, month: month.month, day: 1 };
+    const historyStart = addCalendarMonths(monthStart, -3);
+    const historyEndMonth = addCalendarMonths(monthStart, -1);
     const historyEnd = {
       ...historyEndMonth,
       day: daysInCalendarMonth(historyEndMonth.year, historyEndMonth.month),
@@ -383,19 +551,20 @@ export default function SpendingTabContent() {
       startDate: zonedCalendarDateBoundaryToDate(historyStart, "start", appTimezone).toISOString(),
       endDate: zonedCalendarDateBoundaryToDate(historyEnd, "end", appTimezone).toISOString(),
     };
-  }, [appTimezone]);
+  }, [budgetMonthKey, appTimezone, todayParts]);
   const { data: historyReport } = useSpendingReport(historyReportReq);
 
   const historicalDailyAvg = useMemo(() => {
     const total = historyReport?.current.outflow ?? 0;
     if (total <= 0) return 0;
-    const today = getZonedDateParts(new Date(), appTimezone);
-    const start = addCalendarMonths({ year: today.year, month: today.month, day: 1 }, -3);
-    const endMonth = addCalendarMonths({ year: today.year, month: today.month, day: 1 }, -1);
+    const month = parseMonthKey(budgetMonthKey) ?? todayParts;
+    const monthStart = { year: month.year, month: month.month, day: 1 };
+    const start = addCalendarMonths(monthStart, -3);
+    const endMonth = addCalendarMonths(monthStart, -1);
     const end = { ...endMonth, day: daysInCalendarMonth(endMonth.year, endMonth.month) };
     const days = Math.max(1, calendarDaysBetweenInclusive(start, end));
     return total / days;
-  }, [historyReport?.current.outflow, appTimezone]);
+  }, [historyReport?.current.outflow, budgetMonthKey, todayParts]);
 
   // Always render in the user's base currency. The backend FX-converts every
   // activity in `report` to base at period end, so labeling by the first
@@ -403,13 +572,12 @@ export default function SpendingTabContent() {
   // accounts. Single-currency users see the same number either way.
   const currency = baseCurrency;
   const dashboardInsightHref = useMemo(() => {
-    const period = insightPeriodForDashboardInterval(activeCode);
     const rangeParams =
       dateRange?.from && dateRange?.to
         ? `&from=${formatDateISO(dateRange.from)}&to=${formatDateISO(dateRange.to)}`
         : "";
     const href = (stage: (typeof INSIGHT_STAGES)[number]["stage"], hash = "") =>
-      `/spending/insights?stage=${stage}&period=${period}${rangeParams}${hash}`;
+      `/spending/insights?stage=${stage}&period=${insightPeriod}${rangeParams}${hash}`;
     const cashflow = href("where", "#cashflow");
     return {
       where: href("where"),
@@ -417,7 +585,7 @@ export default function SpendingTabContent() {
       when: href("when"),
       cashflow,
     };
-  }, [activeCode, dateRange]);
+  }, [insightPeriod, dateRange]);
   const accountTypeById = useMemo(
     () => new Map(accounts.map((account) => [account.id, account.accountType])),
     [accounts],
@@ -435,17 +603,35 @@ export default function SpendingTabContent() {
   const deltaPct = priorSpending > 0 ? delta / priorSpending : 0;
   const priorIsMeaningful = priorSpending >= Math.max(100, totalSpending * 0.02);
   const displayDeltaPct = priorIsMeaningful ? deltaPct : null;
+  const maxPickerMonth = useMemo(
+    () => addMonthsToMonthKey(currentBudgetMonthKey, -1),
+    [currentBudgetMonthKey],
+  );
 
   const handleIntervalSelect = (code: SpendingDashboardPeriod) => {
-    const initial = spendingIntervalData(code, appTimezone);
-    setActiveCode(code);
     setPersistedInterval(code);
-    setSelectedIntervalDescription(initial.description);
-    setDateRange(initial.range);
     setSearchParams(
       (prev) => {
         const p = new URLSearchParams(prev);
         p.set("spendingInterval", code);
+        p.delete(MONTH_PARAM);
+        return p;
+      },
+      { replace: true },
+    );
+  };
+
+  const handleCustomMonthSelect = (monthKey: string | null) => {
+    setSearchParams(
+      (prev) => {
+        const p = new URLSearchParams(prev);
+        if (monthKey) {
+          p.set("spendingInterval", restoreCode);
+          p.set(MONTH_PARAM, monthKey);
+        } else {
+          p.set("spendingInterval", restoreCode);
+          p.delete(MONTH_PARAM);
+        }
         return p;
       },
       { replace: true },
@@ -453,8 +639,10 @@ export default function SpendingTabContent() {
   };
 
   const granularity: "day" | "week" | "month" = useMemo(() => {
-    switch (activeCode) {
+    if (selection.kind === "month") return "day";
+    switch (selection.code) {
       case "MTD":
+      case "LAST_MONTH":
       case "30D":
         return "day";
       case "3M":
@@ -463,7 +651,7 @@ export default function SpendingTabContent() {
       default:
         return "month";
     }
-  }, [activeCode]);
+  }, [selection]);
 
   const { barData, avgValue, avgLabel } = useMemo(() => {
     const buckets = report?.byDay ?? [];
@@ -866,14 +1054,17 @@ export default function SpendingTabContent() {
           <div className="flex w-full justify-center">
             <SpendingDashboardPeriodSelector
               className="pointer-events-auto relative z-20 w-full max-w-screen-sm sm:max-w-screen-md md:max-w-2xl lg:max-w-3xl"
-              value={activeCode}
+              value={selectedPeriod}
               onValueChange={handleIntervalSelect}
+              customMonth={customMonth}
+              maxMonth={maxPickerMonth}
+              onCustomMonthChange={handleCustomMonthSelect}
               isLoading={isLoading}
             />
           </div>
         </div>
 
-        <div className="grow px-4 pb-[calc(var(--mobile-nav-ui-height)+max(var(--mobile-nav-gap),env(safe-area-inset-bottom)))] pt-24 md:px-6 md:pb-6 md:pt-20 lg:px-10 lg:pb-8 lg:pt-24">
+        <div className="grow px-4 pb-[var(--mobile-nav-total-offset)] pt-24 md:px-6 md:pb-6 md:pt-20 lg:px-10 lg:pb-8 lg:pt-24">
           <div className="flex flex-col gap-6 lg:grid lg:grid-cols-3 lg:gap-20">
             <div className="contents lg:col-span-2 lg:block lg:space-y-6">
               <DashboardCard
@@ -959,11 +1150,20 @@ export default function SpendingTabContent() {
             <div className="contents lg:col-span-1 lg:block lg:space-y-6">
               <div className="order-2 lg:order-none">
                 <BudgetLineChartCard
-                  target={budget?.computed.totals.spendingPlanned ?? 0}
+                  monthKey={budgetMonthKey}
+                  today={todayParts}
+                  isCurrentMonth={budgetMonthKey === currentBudgetMonthKey}
+                  onPreviousMonth={() => shiftBudgetMonth(-1)}
+                  onNextMonth={() => shiftBudgetMonth(1)}
+                  canGoNextMonth={budgetMonthKey < currentBudgetMonthKey}
+                  activityRange={budgetMonthActivityRange}
+                  target={budgetCardBudget?.computed.totals.spendingPlanned ?? 0}
                   spent={monthReport?.current.outflow ?? 0}
-                  currency={budget?.computed.currency ?? currency}
+                  currency={budgetCardBudget?.computed.currency ?? currency}
                   historicalDailyAvg={historicalDailyAvg}
-                  allocations={budget?.computed.groupRows.flatMap((row) => row.categories) ?? []}
+                  allocations={
+                    budgetCardBudget?.computed.groupRows.flatMap((row) => row.categories) ?? []
+                  }
                   spendingBreakdown={monthReport?.spendingBreakdown ?? []}
                   categoriesMeta={categoriesMeta}
                   monthByDay={monthReport?.byDay ?? []}
@@ -1011,9 +1211,13 @@ export default function SpendingTabContent() {
 
               <div className="order-5 lg:order-none">
                 <EventsCard
-                  activities={subsActivities}
+                  activities={activities}
                   accountTypeById={accountTypeById}
                   categoriesMeta={categoriesMeta}
+                  periodEndDate={dateRange?.to ? formatDateISO(dateRange.to) : reportReq.endDate}
+                  periodStartDate={
+                    dateRange?.from ? formatDateISO(dateRange.from) : reportReq.startDate
+                  }
                   theme={theme}
                 />
               </div>
@@ -1026,6 +1230,88 @@ export default function SpendingTabContent() {
 }
 
 // ─── small inline components ──────────────────────────────────────────────
+
+function MonthPickerButton({
+  value,
+  defaultViewMonth,
+  maxDate,
+  onSelect,
+  onClear,
+}: {
+  value: string | null;
+  defaultViewMonth: string;
+  maxDate: string;
+  onSelect: (monthKey: string) => void;
+  onClear?: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const isMobile = useIsMobile();
+  const label = value ? compactMonthLabel(value) : null;
+  const trigger = (
+    <button
+      type="button"
+      className={cn(
+        "flex h-8 items-center justify-center rounded-full transition-colors",
+        label
+          ? "bg-background/80 border-border/60 gap-1 border px-2.5 text-xs font-medium"
+          : "bg-muted text-foreground/90 hover:text-foreground w-8",
+      )}
+      aria-label={label ? `Viewing ${label}, click to change` : "Pick a specific month"}
+    >
+      {label ? <span>{label}</span> : <Icons.Calendar className="h-3.5 w-3.5" />}
+    </button>
+  );
+  const picker = (
+    <MonthYearPicker
+      value={value ?? defaultViewMonth}
+      maxDate={maxDate}
+      className={
+        isMobile
+          ? "w-full max-w-none p-0 [&>div:first-child]:mb-5 [&>div:first-child_button]:h-11 [&>div:first-child_button]:w-11 [&_.grid]:gap-3 [&_.grid_button]:h-12 [&_.grid_button]:text-base"
+          : undefined
+      }
+      onChange={(monthKey) => {
+        onSelect(monthKey);
+        setOpen(false);
+      }}
+    />
+  );
+
+  return (
+    <div className="flex items-center gap-1">
+      {isMobile ? (
+        <Sheet open={open} onOpenChange={setOpen}>
+          <SheetTrigger asChild>{trigger}</SheetTrigger>
+          <SheetContent side="bottom" className="rounded-t-4xl mx-1 p-0">
+            <SheetHeader className="border-border border-b px-6 py-4">
+              <SheetTitle>Select month</SheetTitle>
+            </SheetHeader>
+            <div className="px-5 py-5 pb-[calc(env(safe-area-inset-bottom,0px)+1.25rem)]">
+              {picker}
+            </div>
+          </SheetContent>
+        </Sheet>
+      ) : (
+        <Popover open={open} onOpenChange={setOpen}>
+          <PopoverTrigger asChild>{trigger}</PopoverTrigger>
+          <PopoverContent className="w-auto p-0" align="center">
+            {picker}
+          </PopoverContent>
+        </Popover>
+      )}
+      {label && onClear && (
+        <button
+          type="button"
+          onClick={onClear}
+          className="text-muted-foreground hover:text-foreground flex h-5 w-5 items-center justify-center rounded-full text-base leading-none transition-colors"
+          aria-label="Clear month selection"
+        >
+          ×
+        </button>
+      )}
+    </div>
+  );
+}
 
 function SegmentedToggle({
   items,

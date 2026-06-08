@@ -5,7 +5,7 @@ import { Link } from "react-router-dom";
 import { QueryKeys } from "@/lib/query-keys";
 import type { Activity } from "@/lib/types";
 import { cn, formatDateISO } from "@/lib/utils";
-import { Icons, PrivacyAmount } from "@wealthfolio/ui";
+import { Icons, PrivacyAmount, Skeleton } from "@wealthfolio/ui";
 
 import { getActivityAssignments } from "../adapters/cash-activities";
 import { getActivitySpendingAmount } from "../lib/constants";
@@ -20,25 +20,39 @@ export function EventsCard({
   activities,
   accountTypeById,
   categoriesMeta,
+  periodEndDate,
+  periodStartDate,
   theme,
 }: {
   activities: Activity[];
   accountTypeById?: Map<string, string>;
   categoriesMeta: CategoryMetaMap;
+  periodEndDate: string;
+  periodStartDate: string;
   theme: Palette;
 }) {
-  const { data: events = [], isError: eventsErrored, refetch: refetchEvents } = useSpendingEvents();
+  const {
+    data: events = [],
+    isLoading: eventsLoading,
+    isError: eventsErrored,
+    refetch: refetchEvents,
+  } = useSpendingEvents();
   const { openEventDialog } = useEventDialog();
 
   const pick = useMemo(() => {
     const todayKey = formatDateISO(new Date());
+    const periodStartKey = periodStartDate.slice(0, 10);
+    const periodEndKey = periodEndDate.slice(0, 10);
+    const periodEvents = events.filter(
+      (e) => e.startDate.slice(0, 10) <= periodEndKey && e.endDate.slice(0, 10) >= periodStartKey,
+    );
 
-    const active = events.find(
+    const active = periodEvents.find(
       (e) => e.startDate.slice(0, 10) <= todayKey && e.endDate.slice(0, 10) >= todayKey,
     );
     if (active) return { mode: "active" as const, event: active };
 
-    const upcoming = events
+    const upcoming = periodEvents
       .filter((e) => e.startDate.slice(0, 10) > todayKey)
       .sort((a, b) => a.startDate.localeCompare(b.startDate));
     if (upcoming.length > 0) {
@@ -46,33 +60,16 @@ export function EventsCard({
       if (days <= 30) return { mode: "upcoming" as const, event: upcoming[0], days };
     }
 
-    const recent = events
+    const recent = periodEvents
       .filter((e) => e.endDate.slice(0, 10) < todayKey)
       .sort((a, b) => b.endDate.localeCompare(a.endDate));
     if (recent.length > 0) {
       const days = daysBetween(recent[0].endDate.slice(0, 10), todayKey);
       if (days <= 14) return { mode: "recent" as const, event: recent[0], days };
+      return { mode: "period" as const, event: recent[0] };
     }
     return null;
-  }, [events]);
-
-  // Surface query errors instead of silently rendering nothing — mirrors the
-  // pattern in spending-insights-page after commit de0d4d89. Without this,
-  // a server outage looks identical to "user has no events".
-  if (eventsErrored) {
-    return (
-      <div className="border-border/40 bg-card/70 rounded-xl border p-4 text-center text-xs backdrop-blur-xl md:p-5">
-        <div className="text-muted-foreground">Couldn't load events.</div>
-        <button
-          type="button"
-          onClick={() => void refetchEvents()}
-          className="text-foreground mt-2 inline-flex items-center gap-1 text-xs underline-offset-4 hover:underline"
-        >
-          Retry
-        </button>
-      </div>
-    );
-  }
+  }, [events, periodEndDate, periodStartDate]);
 
   const ev = pick?.event;
   const start = ev ? new Date(ev.startDate.slice(0, 10) + "T00:00:00") : new Date();
@@ -153,7 +150,74 @@ export function EventsCard({
     return total / days;
   }, [accountTypeById, activities, ev, totalDays]);
 
-  if (!pick) return null;
+  // Surface query errors instead of silently rendering nothing — mirrors the
+  // pattern in spending-insights-page after commit de0d4d89. Without this,
+  // a server outage looks identical to "user has no events".
+  if (eventsErrored) {
+    return (
+      <div className="border-border/40 bg-card/70 rounded-xl border p-4 text-center text-xs backdrop-blur-xl md:p-5">
+        <div className="text-muted-foreground">Couldn't load events.</div>
+        <button
+          type="button"
+          onClick={() => void refetchEvents()}
+          className="text-foreground mt-2 inline-flex items-center gap-1 text-xs underline-offset-4 hover:underline"
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
+
+  if (eventsLoading) {
+    return (
+      <div className="border-border/40 bg-card/70 rounded-xl border p-4 backdrop-blur-xl md:p-5">
+        <div className="flex items-center gap-2">
+          <Skeleton className="h-4 w-4 rounded-full" />
+          <div className="flex-1 space-y-1.5">
+            <Skeleton className="h-4 w-24" />
+            <Skeleton className="h-3 w-32" />
+          </div>
+        </div>
+        <div className="mt-4 space-y-2">
+          <Skeleton className="h-3 w-full" />
+          <Skeleton className="h-3 w-2/3" />
+        </div>
+      </div>
+    );
+  }
+
+  if (!pick) {
+    const hasEvents = events.length > 0;
+
+    return (
+      <div className="border-border/40 bg-card/70 rounded-xl border p-4 backdrop-blur-xl md:p-5">
+        <div className="flex items-center gap-2">
+          <Icons.Calendar className="h-4 w-4 shrink-0" style={{ color: theme.deep }} />
+          <div className="min-w-0 flex-1">
+            <div className="text-foreground text-sm font-semibold">Events</div>
+            <div className="text-muted-foreground/70 text-[11px]">
+              {hasEvents ? "No events in this period" : "No events yet"}
+            </div>
+          </div>
+        </div>
+
+        <div className="text-muted-foreground/80 mt-3 text-xs leading-snug">
+          {hasEvents
+            ? "Create an event for the next trip, move, or spending period."
+            : "Create an event to track spending around trips, moves, or one-off periods."}
+        </div>
+
+        <button
+          type="button"
+          onClick={() => openEventDialog()}
+          className="text-muted-foreground hover:text-foreground mt-3 inline-flex items-center gap-1 text-xs underline-offset-4 hover:underline"
+        >
+          Create event
+          <Icons.ChevronRight className="h-3 w-3" />
+        </button>
+      </div>
+    );
+  }
 
   const dailyAvg = totalDays > 0 ? eventSpent / totalDays : 0;
   const baselineEquivalent = baselineDailyAvg * totalDays;
@@ -166,7 +230,14 @@ export function EventsCard({
       : pick.mode === "recent"
         ? (Icons.History ?? Icons.Calendar)
         : Icons.Calendar;
-  const tag = pick.mode === "active" ? "ACTIVE" : pick.mode === "upcoming" ? "SOON" : "RECENT";
+  const tag =
+    pick.mode === "active"
+      ? "ACTIVE"
+      : pick.mode === "upcoming"
+        ? "SOON"
+        : pick.mode === "recent"
+          ? "RECENT"
+          : "PERIOD";
 
   const dateRangeLabel = (() => {
     const opts: Intl.DateTimeFormatOptions = { month: "short", day: "numeric" };
@@ -188,6 +259,8 @@ export function EventsCard({
     subLine = `Day ${dayInto} of ${totalDays} · ${daysLeft} ${daysLeft === 1 ? "day" : "days"} left`;
   } else if (pick.mode === "recent") {
     subLine = `Wrapped ${pick.days} ${pick.days === 1 ? "day" : "days"} ago`;
+  } else if (pick.mode === "period") {
+    subLine = `${totalDays} ${totalDays === 1 ? "day" : "days"} in selected period`;
   }
 
   return (

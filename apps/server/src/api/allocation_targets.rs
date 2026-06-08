@@ -9,6 +9,7 @@ use axum::{
 use rust_decimal::Decimal;
 use serde::Deserialize;
 use wealthfolio_core::{
+    accounts::AccountPurpose,
     portfolio::allocation_targets::{
         AllocationTarget, AllocationTargetWeight, CalculateRebalancePlanInput, DriftReport,
         NewAllocationTarget, NewAllocationTargetWeight, RebalancePlan, SaveAllocationTargetResult,
@@ -18,7 +19,6 @@ use wealthfolio_core::{
 };
 
 use crate::{
-    api::shared::holdings_account_ids,
     error::{ApiError, ApiResult},
     main_lib::AppState,
 };
@@ -171,17 +171,15 @@ async fn get_drift_for_target(
     let filter = account_scope_for_target(&target)?;
     let resolved = state
         .portfolio_service
-        .resolve_account_scope(&filter, &base_currency)
+        .resolve_account_scope_for_purpose(&filter, &base_currency, AccountPurpose::Holdings)
         .map_err(crate::error::ApiError::from)?;
-
-    let account_ids = holdings_account_ids(&state, &resolved.account_ids)?;
 
     let report = if body.include_holdings {
         state
             .drift_service
             .get_drift_report_with_holdings_for_target(
                 &target_id,
-                &account_ids,
+                &resolved.account_ids,
                 &base_currency,
                 &resolved.scope_id,
             )
@@ -191,7 +189,7 @@ async fn get_drift_for_target(
             .drift_service
             .get_drift_report_for_target(
                 &target_id,
-                &account_ids,
+                &resolved.account_ids,
                 &base_currency,
                 &resolved.scope_id,
             )
@@ -222,7 +220,7 @@ fn resolve_rebalance_input(
     let base_currency = state.base_currency.read().unwrap().clone();
     let resolved = state
         .portfolio_service
-        .resolve_account_scope(filter, &base_currency)
+        .resolve_account_scope_for_purpose(filter, &base_currency, AccountPurpose::Holdings)
         .map_err(crate::error::ApiError::from)?;
     Ok(CalculateRebalancePlanInput {
         target_id,

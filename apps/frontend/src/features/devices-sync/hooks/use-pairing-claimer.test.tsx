@@ -120,4 +120,25 @@ describe("usePairingClaimer", () => {
     expect(serviceMocks.syncService.cancelPairing).not.toHaveBeenCalled();
     expect(result.current.step).toBe("enter_code");
   });
+
+  it("marks bootstrap as failed when confirmed flow polling fails", async () => {
+    adapterMocks.beginPairingConfirm.mockResolvedValue({
+      flowId: "flow-1",
+      phase: { phase: "syncing" },
+    });
+    adapterMocks.getPairingFlowState.mockRejectedValue(new Error("poll failed"));
+
+    const { result } = renderHook(() => usePairingClaimer(), {
+      wrapper: createWrapper(),
+    });
+
+    await act(async () => {
+      await result.current.submitCode("ABC123");
+    });
+
+    await waitFor(() => expect(result.current.step).toBe("error"));
+
+    expect(result.current.error).toBe("poll failed");
+    expect(result.current.bootstrapFlowState).toBe("failed");
+  });
 });

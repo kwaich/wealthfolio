@@ -45,14 +45,10 @@ pub fn should_sync_outbox_for_platform(platform_id: &str, external_id: Option<&s
 
 pub fn should_sync_outbox_for_activity(
     source_system: Option<&str>,
-    is_user_modified: bool,
+    _is_user_modified: bool,
     import_run_id: Option<&str>,
     source_record_id: Option<&str>,
 ) -> bool {
-    if is_user_modified {
-        return true;
-    }
-
     let normalized_source = source_system
         .map(str::trim)
         .filter(|value| !value.is_empty())
@@ -65,7 +61,8 @@ pub fn should_sync_outbox_for_activity(
         && source_record_id.is_none_or(|value| value.trim().is_empty())
 }
 
-/// Import runs sync only user-initiated CSV/manual runs, not broker sync runs.
+/// Import runs sync only user-authored CSV/manual imports. Broker run history
+/// and cursors are local state; each device refreshes them from broker APIs.
 pub fn should_sync_outbox_for_import_run(run_type: &str, source_system: &str) -> bool {
     run_type.eq_ignore_ascii_case("IMPORT")
         && (source_system.eq_ignore_ascii_case("CSV")
@@ -129,7 +126,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn activity_outbox_rules_match_manual_and_user_override() {
+    fn activity_outbox_rules_match_local_manual_and_csv_rows() {
         assert!(should_sync_outbox_for_activity(
             Some("MANUAL"),
             false,
@@ -161,7 +158,7 @@ mod tests {
             None,
             Some("provider-1")
         ));
-        assert!(should_sync_outbox_for_activity(
+        assert!(!should_sync_outbox_for_activity(
             Some("SNAPTRADE"),
             true,
             Some("run-1"),
@@ -189,18 +186,14 @@ mod tests {
     }
 
     #[test]
-    fn import_run_outbox_rules_only_sync_user_initiated_runs() {
-        // CSV imports sync
+    fn import_run_outbox_rules_only_sync_user_authored_imports() {
         assert!(should_sync_outbox_for_import_run("IMPORT", "csv"));
         assert!(should_sync_outbox_for_import_run("IMPORT", "CSV"));
-        // Manual imports sync
         assert!(should_sync_outbox_for_import_run("IMPORT", "manual"));
         assert!(should_sync_outbox_for_import_run("IMPORT", "MANUAL"));
-        // Broker sync runs do NOT sync
         assert!(!should_sync_outbox_for_import_run("SYNC", "snaptrade"));
         assert!(!should_sync_outbox_for_import_run("SYNC", "plaid"));
         assert!(!should_sync_outbox_for_import_run("SYNC", "csv"));
-        // Import from broker sources do NOT sync
         assert!(!should_sync_outbox_for_import_run("IMPORT", "snaptrade"));
         assert!(!should_sync_outbox_for_import_run("IMPORT", "plaid"));
     }

@@ -282,10 +282,33 @@ test.describe("Activity Creation Tests", () => {
   }
 
   async function fillAmount(value: number, testId = "amount-input") {
-    const amountInput = page.getByTestId(testId);
+    const amountInput = page.getByRole("dialog", { name: "Add Activity" }).getByTestId(testId);
+    await expect(amountInput).toBeVisible({ timeout: 5000 });
     await amountInput.fill(String(value));
     await amountInput.blur();
-    await page.waitForTimeout(200);
+  }
+
+  async function fillInternalTransferCashAmount(value: number) {
+    const activityDialog = page.getByRole("dialog", { name: "Add Activity" });
+    const sentAmountInput = activityDialog.getByTestId("sent-amount-input");
+    const simpleAmountInput = activityDialog.getByTestId("input-amount");
+
+    await expect(sentAmountInput.or(simpleAmountInput)).toBeVisible({ timeout: 5000 });
+
+    if (await sentAmountInput.isVisible()) {
+      await sentAmountInput.fill(String(value));
+      await sentAmountInput.blur();
+
+      const receivedAmountInput = activityDialog.getByTestId("received-amount-input");
+      if (await receivedAmountInput.isVisible()) {
+        await receivedAmountInput.fill(String(value));
+        await receivedAmountInput.blur();
+      }
+      return;
+    }
+
+    await simpleAmountInput.fill(String(value));
+    await simpleAmountInput.blur();
   }
 
   async function fillQuantity(value: number) {
@@ -649,7 +672,7 @@ test.describe("Activity Creation Tests", () => {
     await selectAccount("Test CAD Account", "CAD", "To Account");
 
     await selectDate();
-    await fillAmount(transfer.amount);
+    await fillInternalTransferCashAmount(transfer.amount);
     await fillNotes(transfer.notes);
 
     await submitActivity("Transfer");

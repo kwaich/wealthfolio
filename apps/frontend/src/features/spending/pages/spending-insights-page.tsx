@@ -6,7 +6,7 @@ import { useBalancePrivacy } from "@/hooks/use-balance-privacy";
 import { useTaxonomy } from "@/hooks/use-taxonomies";
 import { useSettingsContext } from "@/lib/settings-provider";
 
-import { Page, PageContent, PageHeader, usePersistentState } from "@wealthfolio/ui";
+import { Page, PageContent, PageHeader, useIsMobile, usePersistentState } from "@wealthfolio/ui";
 
 import { CategoryTransactionsSheet } from "../components/reports/category-transactions-sheet";
 import { HeatmapCellSheet } from "../components/reports/heatmap-cell-sheet";
@@ -127,6 +127,7 @@ function normalizeReportsPeriod(value: string | null | undefined): ReportsPeriod
 export default function SpendingInsightsPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
+  const isMobile = useIsMobile();
   const { settings } = useSettingsContext();
   const baseCurrency = settings?.baseCurrency ?? "USD";
   const appTimezone = settings?.timezone ?? undefined;
@@ -402,12 +403,14 @@ export default function SpendingInsightsPage() {
     return <Navigate to="/dashboard?tab=spending" replace />;
   }
 
-  const periodToggle = <SpendingPeriodToggle value={period} onValueChange={setPeriodAndUrl} />;
+  const periodToggle = (
+    <SpendingPeriodToggle value={customRange ? null : period} onValueChange={setPeriodAndUrl} />
+  );
 
   return (
     <Page>
       <PageHeader
-        heading="Spending Insight"
+        heading={isMobile ? undefined : "Spending Insight"}
         onBack={() => {
           if (window.history.length > 1) navigate(-1);
           else navigate("/dashboard?tab=spending");

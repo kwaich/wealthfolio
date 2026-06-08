@@ -4,7 +4,7 @@ import { AssistantRuntimeProvider, useThreadRuntime } from "@assistant-ui/react"
 import { cn } from "@/lib/utils";
 import { Button } from "@wealthfolio/ui/components/ui/button";
 import { Icons } from "@wealthfolio/ui/components/ui/icons";
-import { Badge, EmptyPlaceholder } from "@wealthfolio/ui";
+import { EmptyPlaceholder } from "@wealthfolio/ui";
 import {
   Sheet,
   SheetContent,
@@ -142,16 +142,6 @@ function Header({
       </ButtonWithTooltip>
       <ProviderPicker />
       <div className="flex-1" />
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Badge variant="warning" className="cursor-default">
-            Beta
-          </Badge>
-        </TooltipTrigger>
-        <TooltipContent side="bottom">
-          This feature is in beta. Results may vary as we continue to improve.
-        </TooltipContent>
-      </Tooltip>
     </header>
   );
 }

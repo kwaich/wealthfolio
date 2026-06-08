@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
+import { useQueryClient } from "@tanstack/react-query";
 import * as z from "zod";
 
 import {
@@ -35,6 +36,7 @@ import {
 } from "@wealthfolio/ui";
 
 import type { Activity } from "@/lib/types";
+import { QueryKeys } from "@/lib/query-keys";
 import { formatDateISO, parseLocalDate } from "@/lib/utils";
 
 import { useCashActivities, useSetActivityEvent } from "../hooks/use-cash-activities";
@@ -97,6 +99,7 @@ export function EventFormDialog({
   const { create, update } = useSpendingEventMutations();
   const { create: createType } = useEventTypeMutations();
   const setEventOnActivity = useSetActivityEvent();
+  const queryClient = useQueryClient();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const isEditing = !!event;
 
@@ -268,7 +271,9 @@ export function EventFormDialog({
         // each tag mutation already surfaces its own error toast, so we settle
         // all of them and finalize regardless.
         if (activityId) {
-          await setEventOnActivity.mutateAsync({ activityId, eventId: created.id }).catch(() => {});
+          await setEventOnActivity
+            .mutateAsync({ activityId, eventId: created.id })
+            .catch(() => undefined);
         } else if (selectedCandidateIds.length > 0) {
           // Bulk-tag the suggested transactions in parallel. No bulk endpoint
           // exists today; the N round-trips are acceptable since the user has
@@ -279,6 +284,11 @@ export function EventFormDialog({
             ),
           );
         }
+        // The dashboard event card reads both the event list and cash activity tags.
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: [QueryKeys.SPENDING_EVENTS] }),
+          queryClient.invalidateQueries({ queryKey: [QueryKeys.SPENDING_TRANSACTIONS] }),
+        ]);
         onCreated?.(created);
       }
       form.reset();

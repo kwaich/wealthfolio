@@ -4,7 +4,10 @@ mod tests {
     use chrono::NaiveDateTime;
     use std::sync::{Arc, Mutex};
 
-    use crate::accounts::{Account, AccountRepositoryTrait, AccountUpdate, NewAccount};
+    use crate::accounts::{
+        account_types, Account, AccountPurpose, AccountRepositoryTrait, AccountUpdate, NewAccount,
+        TrackingMode,
+    };
     use crate::errors::{DatabaseError, Error, Result};
     use crate::portfolios::{
         AccountScope, NewPortfolio, PortfolioRepositoryTrait, PortfolioService,
@@ -106,29 +109,37 @@ mod tests {
 
     impl MockAccountRepo {
         fn with_ids(ids: &[&str]) -> Self {
-            let dt = NaiveDateTime::default();
             let accounts = ids
                 .iter()
-                .map(|id| Account {
-                    id: id.to_string(),
-                    name: id.to_string(),
-                    account_type: "SECURITIES".to_string(),
-                    group: None,
-                    currency: "USD".to_string(),
-                    is_default: false,
-                    is_active: true,
-                    created_at: dt,
-                    updated_at: dt,
-                    platform_id: None,
-                    account_number: None,
-                    meta: None,
-                    provider: None,
-                    provider_account_id: None,
-                    is_archived: false,
-                    tracking_mode: Default::default(),
-                })
+                .map(|id| mock_account(id, account_types::SECURITIES, TrackingMode::Transactions))
                 .collect();
+            Self::with_accounts(accounts)
+        }
+
+        fn with_accounts(accounts: Vec<Account>) -> Self {
             Self { accounts }
+        }
+    }
+
+    fn mock_account(id: &str, account_type: &str, tracking_mode: TrackingMode) -> Account {
+        let dt = NaiveDateTime::default();
+        Account {
+            id: id.to_string(),
+            name: id.to_string(),
+            account_type: account_type.to_string(),
+            group: None,
+            currency: "USD".to_string(),
+            is_default: false,
+            is_active: true,
+            created_at: dt,
+            updated_at: dt,
+            platform_id: None,
+            account_number: None,
+            meta: None,
+            provider: None,
+            provider_account_id: None,
+            is_archived: false,
+            tracking_mode,
         }
     }
 
@@ -337,5 +348,62 @@ mod tests {
             .unwrap();
         assert_eq!(scope.scope_id, "portfolio:empty");
         assert!(scope.account_ids.is_empty());
+    }
+
+    #[tokio::test]
+    async fn resolve_account_scope_for_purpose_filters_by_account_capability() {
+        let svc = PortfolioService::new(
+            Arc::new(MockPortfolioRepo::default()),
+            Arc::new(MockAccountRepo::with_accounts(vec![
+                mock_account(
+                    "security-holdings",
+                    account_types::SECURITIES,
+                    TrackingMode::Holdings,
+                ),
+                mock_account(
+                    "security-transactions",
+                    account_types::SECURITIES,
+                    TrackingMode::Transactions,
+                ),
+                mock_account("cash", account_types::CASH, TrackingMode::Transactions),
+                mock_account(
+                    "crypto",
+                    account_types::CRYPTOCURRENCY,
+                    TrackingMode::Holdings,
+                ),
+                mock_account(
+                    "card",
+                    account_types::CREDIT_CARD,
+                    TrackingMode::Transactions,
+                ),
+            ])),
+        );
+        let filter = AccountScope::Accounts {
+            account_ids: vec![
+                "security-transactions".to_string(),
+                "card".to_string(),
+                "crypto".to_string(),
+                "security-holdings".to_string(),
+                "cash".to_string(),
+                "security-transactions".to_string(),
+            ],
+        };
+
+        let unfiltered = svc.resolve_account_scope(&filter, "CAD").unwrap();
+        let filtered = svc
+            .resolve_account_scope_for_purpose(&filter, "CAD", AccountPurpose::Holdings)
+            .unwrap();
+
+        assert_eq!(filtered.scope_id, unfiltered.scope_id);
+        assert_eq!(filtered.base_currency, "CAD");
+        assert_eq!(
+            filtered.account_ids,
+            vec![
+                "cash".to_string(),
+                "crypto".to_string(),
+                "security-holdings".to_string(),
+                "security-transactions".to_string(),
+            ]
+        );
     }
 }

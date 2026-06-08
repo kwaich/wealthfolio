@@ -60,6 +60,8 @@ pub const APP_SYNC_TABLES: &[&str] = &[
     "ai_thread_tags",
     // No FK deps (account_id has no FK constraint)
     "holdings_snapshots",
+    // Depends on: holdings_snapshots, assets
+    "snapshot_positions",
     // No FK deps
     "portfolios",
     // Depends on: portfolios, accounts

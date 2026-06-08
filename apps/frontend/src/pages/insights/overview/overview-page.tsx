@@ -319,13 +319,18 @@ export function OverviewPage({
   if (workspaceView === "rebalance") {
     return (
       <div>
-        <div className="mb-5 flex items-center gap-3">
-          <Button variant="ghost" size="sm" className="-ml-2" onClick={() => backTo("details")}>
+        <div className="mb-5 flex flex-wrap items-center gap-x-3 gap-y-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="-ml-2 shrink-0"
+            onClick={() => backTo("details")}
+          >
             <Icons.ArrowLeft className="mr-1.5 h-4 w-4" />
             Back to overview
           </Button>
           <span className="bg-border hidden h-5 w-px sm:block" />
-          <h2 className="text-foreground text-[16px] font-semibold">Rebalance</h2>
+          <h2 className="text-foreground min-w-0 text-[16px] font-semibold">Rebalance</h2>
         </div>
         <RebalanceTab
           profile={effectiveTarget ?? null}

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { Button, Card, CardContent, Icons, Skeleton } from "@wealthfolio/ui";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@wealthfolio/ui/components/ui/tooltip";
 import { cn, formatAmount } from "@/lib/utils";
@@ -288,7 +288,7 @@ function copyToText(plan: RebalancePlan, currency: string) {
 
 // ── Eyebrow label ─────────────────────────────────────────────────────────────
 
-function Eyebrow({ children, className }: { children: React.ReactNode; className?: string }) {
+function Eyebrow({ children, className }: { children: ReactNode; className?: string }) {
   return (
     <div
       className={cn(
@@ -314,18 +314,24 @@ function ModeSwitch({
   value: ScenarioMode;
   onChange: (mode: ScenarioMode) => void;
 }) {
-  const modes: { id: ScenarioMode; label: string; hint: string }[] = [
+  const modes: { id: ScenarioMode; label: string; shortLabel: string; hint: string }[] = [
     {
       id: "cash_flow_only",
       label: "Cash-flow only",
+      shortLabel: "Cash-flow",
       hint: `deploy new ${currencySymbol(currency)}`,
     },
-    { id: "sell_to_rebalance", label: "Sell to rebalance", hint: "sells fund buys" },
-    { id: "hybrid", label: "Hybrid", hint: "cash + sells" },
+    {
+      id: "sell_to_rebalance",
+      label: "Sell to rebalance",
+      shortLabel: "Sell",
+      hint: "sells fund buys",
+    },
+    { id: "hybrid", label: "Hybrid", shortLabel: "Hybrid", hint: "cash + sells" },
   ];
 
   return (
-    <div className="border-border/60 bg-card/40 inline-flex items-center gap-1 overflow-x-auto rounded-2xl border p-1 backdrop-blur-xl">
+    <div className="border-border/60 bg-card/40 grid w-full max-w-full grid-cols-3 gap-1 rounded-2xl border p-1 backdrop-blur-xl sm:inline-flex sm:w-auto sm:grid-cols-none">
       {modes.map((m) => {
         const disabled = !allowSells && m.id !== "cash_flow_only";
         const active = value === m.id;
@@ -336,15 +342,18 @@ function ModeSwitch({
             disabled={disabled}
             onClick={() => !disabled && onChange(m.id)}
             className={cn(
-              "group inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-4 py-3 font-mono text-xs transition-colors",
+              "group inline-flex min-w-0 shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-full px-2 py-3 font-mono text-xs transition-colors sm:w-auto sm:px-4",
               active
                 ? "bg-foreground text-background"
                 : "text-muted-foreground hover:bg-muted/50 hover:text-foreground",
               disabled && "cursor-not-allowed opacity-40 hover:bg-transparent",
             )}
           >
-            <span className="font-medium">{m.label}</span>
-            <span className={cn(active ? "text-background/65" : "opacity-70")}>{m.hint}</span>
+            <span className="min-w-0 truncate font-medium sm:hidden">{m.shortLabel}</span>
+            <span className="hidden font-medium sm:inline">{m.label}</span>
+            <span className={cn("hidden sm:inline", active ? "text-background/65" : "opacity-70")}>
+              {m.hint}
+            </span>
           </button>
         );
 
@@ -353,7 +362,7 @@ function ModeSwitch({
         return (
           <Tooltip key={m.id}>
             <TooltipTrigger asChild>
-              <span className="inline-flex cursor-not-allowed">{button}</span>
+              <span className="flex min-w-0 cursor-not-allowed">{button}</span>
             </TooltipTrigger>
             <TooltipContent className="text-xs">
               Enable &apos;Allow sells&apos; on this target to use this mode
@@ -406,9 +415,9 @@ function PlannerInput({
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-baseline justify-between gap-3">
+      <div className="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:justify-between sm:gap-3">
         <Eyebrow>Cash to deploy</Eyebrow>
-        <span className="text-muted-foreground font-mono text-xs">
+        <span className="text-muted-foreground font-mono text-[11px] sm:text-xs">
           of {roundedCurrency(availableCash, currency)} in scope
         </span>
       </div>
@@ -445,7 +454,7 @@ function PlannerInput({
         style={{ ["--lever-pct" as string]: `${pct}%` }}
       />
 
-      <div className="mt-2.5 flex items-center gap-1.5">
+      <div className="mt-2.5 grid grid-cols-4 gap-2 sm:flex sm:items-center sm:gap-1.5">
         {presets.map((p) => (
           <button
             key={p.id}
@@ -453,7 +462,7 @@ function PlannerInput({
             disabled={limit <= 0}
             onClick={() => onCashChange(p.value.toFixed(fraction))}
             className={cn(
-              "rounded-full border px-2.5 py-0.5 font-mono text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-40",
+              "rounded-full border px-2.5 py-0.5 text-center font-mono text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-40 sm:w-auto",
               activePreset === p.id
                 ? "border-foreground bg-foreground text-background"
                 : "border-border text-muted-foreground hover:border-foreground/40 hover:text-foreground",
@@ -464,13 +473,15 @@ function PlannerInput({
         ))}
       </div>
 
-      <p className="text-foreground/80 mt-4 font-mono text-xs leading-relaxed">{description}</p>
+      <p className="text-foreground/80 mt-3 font-mono text-xs leading-relaxed sm:mt-4">
+        {description}
+      </p>
 
       {overBudget && (
         <p className="text-destructive mt-2 font-mono text-xs">Exceeds available cash</p>
       )}
 
-      <div className="mt-auto pt-5">
+      <div className="mt-auto pt-4 sm:pt-5">
         <Button
           onClick={onCalculate}
           disabled={!canCalculate}
@@ -514,6 +525,8 @@ function DriftBar({
   const afterPos = afterBps != null ? clamp(afterBps) : 0;
   const bandPos = clamp(bandBps);
   const isAfter = afterBps != null;
+  const primaryLabel = driftLabelPlacement(isAfter ? afterPos : beforePos);
+  const beforeLabel = driftLabelPlacement(beforePos);
 
   return (
     <div>
@@ -555,8 +568,8 @@ function DriftBar({
       {/* marker labels */}
       <div className="relative mt-1.5 h-7">
         <div
-          className="absolute flex flex-col items-center"
-          style={{ left: `${isAfter ? afterPos : beforePos}%`, transform: "translateX(-50%)" }}
+          className={cn("absolute flex flex-col", primaryLabel.className)}
+          style={primaryLabel.style}
         >
           <span className="text-foreground font-mono text-xs font-semibold tabular-nums leading-none">
             {isAfter ? pp1(afterBps) : fmtBps(beforeBps)}
@@ -567,8 +580,8 @@ function DriftBar({
         </div>
         {isAfter && (
           <div
-            className="absolute flex flex-col items-end"
-            style={{ right: `${100 - beforePos}%`, transform: "translateX(50%)" }}
+            className={cn("absolute flex flex-col", beforeLabel.className)}
+            style={beforeLabel.style}
           >
             <span className="text-muted-foreground font-mono text-xs tabular-nums leading-none">
               {pp1(beforeBps)}
@@ -588,6 +601,15 @@ function DriftBar({
       </div>
     </div>
   );
+}
+
+function driftLabelPlacement(pos: number): { className: string; style: CSSProperties } {
+  if (pos >= 88) return { className: "items-end text-right", style: { right: 0 } };
+  if (pos <= 12) return { className: "items-start text-left", style: { left: 0 } };
+  return {
+    className: "items-center text-center",
+    style: { left: `${pos}%`, transform: "translateX(-50%)" },
+  };
 }
 
 // ── Planner result column (right panel) ───────────────────────────────────────
@@ -700,24 +722,30 @@ function PlannerResult({
         />
       </div>
 
-      <div className="border-border/70 mt-4 grid grid-cols-3 gap-4 border-t pt-3">
+      <div className="border-border/70 mt-4 grid grid-cols-2 gap-x-4 gap-y-3 border-t pt-3 sm:grid-cols-3 sm:gap-4">
         <div>
           <Eyebrow>Trades</Eyebrow>
-          <div className="text-foreground mt-1 font-mono text-base font-semibold tabular-nums leading-none">
+          <div className="text-foreground mt-1 font-mono text-sm font-semibold tabular-nums leading-none sm:text-base">
             {plan.trades.length}
           </div>
           <div className="text-muted-foreground mt-1 font-mono text-xs">{tradeSub}</div>
         </div>
         <div>
-          <Eyebrow>Cash deployed</Eyebrow>
-          <div className="text-foreground mt-1 font-mono text-base font-semibold tabular-nums leading-none">
+          <Eyebrow>
+            <span className="sm:hidden">Deployed</span>
+            <span className="hidden sm:inline">Cash deployed</span>
+          </Eyebrow>
+          <div className="text-foreground mt-1 font-mono text-sm font-semibold tabular-nums leading-none sm:text-base">
             {roundedCurrency(deployed, currency)}
           </div>
           <div className="text-muted-foreground mt-1 font-mono text-xs">{scopePct}% of scope</div>
         </div>
         <div>
-          <Eyebrow>Cash remaining</Eyebrow>
-          <div className="text-foreground mt-1 font-mono text-base font-semibold tabular-nums leading-none">
+          <Eyebrow>
+            <span className="sm:hidden">Remaining</span>
+            <span className="hidden sm:inline">Cash remaining</span>
+          </Eyebrow>
+          <div className="text-foreground mt-1 font-mono text-sm font-semibold tabular-nums leading-none sm:text-base">
             {roundedCurrency(plan.cashRemaining, currency)}
           </div>
           <div className="text-muted-foreground mt-1 font-mono text-xs">
@@ -726,7 +754,7 @@ function PlannerResult({
         </div>
       </div>
 
-      <p className="text-foreground/80 mt-4 font-mono text-xs leading-relaxed">
+      <p className="text-foreground/80 mt-4 hidden font-mono text-xs leading-relaxed sm:block">
         {modeVerb(mode) === "Cash-flow buys" ? "Deploying" : "This plan deploys"}{" "}
         <span className="text-foreground font-semibold">{roundedCurrency(deployed, currency)}</span>{" "}
         across {tradesActionSummary} — cutting max drift{" "}
@@ -738,7 +766,7 @@ function PlannerResult({
         <button
           type="button"
           onClick={onReview}
-          className="mt-3 inline-flex w-fit items-center gap-1 font-mono text-xs font-medium text-[#2f6b46] underline-offset-4 hover:underline dark:text-emerald-400"
+          className="mt-4 inline-flex w-fit items-center gap-1 font-mono text-xs font-medium text-[#2f6b46] underline-offset-4 hover:underline sm:mt-3 dark:text-emerald-400"
         >
           Review {tradesWord} <Icons.ArrowRight className="h-3.5 w-3.5" />
         </button>
@@ -951,94 +979,163 @@ function Warnings({ items }: { items: RebalanceWarning[] }) {
 
 // ── Trades table ──────────────────────────────────────────────────────────────
 
-function TradesTable({ trades, currency }: { trades: SuggestedManualTrade[]; currency: string }) {
+function tradeQuantityLabel(quantity: number | null | undefined): string {
+  if (quantity == null) return "—";
+  return quantity.toFixed(quantity % 1 === 0 ? 0 : 4);
+}
+
+function TradeActionBadge({ action }: { action: string }) {
+  const isSell = action === "sell";
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full table-fixed text-sm">
-        <colgroup>
-          <col className="w-[6%]" />
-          <col className="w-[23%]" />
-          <col className="w-[10%]" />
-          <col className="w-[13%]" />
-          <col className="w-[9%]" />
-          <col className="w-[12%]" />
-          <col className="w-[27%]" />
-        </colgroup>
-        <thead>
-          <tr className="border-border text-muted-foreground border-b font-mono text-xs uppercase tracking-wider">
-            <th className="py-2.5 pl-5 pr-2 text-left font-medium">Action</th>
-            <th className="py-2.5 pr-3 text-left font-medium">Ticker</th>
-            <th className="py-2.5 pl-14 pr-3 text-left font-medium">Category</th>
-            <th className="py-2.5 pr-3 text-right font-medium">Amount</th>
-            <th className="py-2.5 pr-3 text-right font-medium">Shares</th>
-            <th className="py-2.5 pr-7 text-right font-medium">Last price</th>
-            <th className="py-2.5 pl-10 pr-5 text-left font-medium">Reason</th>
-          </tr>
-        </thead>
-        <tbody>
-          {trades.map((t, i) => (
-            <tr key={i} className="border-border hover:bg-muted/30 h-12 border-b last:border-b-0">
-              <td className="pl-5 pr-2">
-                {t.action === "sell" ? (
-                  <span className="inline-flex items-center rounded bg-red-100 px-1.5 py-0.5 font-mono text-xs font-semibold text-red-800 dark:bg-red-900/30 dark:text-red-400">
-                    Sell
+    <span
+      className={cn(
+        "inline-flex items-center rounded px-1.5 py-0.5 font-mono text-xs font-semibold",
+        isSell
+          ? "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400"
+          : "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400",
+      )}
+    >
+      {isSell ? "Sell" : "Buy"}
+    </span>
+  );
+}
+
+function TradesTable({ trades, currency }: { trades: SuggestedManualTrade[]; currency: string }) {
+  const buys = trades.filter((t) => t.action === "buy");
+  const sells = trades.filter((t) => t.action === "sell");
+  const buyTotal = buys.reduce((s, t) => s + t.estimatedAmount, 0);
+
+  return (
+    <>
+      <div className="divide-border divide-y md:hidden">
+        {trades.map((t, i) => (
+          <div key={i} className="px-4 py-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <div className="flex min-w-0 items-center gap-2">
+                  <TradeActionBadge action={t.action} />
+                  <span className="text-foreground truncate font-mono text-sm font-semibold">
+                    {t.symbol ?? "Trade"}
                   </span>
-                ) : (
-                  <span className="inline-flex items-center rounded bg-green-100 px-1.5 py-0.5 font-mono text-xs font-semibold text-green-800 dark:bg-green-900/30 dark:text-green-400">
-                    Buy
-                  </span>
+                </div>
+                {t.name && (
+                  <div className="text-muted-foreground mt-1 truncate text-xs">{t.name}</div>
                 )}
-              </td>
-              <td className="pr-3">
-                {t.symbol ? (
-                  <>
-                    <div className="text-foreground font-mono text-xs font-medium">{t.symbol}</div>
-                    {t.name && (
-                      <div className="text-muted-foreground truncate text-xs">{t.name}</div>
-                    )}
-                  </>
-                ) : (
-                  <span className="text-muted-foreground">—</span>
-                )}
-              </td>
-              <td className="text-muted-foreground pl-14 pr-3 text-xs">{t.categoryName}</td>
-              <td className="text-foreground pr-3 text-right font-semibold tabular-nums">
-                {formatAmount(t.estimatedAmount, currency)}
-              </td>
-              <td className="text-muted-foreground pr-3 text-right tabular-nums">
-                {t.quantity != null ? t.quantity.toFixed(t.quantity % 1 === 0 ? 0 : 4) : "—"}
-              </td>
-              <td className="text-muted-foreground pr-7 text-right tabular-nums">
-                {t.estimatedPrice != null ? formatAmount(t.estimatedPrice, currency) : "—"}
-              </td>
-              <td
-                className="text-muted-foreground max-w-0 truncate pl-10 pr-5 text-xs"
-                title={t.reason}
-              >
-                {t.reason}
-              </td>
+                <div className="text-muted-foreground mt-1 font-mono text-xs">{t.categoryName}</div>
+              </div>
+              <div className="shrink-0 text-right">
+                <div className="text-foreground font-mono text-sm font-semibold tabular-nums">
+                  {formatAmount(t.estimatedAmount, currency)}
+                </div>
+                <div className="text-muted-foreground mt-1 font-mono text-xs tabular-nums">
+                  {tradeQuantityLabel(t.quantity)} shares
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-3 grid grid-cols-2 gap-3 font-mono text-xs">
+              <div>
+                <div className="text-muted-foreground uppercase tracking-[0.14em]">Price</div>
+                <div className="text-foreground mt-1 tabular-nums">
+                  {t.estimatedPrice != null ? formatAmount(t.estimatedPrice, currency) : "—"}
+                </div>
+              </div>
+              <div className="min-w-0">
+                <div className="text-muted-foreground uppercase tracking-[0.14em]">Reason</div>
+                <div className="text-foreground mt-1 truncate" title={t.reason}>
+                  {t.reason}
+                </div>
+              </div>
+            </div>
+          </div>
+        ))}
+        <div className="bg-muted/20 flex items-center justify-between gap-3 px-4 py-3 font-mono text-xs">
+          <span className="text-muted-foreground">
+            {buys.length} buy{buys.length !== 1 ? "s" : ""}
+            {sells.length > 0 && ` · ${sells.length} sell${sells.length !== 1 ? "s" : ""}`}
+          </span>
+          <span className="text-foreground font-semibold tabular-nums">
+            {formatAmount(buyTotal, currency)}
+          </span>
+        </div>
+      </div>
+
+      <div className="hidden overflow-x-auto md:block">
+        <table className="w-full min-w-[920px] table-fixed text-sm">
+          <colgroup>
+            <col className="w-[6%]" />
+            <col className="w-[23%]" />
+            <col className="w-[10%]" />
+            <col className="w-[13%]" />
+            <col className="w-[9%]" />
+            <col className="w-[12%]" />
+            <col className="w-[27%]" />
+          </colgroup>
+          <thead>
+            <tr className="border-border text-muted-foreground border-b font-mono text-xs uppercase tracking-wider">
+              <th className="py-2.5 pl-5 pr-2 text-left font-medium">Action</th>
+              <th className="py-2.5 pr-3 text-left font-medium">Ticker</th>
+              <th className="py-2.5 pl-14 pr-3 text-left font-medium">Category</th>
+              <th className="py-2.5 pr-3 text-right font-medium">Amount</th>
+              <th className="py-2.5 pr-3 text-right font-medium">Shares</th>
+              <th className="py-2.5 pr-7 text-right font-medium">Last price</th>
+              <th className="py-2.5 pl-10 pr-5 text-left font-medium">Reason</th>
             </tr>
-          ))}
-        </tbody>
-        <tfoot>
-          <tr className="text-xs">
-            <td colSpan={3} className="text-muted-foreground py-3 pl-5 font-mono">
-              {trades.filter((t) => t.action === "buy").length} buy
-              {trades.filter((t) => t.action === "buy").length !== 1 ? "s" : ""}
-              {trades.some((t) => t.action === "sell") &&
-                ` · ${trades.filter((t) => t.action === "sell").length} sell${trades.filter((t) => t.action === "sell").length !== 1 ? "s" : ""}`}
-            </td>
-            <td className="text-foreground py-3 pr-3 text-right font-semibold tabular-nums">
-              {formatAmount(
-                trades.filter((t) => t.action === "buy").reduce((s, t) => s + t.estimatedAmount, 0),
-                currency,
-              )}
-            </td>
-            <td colSpan={3} />
-          </tr>
-        </tfoot>
-      </table>
-    </div>
+          </thead>
+          <tbody>
+            {trades.map((t, i) => (
+              <tr key={i} className="border-border hover:bg-muted/30 h-12 border-b last:border-b-0">
+                <td className="pl-5 pr-2">
+                  <TradeActionBadge action={t.action} />
+                </td>
+                <td className="pr-3">
+                  {t.symbol ? (
+                    <>
+                      <div className="text-foreground font-mono text-xs font-medium">
+                        {t.symbol}
+                      </div>
+                      {t.name && (
+                        <div className="text-muted-foreground truncate text-xs">{t.name}</div>
+                      )}
+                    </>
+                  ) : (
+                    <span className="text-muted-foreground">—</span>
+                  )}
+                </td>
+                <td className="text-muted-foreground pl-14 pr-3 text-xs">{t.categoryName}</td>
+                <td className="text-foreground pr-3 text-right font-semibold tabular-nums">
+                  {formatAmount(t.estimatedAmount, currency)}
+                </td>
+                <td className="text-muted-foreground pr-3 text-right tabular-nums">
+                  {tradeQuantityLabel(t.quantity)}
+                </td>
+                <td className="text-muted-foreground pr-7 text-right tabular-nums">
+                  {t.estimatedPrice != null ? formatAmount(t.estimatedPrice, currency) : "—"}
+                </td>
+                <td
+                  className="text-muted-foreground max-w-0 truncate pl-10 pr-5 text-xs"
+                  title={t.reason}
+                >
+                  {t.reason}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+          <tfoot>
+            <tr className="text-xs">
+              <td colSpan={3} className="text-muted-foreground py-3 pl-5 font-mono">
+                {buys.length} buy{buys.length !== 1 ? "s" : ""}
+                {sells.length > 0 && ` · ${sells.length} sell${sells.length !== 1 ? "s" : ""}`}
+              </td>
+              <td className="text-foreground py-3 pr-3 text-right font-semibold tabular-nums">
+                {formatAmount(buyTotal, currency)}
+              </td>
+              <td colSpan={3} />
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </>
   );
 }
 
@@ -1164,7 +1261,7 @@ export function RebalanceTab({
       <Card>
         <CardContent className="p-0">
           <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]">
-            <div className="border-border/60 px-5 py-5 lg:border-r">
+            <div className="border-border/60 border-b px-4 py-4 sm:px-5 sm:py-5 lg:border-b-0 lg:border-r">
               <PlannerInput
                 description={description}
                 cashValue={cashValue}
@@ -1177,7 +1274,7 @@ export function RebalanceTab({
                 isSourceLoading={!sourceReady}
               />
             </div>
-            <div className="px-5 py-5">
+            <div className="px-4 py-4 sm:px-5 sm:py-5">
               {!driftReport ? (
                 <div className="space-y-3">
                   <Skeleton className="h-3 w-28" />
@@ -1251,8 +1348,8 @@ export function RebalanceTab({
           </Card>
 
           {/* Footer */}
-          <div className="border-border flex items-center justify-between border-t pt-4">
-            <span className="text-muted-foreground font-mono text-xs">
+          <div className="border-border flex flex-col gap-3 border-t pt-4 sm:flex-row sm:items-center sm:justify-between">
+            <span className="text-muted-foreground font-mono text-xs leading-relaxed">
               {profile.name} · Calculated{" "}
               {new Date().toLocaleDateString(undefined, {
                 year: "numeric",
@@ -1260,10 +1357,11 @@ export function RebalanceTab({
                 day: "numeric",
               })}
             </span>
-            <div className="flex gap-2">
+            <div className="grid grid-cols-2 gap-2 sm:flex sm:shrink-0">
               <Button
                 variant="outline"
                 size="sm"
+                className="min-w-0 justify-center"
                 onClick={() => {
                   copyToText(plan, currency);
                   toast.success("Copied to clipboard");
@@ -1274,6 +1372,7 @@ export function RebalanceTab({
               </Button>
               <Button
                 size="sm"
+                className="min-w-0 justify-center"
                 onClick={() => {
                   exportCsv(plan, currency, profile.name);
                   toast.success("CSV downloaded");

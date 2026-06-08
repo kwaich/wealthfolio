@@ -21,7 +21,9 @@ interface SwipablePageProps {
   className?: string;
   contentClassName?: string;
   withPadding?: boolean;
+  withMobileNavOffset?: boolean;
   title?: string;
+  mobileActionsPlacement?: "below" | "header";
   /**
    * When set, the most recently selected view is remembered in localStorage
    * under this key. Used as the fallback when the URL has no `?tab=` param,
@@ -88,15 +90,22 @@ function MobileNavigation({
   views,
   currentView,
   onViewChange,
+  compact = false,
 }: {
   views: SwipablePageView[];
   currentView: string;
   onViewChange: (view: string) => void;
+  compact?: boolean;
 }) {
   const layoutId = React.useId();
 
   return (
-    <div className="bg-muted/50 flex items-center gap-0.5 rounded-full p-1 backdrop-blur-sm">
+    <div
+      className={cn(
+        "bg-muted/50 flex items-center gap-0.5 rounded-full p-1 backdrop-blur-sm",
+        compact && "min-w-0 max-w-full",
+      )}
+    >
       {views.map((item) => {
         const isActive = currentView === item.value;
         const IconComponent = item.icon;
@@ -107,8 +116,10 @@ function MobileNavigation({
             type="button"
             onClick={() => onViewChange(item.value)}
             className={cn(
-              "relative flex cursor-pointer items-center justify-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-medium transition-colors duration-200",
+              "relative flex cursor-pointer items-center justify-center gap-1.5 rounded-full py-1.5 text-sm font-medium transition-colors duration-200",
               "focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2",
+              compact ? "px-2" : "px-3",
+              isActive ? "min-w-0" : "shrink-0",
               isActive ? "text-foreground" : "text-muted-foreground",
             )}
             aria-label={item.label}
@@ -126,9 +137,11 @@ function MobileNavigation({
                 }}
               />
             )}
-            <span className="relative z-10 flex items-center gap-1.5">
+            <span className={cn("relative z-10 flex items-center gap-1.5", compact && "min-w-0")}>
               {IconComponent && <IconComponent className="size-4" />}
-              {isActive && <span className="whitespace-nowrap">{item.label}</span>}
+              {isActive && (
+                <span className={cn("whitespace-nowrap", compact && "truncate")}>{item.label}</span>
+              )}
             </span>
           </button>
         );
@@ -144,7 +157,9 @@ export function SwipablePage({
   className,
   contentClassName,
   withPadding = true,
+  withMobileNavOffset = true,
   title,
+  mobileActionsPlacement = "below",
   persistKey,
 }: SwipablePageProps) {
   const isMobile = useIsMobileViewport();
@@ -177,6 +192,8 @@ export function SwipablePage({
     const idx = views.findIndex((v) => v.value === currentView);
     return idx === -1 ? 0 : idx;
   }, [currentView, views]);
+  const currentActions = views.find((v) => v.value === currentView)?.actions;
+  const mobileActionsInHeader = mobileActionsPlacement === "header";
 
   const handleViewChange = React.useCallback(
     (nextView: string) => {
@@ -215,16 +232,33 @@ export function SwipablePage({
           /* Mobile: SwipableView with navigation */
           <div className="flex h-full flex-col md:hidden">
             {/* Mobile Navigation at top */}
-            <div className="pt-safe flex shrink-0 items-center justify-between px-3 pb-2">
-              <div className="w-10" />
-              <MobileNavigation
-                views={views}
-                currentView={currentView}
-                onViewChange={handleViewChange}
-              />
-              <div className="flex items-center gap-1.5">
-                {views.find((v) => v.value === currentView)?.actions}
+            <div className="pt-safe flex shrink-0 flex-col gap-2 px-3 pb-2">
+              <div
+                className={cn(
+                  "grid w-full items-center gap-2",
+                  mobileActionsInHeader
+                    ? "grid-cols-[2.5rem_minmax(0,1fr)_auto] min-[390px]:grid-cols-[4.5rem_minmax(0,1fr)_auto]"
+                    : "grid-cols-[1fr_auto_1fr]",
+                )}
+              >
+                <div className={mobileActionsInHeader ? "w-10 min-[390px]:w-[4.5rem]" : "w-10"} />
+                <div className={cn("min-w-0", mobileActionsInHeader && "justify-self-center")}>
+                  <MobileNavigation
+                    views={views}
+                    currentView={currentView}
+                    onViewChange={handleViewChange}
+                    compact={mobileActionsInHeader}
+                  />
+                </div>
+                {mobileActionsInHeader ? (
+                  <div className="flex min-w-0 shrink-0 justify-end">{currentActions}</div>
+                ) : (
+                  <div />
+                )}
               </div>
+              {currentActions && !mobileActionsInHeader && (
+                <div className="flex min-w-0 justify-end">{currentActions}</div>
+              )}
             </div>
 
             <div className="min-h-0 flex-1 overflow-hidden">
@@ -236,9 +270,8 @@ export function SwipablePage({
                   content: (
                     <div
                       className={cn(
-                        withPadding
-                          ? "p-2 pb-[calc(var(--mobile-nav-ui-height)+max(var(--mobile-nav-gap),env(safe-area-inset-bottom)))]"
-                          : "pb-safe",
+                        withPadding ? "p-2" : "pb-safe",
+                        withMobileNavOffset && "pb-[var(--mobile-nav-total-offset)]",
                       )}
                     >
                       {v.content}
@@ -269,9 +302,7 @@ export function SwipablePage({
                 />
               </div>
               {/* Actions slot - renders current view's actions */}
-              <div className="flex items-center gap-2">
-                {views.find((v) => v.value === currentView)?.actions}
-              </div>
+              <div className="flex items-center gap-2">{currentActions}</div>
             </div>
 
             {/* Content - relative for absolute positioned actions within */}

@@ -89,6 +89,7 @@ Thumbs.db
 /playwright/.cache/
 /playwright/.auth/
 .playwright-report
+.playwright-mcp
 # AI tools
 .codex/
 .kiro/

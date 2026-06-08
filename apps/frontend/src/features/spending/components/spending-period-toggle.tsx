@@ -36,7 +36,7 @@ export const SPENDING_PERIOD_LABELS: Record<ReportsPeriod, ReactNode> = {
 };
 
 interface SpendingPeriodToggleProps {
-  value: ReportsPeriod;
+  value: ReportsPeriod | null;
   onValueChange: (next: ReportsPeriod) => void;
   /** Visual variant on `AnimatedToggleGroup`. Default mirrors prior call sites. */
   variant?: "default" | "secondary";

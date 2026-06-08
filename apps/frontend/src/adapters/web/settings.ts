@@ -11,9 +11,9 @@ import type { AppInfo, PlatformInfo } from "../types";
 export const getSettings = async (): Promise<Settings> => {
   try {
     return await invoke<Settings>("get_settings");
-  } catch (_error) {
+  } catch (error) {
     logger.error("Error fetching settings.");
-    return {} as Settings;
+    throw error;
   }
 };
 

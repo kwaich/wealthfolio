@@ -4,6 +4,7 @@ use tauri::State;
 
 use rust_decimal::Decimal;
 use wealthfolio_core::{
+    accounts::AccountPurpose,
     portfolio::allocation_targets::{
         AllocationTarget, AllocationTargetWeight, CalculateRebalancePlanInput, DriftReport,
         NewAllocationTarget, NewAllocationTargetWeight, RebalancePlan, SaveAllocationTargetResult,
@@ -14,7 +15,7 @@ use wealthfolio_core::{
 
 use crate::context::ServiceContext;
 
-use super::portfolio::{holdings_account_ids, AccountScopeInput};
+use super::portfolio::AccountScopeInput;
 
 fn scope_id_for_target(target: &AllocationTarget) -> Result<String, String> {
     target
@@ -171,21 +172,21 @@ pub async fn get_allocation_target_drift(
         .ok_or_else(|| format!("AllocationTarget {} not found", target_id))?;
     let filter = account_scope_for_target(&target)?;
 
-    let resolved = wealthfolio_core::portfolios::PortfolioServiceTrait::resolve_account_scope(
-        state.portfolio_service.as_ref(),
-        &filter,
-        &base_currency,
-    )
-    .map_err(|e| e.to_string())?;
-
-    let account_ids = holdings_account_ids(&state, &resolved.account_ids)?;
+    let resolved =
+        wealthfolio_core::portfolios::PortfolioServiceTrait::resolve_account_scope_for_purpose(
+            state.portfolio_service.as_ref(),
+            &filter,
+            &base_currency,
+            AccountPurpose::Holdings,
+        )
+        .map_err(|e| e.to_string())?;
 
     if include_holdings.unwrap_or(false) {
         state
             .drift_service()
             .get_drift_report_with_holdings_for_target(
                 &target_id,
-                &account_ids,
+                &resolved.account_ids,
                 &base_currency,
                 &resolved.scope_id,
             )
@@ -196,7 +197,7 @@ pub async fn get_allocation_target_drift(
             .drift_service()
             .get_drift_report_for_target(
                 &target_id,
-                &account_ids,
+                &resolved.account_ids,
                 &base_currency,
                 &resolved.scope_id,
             )
@@ -216,20 +217,18 @@ fn resolve_rebalance_input(
 ) -> Result<CalculateRebalancePlanInput, String> {
     let filter = filter.into_account_filter()?;
     let base_currency = state.get_base_currency();
-    let resolved = wealthfolio_core::portfolios::PortfolioServiceTrait::resolve_account_scope(
-        state.portfolio_service.as_ref(),
-        &filter,
-        &base_currency,
-    )
-    .map_err(|e| e.to_string())?;
-    // Scope cash/holdings to the same accounts the holdings view uses (excludes
-    // non-Holdings accounts like credit cards), so tracked cash matches what the
-    // frontend reads from `get_holdings`.
-    let account_ids = holdings_account_ids(state, &resolved.account_ids)?;
+    let resolved =
+        wealthfolio_core::portfolios::PortfolioServiceTrait::resolve_account_scope_for_purpose(
+            state.portfolio_service.as_ref(),
+            &filter,
+            &base_currency,
+            AccountPurpose::Holdings,
+        )
+        .map_err(|e| e.to_string())?;
     Ok(CalculateRebalancePlanInput {
         target_id,
         available_cash,
-        account_ids,
+        account_ids: resolved.account_ids,
         base_currency,
         aggregated_account_id: resolved.scope_id,
         scenario_mode,

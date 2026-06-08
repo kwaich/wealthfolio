@@ -179,9 +179,7 @@ export const IncomeHistoryChart: React.FC<IncomeHistoryChartProps> = ({
       );
     }
     if (chartData.length === 0) return 0;
-    return Math.max(
-      ...chartData.map((d) => Math.max(d.income, d.previousIncome, isMobile ? d.cumulative : 0)),
-    );
+    return Math.max(...chartData.map((d) => Math.max(d.income, d.previousIncome)));
   })();
   const yTicks = getNiceTicks(dataMax);
 
@@ -344,19 +342,18 @@ export const IncomeHistoryChart: React.FC<IncomeHistoryChartProps> = ({
               <CartesianGrid vertical={false} strokeDasharray="3 3" opacity={0.3} />
               <XAxis {...xAxisProps} />
               <YAxis yAxisId="left" {...yAxisProps} />
-              {!isMobile && (
-                <YAxis
-                  yAxisId="right"
-                  orientation="right"
-                  tickLine={false}
-                  axisLine={false}
-                  width={48}
-                  ticks={rightTicks}
-                  domain={[0, rightTicks[rightTicks.length - 1] || 0]}
-                  tick={{ fontSize: 12, fill: "var(--chart-2)" }}
-                  tickFormatter={formatK}
-                />
-              )}
+              <YAxis
+                yAxisId="right"
+                orientation="right"
+                hide={isMobile}
+                tickLine={false}
+                axisLine={false}
+                width={isMobile ? 0 : 48}
+                ticks={rightTicks}
+                domain={[0, rightTicks[rightTicks.length - 1] || 0]}
+                tick={{ fontSize: 12, fill: "var(--chart-2)" }}
+                tickFormatter={formatK}
+              />
               <ChartTooltip
                 content={
                   <ChartTooltipContent
@@ -410,7 +407,7 @@ export const IncomeHistoryChart: React.FC<IncomeHistoryChartProps> = ({
                   bars as background context, with its own stroke acting as the line.
                   One element means exactly one legend/tooltip entry. */}
               <Area
-                yAxisId={isMobile ? "left" : "right"}
+                yAxisId="right"
                 type="monotone"
                 dataKey="cumulative"
                 stroke="var(--color-cumulative)"

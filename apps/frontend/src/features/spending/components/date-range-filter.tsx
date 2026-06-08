@@ -20,15 +20,18 @@ interface DateRangeFilterProps {
 }
 
 function summarize(range: DateRange | undefined): string | null {
-  if (!range?.from) return null;
-  if (range.to) {
+  if (!range?.from && !range?.to) return null;
+  if (range.from && range.to) {
     return `${format(range.from, "MMM d")} – ${format(range.to, "MMM d")}`;
   }
-  return format(range.from, "MMM d, y");
+  if (range.from) {
+    return format(range.from, "MMM d, y");
+  }
+  return range.to ? `Until ${format(range.to, "MMM d, y")}` : null;
 }
 
 export function DateRangeFilter({ value, onChange, title = "Date" }: DateRangeFilterProps) {
-  const isActive = !!value?.from;
+  const isActive = !!value?.from || !!value?.to;
   const summary = summarize(value);
 
   return (
@@ -57,7 +60,7 @@ export function DateRangeFilter({ value, onChange, title = "Date" }: DateRangeFi
       <PopoverContent className="w-auto p-0" align="start">
         <Calendar
           mode="range"
-          defaultMonth={value?.from}
+          defaultMonth={value?.from ?? value?.to}
           selected={value}
           onSelect={onChange}
           numberOfMonths={2}

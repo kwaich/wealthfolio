@@ -232,6 +232,13 @@ function editorModeFromRequest(
     : { kind: "edit", targetId: liveTargets[0].id };
 }
 
+function isSameEditorMode(left: EditorMode, right: EditorMode): boolean {
+  if (left.kind !== right.kind) return false;
+  if (left.kind === "guided") return true;
+  if (right.kind === "guided") return false;
+  return left.targetId === right.targetId;
+}
+
 function TargetEditor({
   target,
   accountScope,
@@ -501,8 +508,15 @@ function TargetEditor({
 
   return (
     <div className="space-y-5">
-      <div className={cn("flex justify-end", actionsPlacement === "page-header" && "-mt-14 mb-4")}>
-        <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+      <div
+        className={cn(
+          "flex",
+          actionsPlacement === "page-header"
+            ? "mb-4 justify-start lg:-mt-14 lg:justify-end"
+            : "justify-end",
+        )}
+      >
+        <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
           <Button variant="ghost" size="sm" onClick={handleCancel}>
             <Icons.X className="mr-1.5 h-4 w-4" />
             Cancel
@@ -886,11 +900,16 @@ export function TargetsTab({
   useEffect(() => {
     if (!editorMode) return;
     if (editorMode === "create") {
-      setDraftAccountScope(accountScopeRef.current);
-      setMode({ kind: "guided" });
+      setDraftAccountScope((current) =>
+        accountScopeKey(current) === accountScopeKey(accountScopeRef.current)
+          ? current
+          : accountScopeRef.current,
+      );
+      setMode((current) => (current.kind === "guided" ? current : { kind: "guided" }));
       return;
     }
-    setMode(editorModeFromRequest(editorMode, selectedTargetId, liveTargets));
+    const nextMode = editorModeFromRequest(editorMode, selectedTargetId, liveTargets);
+    setMode((current) => (isSameEditorMode(current, nextMode) ? current : nextMode));
   }, [editorMode, selectedTargetId, liveTargets, parentAccountScopeKey]);
 
   useEffect(() => {

@@ -1103,14 +1103,16 @@ function BreakdownCanvas({
             Open transactions →
           </Link>
         </div>
-        {/* Mobile footer: full-width primary action */}
-        <div className="mt-4 md:hidden">
+        {/* Mobile footer: count + low-emphasis link */}
+        <div className="text-muted-foreground/80 mt-3 flex items-center justify-between gap-3 px-1 text-xs md:hidden">
+          <span className="tabular-nums">
+            {shownCats} of {totalCats} categor{totalCats === 1 ? "y" : "ies"} shown
+          </span>
           <Link
             to="/activities?tab=spending"
-            className="bg-foreground text-background hover:bg-foreground/90 flex h-11 w-full items-center justify-center gap-2 rounded-full text-sm font-medium transition-colors"
+            className="text-foreground hover:text-foreground/80 inline-flex items-center gap-1 font-medium underline-offset-4 hover:underline"
           >
-            Open transactions
-            <Icons.ArrowRight className="h-4 w-4" aria-hidden />
+            Open transactions →
           </Link>
         </div>
       </div>

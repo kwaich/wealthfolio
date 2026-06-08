@@ -3,6 +3,7 @@ use async_trait::async_trait;
 use super::portfolios_model::{
     AccountScope, NewPortfolio, PortfolioUpdate, PortfolioWithAccounts, ResolvedAccountScope,
 };
+use crate::accounts::AccountPurpose;
 use crate::errors::Result;
 
 #[async_trait]
@@ -59,6 +60,14 @@ pub trait PortfolioServiceTrait: Send + Sync {
             base_currency: base_currency.to_string(),
         })
     }
+
+    /// Resolve an AccountScope and keep only accounts eligible for a product surface.
+    fn resolve_account_scope_for_purpose(
+        &self,
+        filter: &AccountScope,
+        base_currency: &str,
+        purpose: AccountPurpose,
+    ) -> Result<ResolvedAccountScope>;
 
     /// Resolve an AccountScope into its runtime reporting form using the app
     /// default base currency. Prefer `resolve_account_scope` where the current

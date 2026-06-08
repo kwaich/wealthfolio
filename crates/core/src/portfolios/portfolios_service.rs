@@ -4,7 +4,7 @@ use super::portfolios_model::{
     AccountScope, NewPortfolio, PortfolioUpdate, PortfolioWithAccounts, ResolvedAccountScope,
 };
 use super::portfolios_traits::{PortfolioRepositoryTrait, PortfolioServiceTrait};
-use crate::accounts::AccountRepositoryTrait;
+use crate::accounts::{account_supports_purpose, AccountPurpose, AccountRepositoryTrait};
 use crate::errors::{DatabaseError, Result, ValidationError};
 use crate::Error;
 
@@ -138,5 +138,31 @@ impl PortfolioServiceTrait for PortfolioService {
             account_ids: ids,
             base_currency: base_currency.to_string(),
         })
+    }
+
+    fn resolve_account_scope_for_purpose(
+        &self,
+        filter: &AccountScope,
+        base_currency: &str,
+        purpose: AccountPurpose,
+    ) -> Result<ResolvedAccountScope> {
+        let mut resolved = self.resolve_account_scope(filter, base_currency)?;
+        if resolved.account_ids.is_empty() {
+            return Ok(resolved);
+        }
+
+        let accounts = self
+            .account_repository
+            .list(None, None, Some(&resolved.account_ids))?;
+        let eligible_ids: HashSet<String> = accounts
+            .into_iter()
+            .filter(|account| account_supports_purpose(&account.account_type, purpose))
+            .map(|account| account.id)
+            .collect();
+
+        resolved
+            .account_ids
+            .retain(|account_id| eligible_ids.contains(account_id));
+        Ok(resolved)
     }
 }

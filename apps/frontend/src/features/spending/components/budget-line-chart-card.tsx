@@ -12,8 +12,15 @@ import type { DayBucket } from "../types/report";
 
 type Status = "ok" | "warn" | "over";
 type PacePoint = { day: number; value: number };
+type BudgetToday = { year: number; month: number; day: number };
 
 const MIN_HISTORICAL_PACE_MONTHS = 2;
+
+function parseMonthKey(value: string | null | undefined): { year: number; month: number } | null {
+  if (!value || !/^\d{4}-(0[1-9]|1[0-2])$/.test(value)) return null;
+  const [year, month] = value.split("-").map(Number);
+  return { year, month };
+}
 
 const STATUS_ACCENTS: Record<
   Status,
@@ -49,6 +56,13 @@ const STATUS_ACCENTS: Record<
 };
 
 export function BudgetLineChartCard({
+  monthKey,
+  today,
+  isCurrentMonth,
+  onPreviousMonth,
+  onNextMonth,
+  canGoNextMonth,
+  activityRange,
   target,
   spent,
   currency,
@@ -59,6 +73,13 @@ export function BudgetLineChartCard({
   monthByDay,
   historicalByDay,
 }: {
+  monthKey: string;
+  today: BudgetToday;
+  isCurrentMonth: boolean;
+  onPreviousMonth: () => void;
+  onNextMonth: () => void;
+  canGoNextMonth: boolean;
+  activityRange: { from: string; to: string };
   target: number;
   spent: number;
   currency: string;
@@ -73,18 +94,24 @@ export function BudgetLineChartCard({
   // sits between hooks otherwise, which trips "Rendered more hooks than during
   // the previous render" when a target is added or cleared.
   const monthMeta = useMemo(() => {
-    const now = new Date();
-    const dayOfMonth = now.getDate();
-    const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    const parts = parseMonthKey(monthKey) ?? today;
+    const year = parts.year;
+    const month = parts.month;
+    const daysInMonth = new Date(year, month, 0).getDate();
+    const dayOfMonth = isCurrentMonth ? Math.min(today.day, daysInMonth) : daysInMonth;
+    const monthDate = new Date(year, month - 1, 1);
     return {
-      now,
       dayOfMonth,
       daysInMonth,
-      daysRemaining: Math.max(0, daysInMonth - dayOfMonth),
-      monthLabel: now.toLocaleString("en-US", { month: "long", year: "numeric" }).toUpperCase(),
-      shortLabel: now.toLocaleString("en-US", { month: "short", year: "numeric" }).toUpperCase(),
+      daysRemaining: isCurrentMonth ? Math.max(0, daysInMonth - dayOfMonth) : 0,
+      monthLabel: monthDate
+        .toLocaleString("en-US", { month: "long", year: "numeric" })
+        .toUpperCase(),
+      shortLabel: monthDate
+        .toLocaleString("en-US", { month: "short", year: "numeric" })
+        .toUpperCase(),
     };
-  }, []);
+  }, [monthKey, isCurrentMonth, today]);
   const { dayOfMonth, daysInMonth, daysRemaining, monthLabel } = monthMeta;
 
   const cumulative = useMemo(() => {
@@ -174,25 +201,36 @@ export function BudgetLineChartCard({
 
   const haveHistory = historicalDailyAvg > 0;
   const forecast =
-    target > 0
+    target > 0 && isCurrentMonth
       ? haveHistory
         ? spent + historicalDailyAvg * daysRemaining
         : dayOfMonth > 0
           ? (spent / dayOfMonth) * daysInMonth
           : 0
       : 0;
+  const headerAction = (
+    <BudgetCardHeaderActions
+      monthLabel={monthMeta.shortLabel}
+      monthKey={monthKey}
+      onPreviousMonth={onPreviousMonth}
+      onNextMonth={onNextMonth}
+      canGoNextMonth={canGoNextMonth}
+    />
+  );
 
   if (target <= 0) {
     return (
       <DashboardCard
         title="Monthly budget"
         subtitle={monthMeta.shortLabel}
-        action={<BudgetManageLink />}
+        action={headerAction}
         className="text-center"
       >
-        <p className="text-muted-foreground text-sm">No monthly target set yet.</p>
+        <p className="text-muted-foreground text-sm">
+          No monthly target set for this budget month.
+        </p>
         <Link
-          to="/settings/spending/setup"
+          to={`/spending/budget?month=${monthKey}`}
           className="text-foreground mt-2 inline-flex text-xs underline-offset-4 hover:underline"
         >
           Set a budget →
@@ -204,7 +242,7 @@ export function BudgetLineChartCard({
   const remaining = Math.max(0, target - spent);
   const overBy = spent - target;
   const isOver = overBy > 0;
-  const forecastReliable = haveHistory || dayOfMonth >= 7;
+  const forecastReliable = isCurrentMonth && (haveHistory || dayOfMonth >= 7);
   const forecastDelta = forecast - target;
   const willOverspend = forecastReliable && forecastDelta > 0;
 
@@ -215,9 +253,10 @@ export function BudgetLineChartCard({
   const gapVsPace = spent - paceAtToday;
   const aheadOfPace = gapVsPace < 0;
 
-  const status: Status = isOver ? "over" : !aheadOfPace ? "warn" : "ok";
+  const status: Status = isOver ? "over" : isCurrentMonth && !aheadOfPace ? "warn" : "ok";
   const a = STATUS_ACCENTS[status];
   const { Icon } = a;
+  const statusLabel = !isCurrentMonth && !isOver ? "Under budget" : a.label;
 
   const xForDay = (day: number) => padL + ((day - 1) / Math.max(1, daysInMonth - 1)) * innerW;
   const yForVal = (v: number) => padT + (1 - v / yMax) * innerH;
@@ -231,11 +270,15 @@ export function BudgetLineChartCard({
   const endY = cumulative.length ? yForVal(cumulative[cumulative.length - 1].value) : padT + innerH;
 
   const gapAbs = Math.abs(gapVsPace);
-  const gapLabel = isOver
-    ? `${formatCompactAmount(overBy, currency)} over budget`
-    : aheadOfPace
-      ? `${formatCompactAmount(gapAbs, currency)} under budget`
-      : `${formatCompactAmount(gapAbs, currency)} over pace`;
+  const gapLabel = isCurrentMonth
+    ? isOver
+      ? `${formatCompactAmount(overBy, currency)} over budget`
+      : aheadOfPace
+        ? `${formatCompactAmount(gapAbs, currency)} under budget`
+        : `${formatCompactAmount(gapAbs, currency)} over pace`
+    : isOver
+      ? `${formatCompactAmount(overBy, currency)} over budget`
+      : `${formatCompactAmount(remaining, currency)} left`;
 
   const pillLeftPctRaw = (endX / chartW) * 100;
   const pillLeftPct = Math.min(78, Math.max(8, pillLeftPctRaw - 4));
@@ -245,17 +288,17 @@ export function BudgetLineChartCard({
   const pillTopPx = Math.max(0, endY - 28);
 
   return (
-    <DashboardCard title="Monthly budget" subtitle={monthLabel} action={<BudgetManageLink />}>
+    <DashboardCard title="Monthly budget" subtitle={monthLabel} action={headerAction}>
       <div className="flex items-center gap-2">
         <Icon className="h-4 w-4 shrink-0" style={{ color: a.accent }} />
-        <span className="text-foreground text-sm font-semibold">{a.label}</span>
+        <span className="text-foreground text-sm font-semibold">{statusLabel}</span>
         <span className="text-muted-foreground/70 ml-auto text-xs tabular-nums">
-          Day {dayOfMonth} / {daysInMonth}
+          {isCurrentMonth ? `Day ${dayOfMonth} / ${daysInMonth}` : "Closed"}
         </span>
       </div>
 
       <div className="mt-3">
-        {willOverspend && forecastDelta > target * 0.05 ? (
+        {isCurrentMonth && willOverspend && forecastDelta > target * 0.05 ? (
           <>
             <div className="text-foreground text-2xl font-bold tabular-nums tracking-tight">
               <PrivacyAmount value={forecast} currency={currency} />{" "}
@@ -268,6 +311,25 @@ export function BudgetLineChartCard({
             <div className="text-muted-foreground/80 mt-0.5 text-xs tabular-nums">
               <PrivacyAmount value={remaining} currency={currency} /> left today · of{" "}
               <PrivacyAmount value={target} currency={currency} /> budgeted this month
+            </div>
+          </>
+        ) : !isCurrentMonth ? (
+          <>
+            <div className="text-foreground text-2xl font-bold tabular-nums tracking-tight">
+              <PrivacyAmount value={spent} currency={currency} />{" "}
+              <span className="text-muted-foreground/70 text-base font-medium">spent</span>
+            </div>
+            <div
+              className={cn(
+                "mt-0.5 inline-flex items-center gap-1 text-xs font-semibold tabular-nums",
+                isOver ? "text-destructive" : "text-success",
+              )}
+            >
+              <PrivacyAmount value={isOver ? overBy : remaining} currency={currency} />{" "}
+              {isOver ? "over budget" : "left"}
+            </div>
+            <div className="text-muted-foreground/80 mt-0.5 text-xs tabular-nums">
+              of <PrivacyAmount value={target} currency={currency} /> budgeted
             </div>
           </>
         ) : (
@@ -365,7 +427,7 @@ export function BudgetLineChartCard({
       <div className="border-border mt-4 grid grid-cols-2 gap-3 border-t pt-3 text-xs">
         <div>
           <div className="text-muted-foreground/70 text-[11px] uppercase tracking-wide">
-            Spent so far
+            {isCurrentMonth ? "Spent so far" : "Spent"}
           </div>
           <div className="text-foreground text-sm font-semibold tabular-nums">
             <PrivacyAmount value={spent} currency={currency} />
@@ -373,26 +435,41 @@ export function BudgetLineChartCard({
         </div>
         <div className="text-right">
           <div className="text-muted-foreground/70 text-[11px] uppercase tracking-wide">
-            Forecast
+            {isCurrentMonth ? "Forecast" : "Result"}
           </div>
-          <div
-            className={cn(
-              "text-sm font-semibold tabular-nums",
-              forecastReliable
-                ? willOverspend
-                  ? "text-destructive"
-                  : "text-foreground"
-                : "text-muted-foreground/60",
-            )}
-          >
-            {forecastReliable ? <PrivacyAmount value={forecast} currency={currency} /> : "—"}
-          </div>
+          {isCurrentMonth ? (
+            <div
+              className={cn(
+                "text-sm font-semibold tabular-nums",
+                forecastReliable
+                  ? willOverspend
+                    ? "text-destructive"
+                    : "text-foreground"
+                  : "text-muted-foreground/60",
+              )}
+            >
+              {forecastReliable ? <PrivacyAmount value={forecast} currency={currency} /> : "—"}
+            </div>
+          ) : (
+            <div
+              className={cn(
+                "text-sm font-semibold tabular-nums",
+                isOver ? "text-destructive" : "text-foreground",
+              )}
+            >
+              <PrivacyAmount value={isOver ? overBy : remaining} currency={currency} />
+            </div>
+          )}
           <div className="text-muted-foreground/60 text-[10px]">
-            {forecastReliable
-              ? haveHistory
-                ? "vs last 3 months"
-                : "at current pace"
-              : "more data needed"}
+            {isCurrentMonth
+              ? forecastReliable
+                ? haveHistory
+                  ? "vs last 3 months"
+                  : "at current pace"
+                : "more data needed"
+              : isOver
+                ? "over budget"
+                : "left"}
           </div>
         </div>
       </div>
@@ -402,12 +479,7 @@ export function BudgetLineChartCard({
           <span className="text-muted-foreground/80 text-[11px] font-semibold uppercase tracking-wide">
             By category
           </span>
-          <Link
-            to="/spending/budget"
-            className="text-muted-foreground hover:text-foreground text-xs underline-offset-4 hover:underline"
-          >
-            Manage →
-          </Link>
+          <BudgetManageLink monthKey={monthKey} />
         </div>
         {rings.length === 0 ? (
           <div className="text-muted-foreground py-2 text-center text-xs">
@@ -422,7 +494,7 @@ export function BudgetLineChartCard({
         ) : (
           <div
             data-no-swipe-drag
-            className="-mx-1 flex gap-3 overflow-x-auto px-1 pb-1"
+            className="-mx-1 flex min-w-0 touch-pan-x gap-3 overflow-x-auto overscroll-x-contain px-1 pb-1 [-webkit-overflow-scrolling:touch] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
             style={{
               maskImage: "linear-gradient(to right, black calc(100% - 32px), transparent 100%)",
               WebkitMaskImage:
@@ -430,7 +502,7 @@ export function BudgetLineChartCard({
             }}
           >
             {rings.map((r) => (
-              <BudgetRing key={r.id} ring={r} currency={currency} />
+              <BudgetRing key={r.id} ring={r} currency={currency} activityRange={activityRange} />
             ))}
           </div>
         )}
@@ -529,9 +601,51 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-const BudgetManageLink = () => (
+function BudgetCardHeaderActions({
+  monthLabel,
+  monthKey,
+  onPreviousMonth,
+  onNextMonth,
+  canGoNextMonth,
+}: {
+  monthLabel: string;
+  monthKey: string;
+  onPreviousMonth: () => void;
+  onNextMonth: () => void;
+  canGoNextMonth: boolean;
+}) {
+  return (
+    <div className="flex items-center gap-1.5">
+      <div className="bg-muted/60 inline-flex items-center rounded-full p-0.5">
+        <button
+          type="button"
+          onClick={onPreviousMonth}
+          className="hover:bg-background flex h-6 w-6 items-center justify-center rounded-full transition-colors"
+          aria-label="Previous budget month"
+        >
+          <Icons.ChevronLeft className="h-3.5 w-3.5" />
+        </button>
+        <span className="text-foreground min-w-[74px] px-1 text-center text-[11px] font-medium tabular-nums">
+          {monthLabel}
+        </span>
+        <button
+          type="button"
+          onClick={onNextMonth}
+          disabled={!canGoNextMonth}
+          className="hover:bg-background disabled:text-muted-foreground/40 flex h-6 w-6 items-center justify-center rounded-full transition-colors disabled:cursor-not-allowed"
+          aria-label="Next budget month"
+        >
+          <Icons.ChevronRight className="h-3.5 w-3.5" />
+        </button>
+      </div>
+      <BudgetManageLink monthKey={monthKey} />
+    </div>
+  );
+}
+
+const BudgetManageLink = ({ monthKey }: { monthKey: string }) => (
   <Link
-    to="/spending/budget"
+    to={`/spending/budget?month=${monthKey}`}
     className="text-muted-foreground hover:text-foreground text-xs underline-offset-4 hover:underline"
   >
     Manage →
@@ -541,6 +655,7 @@ const BudgetManageLink = () => (
 function BudgetRing({
   ring,
   currency,
+  activityRange,
 }: {
   ring: {
     categoryId: string;
@@ -552,6 +667,7 @@ function BudgetRing({
     pct: number;
   };
   currency: string;
+  activityRange: { from: string; to: string };
 }) {
   const { isBalanceHidden } = useBalancePrivacy();
   const isOver = ring.spent > ring.target;
@@ -568,8 +684,10 @@ function BudgetRing({
 
   return (
     <Link
-      to={`/activities?tab=spending&category=${encodeURIComponent(ring.categoryId)}`}
-      className="hover:bg-muted/40 flex shrink-0 flex-col items-center gap-1 rounded-md px-1 py-1 transition-colors"
+      to={`/activities?tab=spending&category=${encodeURIComponent(ring.categoryId)}&from=${
+        activityRange.from
+      }&to=${activityRange.to}`}
+      className="hover:bg-muted/40 flex w-16 shrink-0 flex-col items-center gap-1 rounded-md px-1 py-1 transition-colors"
       title={`${ring.name}: ${ring.spent.toFixed(2)} / ${ring.target.toFixed(2)}`}
     >
       <div className="relative" style={{ width: size, height: size }}>

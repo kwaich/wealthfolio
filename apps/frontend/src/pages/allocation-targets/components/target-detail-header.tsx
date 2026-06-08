@@ -30,13 +30,13 @@ export function TargetToolbarActions({
   onEditTarget,
 }: Omit<TargetDetailHeaderProps, "onBack" | "showActions">) {
   return (
-    <div className="flex items-center justify-end gap-2">
+    <div className="flex w-full min-w-0 items-center justify-end gap-2 md:w-auto">
       {targets.length > 0 && (
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button
               variant="outline"
-              className="bg-secondary/30 hover:bg-muted/80 h-10 min-w-[220px] justify-between gap-2 rounded-full border-none px-4 text-sm font-medium"
+              className="bg-secondary/30 hover:bg-muted/80 h-10 min-w-0 flex-1 justify-between gap-2 rounded-full border-none px-4 text-sm font-medium md:min-w-[220px] md:flex-none"
             >
               <Icons.Target className="h-4 w-4 shrink-0 opacity-70" />
               <span className="min-w-0 flex-1 truncate text-left">
@@ -45,7 +45,7 @@ export function TargetToolbarActions({
               <Icons.ChevronsUpDown className="h-3.5 w-3.5 shrink-0 opacity-50" />
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-60">
+          <DropdownMenuContent align="end" className="w-[calc(100vw-1.5rem)] md:w-60">
             {targets.map((p) => (
               <DropdownMenuItem
                 key={p.id}
@@ -60,7 +60,7 @@ export function TargetToolbarActions({
       )}
       <Button
         variant="outline"
-        className="bg-secondary/30 hover:bg-muted/80 h-10 w-10 rounded-full border-none p-0"
+        className="bg-secondary/30 hover:bg-muted/80 h-10 w-10 shrink-0 rounded-full border-none p-0"
         onClick={onCreateTarget}
         aria-label="New target"
         title="New target"
@@ -70,7 +70,7 @@ export function TargetToolbarActions({
       {target && onEditTarget && (
         <Button
           variant="outline"
-          className="bg-secondary/30 hover:bg-muted/80 h-10 w-10 rounded-full border-none p-0"
+          className="bg-secondary/30 hover:bg-muted/80 h-10 w-10 shrink-0 rounded-full border-none p-0"
           onClick={onEditTarget}
           aria-label="Edit target"
           title="Edit target"
