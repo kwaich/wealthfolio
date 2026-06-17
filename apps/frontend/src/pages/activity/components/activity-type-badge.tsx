@@ -23,6 +23,7 @@ function getActivityBadgeVariant(type: ActivityType) {
     case ActivityType.TAX:
       return "destructive";
     case ActivityType.SPLIT:
+      return "warning";
     case ActivityType.ADJUSTMENT:
       return "secondary";
     default:

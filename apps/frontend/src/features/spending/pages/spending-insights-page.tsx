@@ -10,7 +10,7 @@ import { Page, PageContent, PageHeader, useIsMobile, usePersistentState } from "
 
 import { CategoryTransactionsSheet } from "../components/reports/category-transactions-sheet";
 import { HeatmapCellSheet } from "../components/reports/heatmap-cell-sheet";
-import { SpendingPeriodToggle } from "../components/spending-period-toggle";
+import { SpendingPeriodSelector } from "../components/spending-period-toggle";
 import { StageNav, type InsightsStage } from "../components/reports/insights/stage-nav";
 import { WhatChangedStage } from "../components/reports/insights/what-changed-stage";
 import { WhenWhereStage } from "../components/reports/insights/when-where-stage";
@@ -21,8 +21,21 @@ import { useSpendingInsight } from "../hooks/use-spending-insight";
 import { useSpendingSettings } from "../hooks/use-spending-settings";
 import { insightToReportProjection, UNCATEGORIZED_CATEGORY_ID } from "../lib/insight-projection";
 import {
+  SPENDING_MONTH_PARAM,
+  SPENDING_MONTH_STORAGE_KEY,
+  addMonthsToMonthKey,
+  currentMonthKey,
+  monthReportsRange,
+  parseMonthKey,
+} from "../lib/month-period";
+import {
+  INSIGHTS_PERIOD_STORAGE_KEY,
+  INSIGHTS_PERIOD_UPDATED_AT_STORAGE_KEY,
+  normalizeReportsPeriod,
+  periodPreferenceTimestamp,
+} from "../lib/period-preferences";
+import {
   DEFAULT_REPORTS_PERIOD,
-  REPORTS_PERIODS,
   periodToReportsRange,
   type ReportsPeriod,
   type ReportsRange,
@@ -41,36 +54,11 @@ import {
 const SPENDING_TAXONOMY = "spending_categories";
 const INCOME_TAXONOMY = "income_sources";
 const SAVINGS_TAXONOMY = "savings_categories";
-const PERIOD_STORAGE_KEY = "spending-insights-period";
 const STAGE_STORAGE_KEY = "spending-insights-stage";
 const EMPTY_TAXONOMY: never[] = [];
 /** Heatmap window — last 12 weeks regardless of selected period. */
 const HEATMAP_WEEKS = 12;
 const HEATMAP_DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
-
-function parseDateParam(value: string | null): { year: number; month: number; day: number } | null {
-  if (!value) return null;
-  const [year, month, day] = value.split("-").map(Number);
-  if (!year || !month || !day) return null;
-  return { year, month, day };
-}
-
-function customRangeFromParams(
-  params: URLSearchParams,
-  timezone?: string | null,
-): ReportsRange | null {
-  const startParts = parseDateParam(params.get("from"));
-  const endParts = parseDateParam(params.get("to"));
-  if (!startParts || !endParts) return null;
-  const days = calendarDaysBetweenInclusive(startParts, endParts);
-  if (days <= 0) return null;
-  return {
-    start: zonedCalendarDateBoundaryToDate(startParts, "start", timezone),
-    end: zonedCalendarDateBoundaryToDate(endParts, "end", timezone),
-    days,
-    months: calendarMonthsBetweenInclusive(startParts, endParts),
-  };
-}
 
 function monthToDateRange(timezone?: string | null): ReportsRange {
   const today = getZonedDateParts(new Date(), timezone);
@@ -117,13 +105,6 @@ function previousMonthMatchingRange(range: ReportsRange, timezone?: string | nul
  */
 const VALID_STAGES: InsightsStage[] = ["where", "changed", "when"];
 
-function normalizeReportsPeriod(value: string | null | undefined): ReportsPeriod | null {
-  if (!value) return null;
-  if (value === "1M") return "MTD";
-  if (REPORTS_PERIODS.includes(value as ReportsPeriod)) return value as ReportsPeriod;
-  return null;
-}
-
 export default function SpendingInsightsPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -134,14 +115,28 @@ export default function SpendingInsightsPage() {
   const { isEnabled, isLoading: settingsLoading } = useSpendingSettings();
 
   const [persistedPeriod, setPersistedPeriod] = usePersistentState<string>(
-    PERIOD_STORAGE_KEY,
+    INSIGHTS_PERIOD_STORAGE_KEY,
     DEFAULT_REPORTS_PERIOD,
+  );
+  const [, setPeriodUpdatedAt] = usePersistentState<string>(
+    INSIGHTS_PERIOD_UPDATED_AT_STORAGE_KEY,
+    "0",
+  );
+  const [persistedMonth, setPersistedMonth] = usePersistentState<string | null>(
+    SPENDING_MONTH_STORAGE_KEY,
+    null,
   );
   const period = normalizeReportsPeriod(persistedPeriod) ?? DEFAULT_REPORTS_PERIOD;
   const [stage, setStage] = usePersistentState<InsightsStage>(STAGE_STORAGE_KEY, "where");
+  const urlMonth = parseMonthKey(searchParams.get(SPENDING_MONTH_PARAM))
+    ? searchParams.get(SPENDING_MONTH_PARAM)
+    : null;
+  const customMonth =
+    urlMonth ??
+    (!searchParams.has("period") && parseMonthKey(persistedMonth) ? persistedMonth : null);
 
   // ─── URL ↔ state sync ─────────────────────────────────────────────────────
-  // ?stage=where|changed|when and ?period=MTD|30D|3M|6M|YTD|1Y drive the page
+  // ?stage=where|changed|when and ?period=MTD|LAST_MONTH|3M|6M|YTD|1Y drive the page
   // when present, otherwise fall back to the persisted localStorage values.
   // Linking from the dashboard (`/spending/insights?stage=where`) and reload-
   // ability of the current view both rely on this.
@@ -153,6 +148,9 @@ export default function SpendingInsightsPage() {
     const urlPeriod = normalizeReportsPeriod(searchParams.get("period"));
     if (urlPeriod && urlPeriod !== period) {
       setPersistedPeriod(urlPeriod);
+    }
+    if (urlMonth && urlMonth !== persistedMonth) {
+      setPersistedMonth(urlMonth);
     }
     // Eslint disable: we intentionally run only on URL change, not on every
     // state change — the inverse direction (state → URL) is handled by the
@@ -178,18 +176,37 @@ export default function SpendingInsightsPage() {
   const setPeriodAndUrl = useCallback(
     (next: ReportsPeriod) => {
       setPersistedPeriod(next);
+      setPeriodUpdatedAt(periodPreferenceTimestamp());
+      setPersistedMonth(null);
       setSearchParams(
         (prev) => {
           const p = new URLSearchParams(prev);
           p.set("period", next);
-          p.delete("from");
-          p.delete("to");
+          p.delete(SPENDING_MONTH_PARAM);
           return p;
         },
         { replace: true },
       );
     },
-    [setPersistedPeriod, setSearchParams],
+    [setPersistedPeriod, setPeriodUpdatedAt, setPersistedMonth, setSearchParams],
+  );
+
+  const setCustomMonthAndUrl = useCallback(
+    (next: string | null) => {
+      setPersistedMonth(next);
+      setPeriodUpdatedAt(periodPreferenceTimestamp());
+      setSearchParams(
+        (prev) => {
+          const p = new URLSearchParams(prev);
+          p.set("period", period);
+          if (next) p.set(SPENDING_MONTH_PARAM, next);
+          else p.delete(SPENDING_MONTH_PARAM);
+          return p;
+        },
+        { replace: true },
+      );
+    },
+    [period, setPersistedMonth, setPeriodUpdatedAt, setSearchParams],
   );
 
   // Events-timeline pagination — independent from `period`. Stored alongside
@@ -205,22 +222,22 @@ export default function SpendingInsightsPage() {
     [period],
   );
 
-  const customRange = useMemo(
-    () => customRangeFromParams(searchParams, appTimezone),
-    [searchParams, appTimezone],
+  const monthRange = useMemo(
+    () => (customMonth ? monthReportsRange(customMonth, appTimezone) : null),
+    [customMonth, appTimezone],
   );
   const range = useMemo(
-    () => customRange ?? periodToReportsRange(period, appTimezone),
-    [customRange, period, appTimezone],
+    () => monthRange ?? periodToReportsRange(period, appTimezone),
+    [monthRange, period, appTimezone],
   );
   const whatChangedWindow = useMemo(() => {
-    if (customRange || period !== "MTD") return null;
+    if (customMonth || period !== "MTD") return null;
     const current = monthToDateRange(appTimezone);
     return {
       current,
       prior: previousMonthMatchingRange(current, appTimezone),
     };
-  }, [customRange, period, appTimezone]);
+  }, [customMonth, period, appTimezone]);
   const eventsRange = useMemo(
     () => shiftRangeBack(range, period, eventsWindowOffset, appTimezone),
     [range, period, eventsWindowOffset, appTimezone],
@@ -395,6 +412,10 @@ export default function SpendingInsightsPage() {
     () => new Map(accounts.map((account) => [account.id, account.accountType])),
     [accounts],
   );
+  const maxPickerMonth = useMemo(
+    () => addMonthsToMonthKey(currentMonthKey(appTimezone), -1),
+    [appTimezone],
+  );
 
   // Gate the entire page when tracking is disabled — mirrors spending-budget-page.
   // Without this, disabling tracking from ModuleCard leaves Insights live and
@@ -404,7 +425,14 @@ export default function SpendingInsightsPage() {
   }
 
   const periodToggle = (
-    <SpendingPeriodToggle value={customRange ? null : period} onValueChange={setPeriodAndUrl} />
+    <SpendingPeriodSelector
+      value={customMonth ? null : period}
+      onValueChange={setPeriodAndUrl}
+      customMonth={customMonth}
+      maxMonth={maxPickerMonth}
+      onCustomMonthChange={setCustomMonthAndUrl}
+      className="w-[calc(100vw-6rem)] max-w-[calc(100vw-6rem)] sm:w-full sm:max-w-screen-md md:max-w-2xl"
+    />
   );
 
   return (
@@ -537,7 +565,7 @@ export default function SpendingInsightsPage() {
  *  the prior year's window. */
 const MONTHS_PER_PERIOD: Record<ReportsPeriod, number> = {
   MTD: 1,
-  "30D": 1,
+  LAST_MONTH: 1,
   "3M": 3,
   "6M": 6,
   YTD: 12,
@@ -551,20 +579,6 @@ function shiftRangeBack(
   timezone?: string | null,
 ): ReportsRange {
   if (offset === 0) return range;
-  if (period === "30D") {
-    const days = 30 * offset;
-    const start = zonedCalendarDateBoundaryToDate(
-      addCalendarDays(getZonedDateParts(range.start, timezone), -days),
-      "start",
-      timezone,
-    );
-    const end = zonedCalendarDateBoundaryToDate(
-      addCalendarDays(getZonedDateParts(range.end, timezone), -days),
-      "end",
-      timezone,
-    );
-    return { ...range, start, end };
-  }
   const months = MONTHS_PER_PERIOD[period] * offset;
   const start = zonedCalendarDateBoundaryToDate(
     addCalendarMonths(getZonedDateParts(range.start, timezone), -months),

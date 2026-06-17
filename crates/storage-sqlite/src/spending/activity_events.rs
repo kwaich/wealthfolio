@@ -98,6 +98,25 @@ impl ActivityEventsRepositoryTrait for ActivityEventsRepository {
         Ok(rows)
     }
 
+    async fn list_for_events(&self, event_ids: &[String]) -> Result<HashMap<String, String>> {
+        if event_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let mut conn = get_connection(&self.pool).map_err(|e| anyhow::anyhow!(e))?;
+        const CHUNK: usize = 500;
+        let mut out = HashMap::new();
+        for chunk in event_ids.chunks(CHUNK) {
+            let rows: Vec<ActivityEventDB> = spending_activity_events::table
+                .filter(spending_activity_events::event_id.eq_any(chunk))
+                .select(ActivityEventDB::as_select())
+                .load(&mut conn)
+                .map_err(StorageError::from)
+                .map_err(|e| anyhow::anyhow!(e))?;
+            out.extend(rows.into_iter().map(|r| (r.activity_id, r.event_id)));
+        }
+        Ok(out)
+    }
+
     async fn set_activity_event_tag(
         &self,
         activity_id: &str,
@@ -253,23 +272,30 @@ mod tests {
         .expect("insert activity");
     }
 
-    fn insert_event(conn: &mut SqliteConnection) {
-        diesel::sql_query(
+    fn insert_event_with_id(conn: &mut SqliteConnection, id: &str) {
+        let event_type_id = format!("event-type-{id}");
+        diesel::sql_query(format!(
             "INSERT INTO spending_event_types (id, key, name, color, created_at, updated_at) \
-             VALUES ('event-type-test', NULL, 'Test Event Type', '#000000', \
+             VALUES ('{}', NULL, 'Test Event Type', '#000000', \
                      '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
-        )
+            event_type_id
+        ))
         .execute(conn)
         .expect("insert event type");
 
-        diesel::sql_query(
+        diesel::sql_query(format!(
             "INSERT INTO spending_events \
              (id, name, description, event_type_id, start_date, end_date, created_at, updated_at) \
-             VALUES ('event-test', 'Test Event', NULL, 'event-type-test', '2026-01-01', '2026-01-31', \
+             VALUES ('{}', 'Test Event', NULL, '{}', '2026-01-01', '2026-01-31', \
                      '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
-        )
+            id, event_type_id
+        ))
         .execute(conn)
         .expect("insert event");
+    }
+
+    fn insert_event(conn: &mut SqliteConnection) {
+        insert_event_with_id(conn, "event-test");
     }
 
     fn outbox_count(conn: &mut SqliteConnection) -> i64 {
@@ -321,5 +347,46 @@ mod tests {
             .load::<String>(&mut conn)
             .expect("load outbox entities");
         assert_eq!(entities, vec!["spending_activity_event".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn list_for_events_returns_tags_for_requested_events_only() {
+        let (pool, writer) = setup_db();
+        {
+            let mut conn = get_connection(&pool).expect("conn");
+            insert_account_and_activity(&mut conn, "activity-a", "MANUAL");
+            insert_account_and_activity(&mut conn, "activity-b", "MANUAL");
+            insert_account_and_activity(&mut conn, "activity-c", "MANUAL");
+            insert_event_with_id(&mut conn, "event-a");
+            insert_event_with_id(&mut conn, "event-b");
+            insert_event_with_id(&mut conn, "event-c");
+        }
+
+        let repo = ActivityEventsRepository::new(pool.clone(), writer);
+        repo.set_activity_event_tag("activity-a", Some("event-a".to_string()))
+            .await
+            .expect("tag activity a");
+        repo.set_activity_event_tag("activity-b", Some("event-b".to_string()))
+            .await
+            .expect("tag activity b");
+        repo.set_activity_event_tag("activity-c", Some("event-c".to_string()))
+            .await
+            .expect("tag activity c");
+
+        let tag_map = repo
+            .list_for_events(&["event-a".to_string(), "event-b".to_string()])
+            .await
+            .expect("list event tags");
+
+        assert_eq!(tag_map.len(), 2);
+        assert_eq!(
+            tag_map.get("activity-a").map(String::as_str),
+            Some("event-a")
+        );
+        assert_eq!(
+            tag_map.get("activity-b").map(String::as_str),
+            Some("event-b")
+        );
+        assert!(!tag_map.contains_key("activity-c"));
     }
 }

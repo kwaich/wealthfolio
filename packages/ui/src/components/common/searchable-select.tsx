@@ -20,6 +20,7 @@ interface SearchableSelectProps {
   searchPlaceholder?: string;
   emptyMessage?: string;
   className?: string;
+  contentClassName?: string;
 }
 
 export function SearchableSelect({
@@ -31,6 +32,7 @@ export function SearchableSelect({
   searchPlaceholder = "Search...",
   emptyMessage = "No results found.",
   className = "",
+  contentClassName = "",
 }: SearchableSelectProps) {
   const [open, setOpen] = React.useState(false);
 
@@ -50,7 +52,7 @@ export function SearchableSelect({
           <Icons.ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
         </Button>
       </PopoverTrigger>
-      <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0">
+      <PopoverContent className={cn("w-[var(--radix-popover-trigger-width)] p-0", contentClassName)}>
         <Command>
           <CommandInput placeholder={searchPlaceholder} className="h-9" />
           <CommandEmpty>{emptyMessage}</CommandEmpty>

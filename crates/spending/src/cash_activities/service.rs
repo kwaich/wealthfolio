@@ -7,12 +7,16 @@ use rust_decimal::prelude::ToPrimitive;
 use wealthfolio_core::accounts::{
     account_supports_purpose, account_types, AccountPurpose, AccountRepositoryTrait,
 };
-use wealthfolio_core::activities::{Activity, ActivityRepositoryTrait};
+use wealthfolio_core::activities::{
+    Activity, ActivityRepositoryTrait, TransferPairResolution, ACTIVITY_TYPE_TRANSFER_IN,
+    ACTIVITY_TYPE_TRANSFER_OUT,
+};
 
 use super::{
     model::{
         CashActivity, CashActivityFilter, CashActivitySearchRequest, CashActivitySearchResponse,
         CashActivitySortField, CashActivityStatusFilter, CashFlowBucket, SortDirection,
+        TransferLinkStatus,
     },
     CASH_ACTIVITY_TYPES,
 };
@@ -102,6 +106,7 @@ impl CashActivityService {
             .activity_repo
             .get_activities_by_account_ids(&all_spending_accounts)
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let transfer_link_resolution = self.transfer_link_resolution()?;
         let transfer_context_acts: Vec<&Activity> = activities.iter().collect();
         let transfer_groups = within_spending_transfer_groups(&transfer_context_acts);
         activities.retain(|a| target_accounts.contains(&a.account_id));
@@ -133,11 +138,13 @@ impl CashActivityService {
                 let assignments = by_activity.remove(&a.id).unwrap_or_default();
                 let event_id = tag_map.remove(&a.id);
                 let cash_flow_bucket = cash_flow_bucket_for(&a, &account_types, &transfer_groups);
+                let transfer_link_status = transfer_link_status_for(&a, &transfer_link_resolution);
                 CashActivity {
                     activity: a,
                     cash_flow_bucket,
                     assignments,
                     event_id,
+                    transfer_link_status,
                 }
             })
             .collect();
@@ -186,6 +193,7 @@ impl CashActivityService {
             .activity_repo
             .get_activities_by_account_ids(&all_spending_accounts)
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let transfer_link_resolution = self.transfer_link_resolution()?;
         let transfer_context_acts: Vec<&Activity> = activities.iter().collect();
         let transfer_groups = within_spending_transfer_groups(&transfer_context_acts);
         activities.retain(|a| target_accounts.contains(&a.account_id));
@@ -370,11 +378,13 @@ impl CashActivityService {
                 let assignments = by_activity.remove(&a.id).unwrap_or_default();
                 let event_id = tag_map.remove(&a.id);
                 let cash_flow_bucket = cash_flow_bucket_for(&a, &account_types, &transfer_groups);
+                let transfer_link_status = transfer_link_status_for(&a, &transfer_link_resolution);
                 CashActivity {
                     activity: a,
                     cash_flow_bucket,
                     assignments,
                     event_id,
+                    transfer_link_status,
                 }
             })
             .collect();
@@ -404,6 +414,7 @@ impl CashActivityService {
             .activity_repo
             .get_activities_by_account_ids(&target_accounts)
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let transfer_link_resolution = self.transfer_link_resolution()?;
         let transfer_context_acts: Vec<&Activity> = context_activities.iter().collect();
         let transfer_groups = within_spending_transfer_groups(&transfer_context_acts);
         let requested_ids: HashSet<&str> = activity_ids.iter().map(String::as_str).collect();
@@ -425,11 +436,14 @@ impl CashActivityService {
                 let event_id = tag_map.remove(&activity.id);
                 let cash_flow_bucket =
                     cash_flow_bucket_for(&activity, &account_types, &transfer_groups);
+                let transfer_link_status =
+                    transfer_link_status_for(&activity, &transfer_link_resolution);
                 CashActivity {
                     activity,
                     cash_flow_bucket,
                     assignments,
                     event_id,
+                    transfer_link_status,
                 }
             })
             .collect())
@@ -474,6 +488,9 @@ impl CashActivityService {
     }
 
     /// Set or clear the spending-event tag on an activity. Pass `None` to clear.
+    /// Event date ranges describe reporting periods; they do not restrict
+    /// manual tagging. This allows pre-event spending like flights or deposits
+    /// to stay attached to the event they belong to.
     ///
     /// **Return contract**: returns the underlying `Activity` row, which does
     /// **not** carry the new tag — `event_id` lives on the `activity_events`
@@ -485,23 +502,13 @@ impl CashActivityService {
     pub async fn set_event(&self, activity_id: &str, event_id: Option<String>) -> Result<Activity> {
         let activity = self.ensure_activity_in_spending_scope(activity_id).await?;
         if let Some(ref event_id) = event_id {
-            let event =
-                self.events
-                    .get_event(event_id)
-                    .await?
-                    .ok_or_else(|| SpendingError::NotFound {
-                        entity: "Spending event",
-                        id: event_id.clone(),
-                    })?;
-            if !self
-                .events
-                .contains_activity_date(&event, &activity.activity_date)?
-            {
-                return Err(SpendingError::InvalidInput {
-                    message: "Activity date is outside the selected event date range".to_string(),
-                }
-                .into());
-            }
+            self.events
+                .get_event(event_id)
+                .await?
+                .ok_or_else(|| SpendingError::NotFound {
+                    entity: "Spending event",
+                    id: event_id.clone(),
+                })?;
         }
         self.activity_events
             .set_activity_event_tag(activity_id, event_id)
@@ -540,6 +547,14 @@ impl CashActivityService {
             .collect();
 
         Ok((target_accounts, account_types))
+    }
+
+    fn transfer_link_resolution(&self) -> Result<TransferPairResolution> {
+        let activities = self
+            .activity_repo
+            .get_activities()
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        Ok(TransferPairResolution::from_activities(&activities))
     }
 
     async fn ensure_activity_assignment_allowed(
@@ -687,6 +702,30 @@ fn taxonomy_for_bucket(bucket: CashFlowBucket) -> Option<&'static str> {
         CashFlowBucket::Saving => Some(SAVINGS_TAXONOMY),
         CashFlowBucket::Neutral => None,
     }
+}
+
+fn transfer_link_status_for(
+    activity: &Activity,
+    resolution: &TransferPairResolution,
+) -> Option<TransferLinkStatus> {
+    if !matches!(
+        activity.effective_type(),
+        ACTIVITY_TYPE_TRANSFER_IN | ACTIVITY_TYPE_TRANSFER_OUT
+    ) {
+        return None;
+    }
+    if resolution.pair_for_activity(&activity.id).is_some() {
+        return Some(TransferLinkStatus::Linked);
+    }
+    if activity
+        .source_group_id
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|group_id| !group_id.is_empty())
+    {
+        return Some(TransferLinkStatus::Invalid);
+    }
+    Some(TransferLinkStatus::Unlinked)
 }
 
 impl CashFlowBucket {

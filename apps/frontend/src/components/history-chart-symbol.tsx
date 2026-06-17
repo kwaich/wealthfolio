@@ -14,12 +14,18 @@ import {
 import type { MouseHandlerDataParam } from "recharts/types/synchronisation/types";
 import {
   HistoryChartMarkerShape,
+  type HistoryChartMarkerTone,
+  type HistoryChartMarkerVariant,
   type RechartsMarkerShapeProps,
-  type TradeMarkerVariant,
 } from "./history-chart-marker";
 
+type SymbolActivityMarkerVariant = Exclude<HistoryChartMarkerVariant, "snapshot">;
+
 export interface HistoryChartActivity {
-  variant: TradeMarkerVariant;
+  variant: SymbolActivityMarkerVariant;
+  markerLabel?: string;
+  markerTone?: HistoryChartMarkerTone;
+  activityType?: string;
   date?: string | Date;
   quantity: string | null;
   unitPrice: string | null;
@@ -36,7 +42,9 @@ export interface HistoryChartData {
 export interface HistoryChartActivityMarker {
   id: string;
   point: HistoryChartData;
-  variant: TradeMarkerVariant;
+  variant: SymbolActivityMarkerVariant;
+  markerLabel?: string;
+  markerTone?: HistoryChartMarkerTone;
 }
 
 interface SymbolTooltipProps<
@@ -138,7 +146,12 @@ export default function HistoryChart({
                   r={10}
                   key={marker.id}
                   shape={(props: RechartsMarkerShapeProps) => (
-                    <HistoryChartMarkerShape {...props} variant={marker.variant} />
+                    <HistoryChartMarkerShape
+                      {...props}
+                      variant={marker.variant}
+                      label={marker.markerLabel}
+                      tone={marker.markerTone}
+                    />
                   )}
                   x={marker.point.timestamp}
                   y={marker.point.totalValue}
@@ -167,23 +180,28 @@ function SymbolToolTip({ active, payload }: SymbolTooltipProps) {
         <>
           <div className="border-border border-t" />
           {data.activities.map((act) => {
-            const isBuy = act.variant === "buy";
+            const tone = act.markerTone ?? markerToneForVariant(act.variant);
+            const markerClass = markerTextClass(tone);
+            const dotClass = markerDotClass(tone);
+            const label =
+              act.variant === "buy"
+                ? "Bought"
+                : act.variant === "sell"
+                  ? "Sold"
+                  : formatActivityType(act.activityType);
+            const hasPriceDetails = Boolean(act.quantity && act.unitPrice);
             return (
               <div key={act.id} className="flex items-center justify-between space-x-2">
                 <div className="flex items-center space-x-1.5">
-                  <span
-                    className={`block h-2.5 w-2.5 rounded-full ${isBuy ? "bg-success" : "bg-destructive"}`}
-                  />
-                  <span
-                    className={`text-sm font-medium ${isBuy ? "text-success" : "text-destructive"}`}
-                  >
-                    {isBuy ? "Bought" : "Sold"}
-                  </span>
+                  <span className={`block h-2.5 w-2.5 rounded-full ${dotClass}`} />
+                  <span className={`text-sm font-medium ${markerClass}`}>{label}</span>
                 </div>
-                <span className="text-muted-foreground text-sm tabular-nums">
-                  {parseFloat(act.quantity || "0")} at{" "}
-                  {formatAmount(parseFloat(act.unitPrice || "0"), data.currency, false)}
-                </span>
+                {hasPriceDetails && (
+                  <span className="text-muted-foreground text-sm tabular-nums">
+                    {parseFloat(act.quantity || "0")} at{" "}
+                    {formatAmount(parseFloat(act.unitPrice || "0"), data.currency, false)}
+                  </span>
+                )}
               </div>
             );
           })}
@@ -191,4 +209,50 @@ function SymbolToolTip({ active, payload }: SymbolTooltipProps) {
       )}
     </div>
   );
+}
+
+function markerToneForVariant(variant: SymbolActivityMarkerVariant): HistoryChartMarkerTone {
+  if (variant === "buy") return "success";
+  if (variant === "sell") return "destructive";
+  if (variant === "split") return "warning";
+  return "default";
+}
+
+function markerTextClass(tone: HistoryChartMarkerTone) {
+  switch (tone) {
+    case "success":
+      return "text-success";
+    case "destructive":
+      return "text-destructive";
+    case "secondary":
+      return "text-secondary-foreground";
+    case "warning":
+      return "text-warning";
+    default:
+      return "text-primary";
+  }
+}
+
+function markerDotClass(tone: HistoryChartMarkerTone) {
+  switch (tone) {
+    case "success":
+      return "bg-success";
+    case "destructive":
+      return "bg-destructive";
+    case "secondary":
+      return "bg-secondary";
+    case "warning":
+      return "bg-warning";
+    default:
+      return "bg-primary";
+  }
+}
+
+function formatActivityType(activityType?: string) {
+  if (!activityType) return "Activity";
+  return activityType
+    .toLowerCase()
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
 }

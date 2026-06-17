@@ -49,6 +49,7 @@ export const COMMANDS: CommandMap = {
   get_asset_lots: { method: "GET", path: "/holdings/lots" },
   get_historical_valuations: { method: "GET", path: "/valuations/history" },
   get_latest_valuations: { method: "GET", path: "/valuations/latest" },
+  get_current_valuation: { method: "POST", path: "/valuations/current/query" },
   get_portfolio_allocations: { method: "POST", path: "/allocations/query" },
   get_holdings_by_allocation: { method: "POST", path: "/allocations/holdings/query" },
   // Snapshot management
@@ -107,6 +108,7 @@ export const COMMANDS: CommandMap = {
   save_activities: { method: "POST", path: "/activities/bulk" },
   delete_activity: { method: "DELETE", path: "/activities" },
   get_transfer_pair_for_activity: { method: "GET", path: "/activities" },
+  find_transfer_match_candidates: { method: "POST", path: "/activities/transfer-match-candidates" },
   save_internal_transfer_pair: { method: "POST", path: "/activities/transfer-pair" },
   link_transfer_activities: { method: "POST", path: "/activities/link" },
   unlink_transfer_activities: { method: "POST", path: "/activities/unlink" },
@@ -546,6 +548,14 @@ export const invoke = async <T>(command: string, payload?: Record<string, unknow
       if (qs) url += `?${qs}`;
       break;
     }
+    case "get_current_valuation": {
+      const { filter, includeAccounts } = (payload ?? {}) as {
+        filter?: unknown;
+        includeAccounts?: boolean;
+      };
+      body = JSON.stringify({ filter, includeAccounts: includeAccounts ?? false });
+      break;
+    }
     case "get_portfolio_allocations": {
       const p = payload as { filter: { type: string; accountId?: string } };
       if (p.filter?.type === "account" && p.filter.accountId) {
@@ -823,6 +833,11 @@ export const invoke = async <T>(command: string, payload?: Record<string, unknow
     case "get_transfer_pair_for_activity": {
       const { activityId } = payload as { activityId: string };
       url += `/${encodeURIComponent(activityId)}/transfer-pair`;
+      break;
+    }
+    case "find_transfer_match_candidates": {
+      const { request } = payload as { request: Record<string, unknown> };
+      body = JSON.stringify(request);
       break;
     }
     case "save_internal_transfer_pair": {

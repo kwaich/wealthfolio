@@ -1,3 +1,4 @@
+import type { CashAuditReviewTarget } from "@/pages/account/cash-audit";
 import type { ActivityDetails } from "@/lib/types";
 import { Icons } from "@wealthfolio/ui";
 import {
@@ -8,6 +9,7 @@ import {
   SheetTitle,
 } from "@wealthfolio/ui/components/ui/sheet";
 import { format, parseISO } from "date-fns";
+import { parseLocalDate } from "@/lib/utils";
 import { ActivityDateList } from "./activity-date-list";
 
 interface ActivityDateSheetProps {
@@ -16,6 +18,9 @@ interface ActivityDateSheetProps {
   isLoading: boolean;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  endingCashBalance?: number;
+  cashCurrency?: string;
+  cashAuditTarget?: CashAuditReviewTarget;
 }
 
 export function ActivityDateSheet({
@@ -24,6 +29,9 @@ export function ActivityDateSheet({
   isLoading,
   open,
   onOpenChange,
+  endingCashBalance,
+  cashCurrency,
+  cashAuditTarget,
 }: ActivityDateSheetProps) {
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -38,7 +46,12 @@ export function ActivityDateSheet({
               <Icons.Spinner className="size-6 animate-spin" />
             </div>
           ) : (
-            <ActivityDateList activities={activities} />
+            <ActivityDateList
+              activities={activities}
+              endingCashBalance={endingCashBalance}
+              cashCurrency={cashCurrency}
+              cashAuditTarget={cashAuditTarget}
+            />
           )}
         </div>
       </SheetContent>
@@ -48,8 +61,12 @@ export function ActivityDateSheet({
 
 function formatActivityDate(date: string): string {
   try {
-    return format(parseISO(date), "MMMM d, yyyy");
+    return format(parseLocalDate(date), "MMMM d, yyyy");
   } catch {
-    return date;
+    try {
+      return format(parseISO(date), "MMMM d, yyyy");
+    } catch {
+      return date;
+    }
   }
 }

@@ -365,6 +365,36 @@ export const calculateActivityValue = (activity: ActivityDetails): number => {
   return roundCurrency(Number(activityAmount));
 };
 
+export const calculateActivityCashImpact = (activity: ActivityDetails): number => {
+  const { activityType, assetSymbol, assetId, subtype } = activity;
+  const activityValue = calculateActivityValue(activity);
+
+  if (!Number.isFinite(activityValue) || activityValue === 0) {
+    return 0;
+  }
+
+  switch (activityType) {
+    case ActivityType.BUY:
+    case ActivityType.WITHDRAWAL:
+    case ActivityType.FEE:
+    case ActivityType.TAX:
+      return roundCurrency(-activityValue);
+    case ActivityType.SELL:
+    case ActivityType.DEPOSIT:
+    case ActivityType.CREDIT:
+      return roundCurrency(activityValue);
+    case ActivityType.TRANSFER_IN:
+      return isCashTransfer(activityType, assetSymbol, assetId) ? roundCurrency(activityValue) : 0;
+    case ActivityType.TRANSFER_OUT:
+      return isCashTransfer(activityType, assetSymbol, assetId) ? roundCurrency(-activityValue) : 0;
+    case ActivityType.DIVIDEND:
+    case ActivityType.INTEREST:
+      return isAssetBackedIncomeSubtype(activityType, subtype) ? 0 : roundCurrency(activityValue);
+    default:
+      return 0;
+  }
+};
+
 /**
  * Determines if the value should be displayed as positive or negative
  * @param activityType The activity type

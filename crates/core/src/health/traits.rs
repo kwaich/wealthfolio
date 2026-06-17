@@ -188,6 +188,7 @@ use super::model::{FixAction, HealthStatus};
 use crate::accounts::AccountServiceTrait;
 use crate::activities::ActivityServiceTrait;
 use crate::assets::AssetServiceTrait;
+use crate::lots::LotRepositoryTrait;
 use crate::portfolio::holdings::HoldingsServiceTrait;
 use crate::portfolio::valuation::ValuationServiceTrait;
 use crate::quotes::QuoteServiceTrait;
@@ -314,6 +315,9 @@ pub trait HealthServiceTrait: Send + Sync {
     /// * `quote_service` - Service for accessing quotes
     /// * `asset_service` - Service for accessing assets
     /// * `taxonomy_service` - Service for accessing taxonomy data
+    /// * `valuation_service` - Service for accessing account valuation history
+    /// * `activity_service` - Service for accessing activities
+    /// * `lot_repository` - Repository for accessing lot disposal records
     /// * `configured_timezone` - App-configured timezone from settings
     /// * `client_timezone` - Client/browser timezone from request context
     #[allow(clippy::too_many_arguments)]
@@ -327,6 +331,7 @@ pub trait HealthServiceTrait: Send + Sync {
         taxonomy_service: Arc<dyn TaxonomyServiceTrait>,
         valuation_service: Arc<dyn ValuationServiceTrait>,
         activity_service: Arc<dyn ActivityServiceTrait>,
+        lot_repository: Arc<dyn LotRepositoryTrait>,
         configured_timezone: Option<&str>,
         client_timezone: Option<&str>,
     ) -> Result<HealthStatus>;

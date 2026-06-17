@@ -39,6 +39,7 @@ interface MappingTableProps {
   visibleFields?: readonly ImportFormat[];
   requiredFields?: readonly ImportFormat[];
   allowedActivityTypes?: readonly ActivityType[];
+  getActivityTypeLabel?: (activityType: ActivityType) => string;
   className?: string;
 }
 
@@ -59,6 +60,7 @@ export function MappingTable({
   visibleFields = importFormatFields,
   requiredFields = IMPORT_REQUIRED_FIELDS,
   allowedActivityTypes,
+  getActivityTypeLabel,
   className,
 }: MappingTableProps) {
   // Check if a field is mapped (supports fallback column arrays)
@@ -146,6 +148,7 @@ export function MappingTable({
                             invalidSymbols={invalidSymbols}
                             invalidAccounts={invalidAccounts}
                             allowedActivityTypes={allowedActivityTypes}
+                            getActivityTypeLabel={getActivityTypeLabel}
                           />
                         </TableCell>
                       );

@@ -9,7 +9,11 @@ import { cn, formatDateISO } from "@/lib/utils";
 import { PrivacyAmount } from "@wealthfolio/ui";
 
 import { getActivityAssignments } from "../adapters/cash-activities";
-import { getActivitySpendingAmount, isCashActivityIncome } from "../lib/constants";
+import {
+  getActivitySpendingAmount,
+  getEffectiveCashActivityType,
+  isCashActivityIncome,
+} from "../lib/constants";
 import { CategoryBadge, ReviewPill, type CategoryMetaMap } from "./category-chips";
 
 const SPENDING_TAXONOMY = "spending_categories";
@@ -32,9 +36,10 @@ export function RecentActivityCard({
       .slice()
       .filter((activity) => {
         const accountType = accountTypeById?.get(activity.accountId);
+        const activityType = getEffectiveCashActivityType(activity);
         return (
           getActivitySpendingAmount(activity, accountType) !== 0 ||
-          isCashActivityIncome(activity.activityType, accountType, activity.subtype)
+          isCashActivityIncome(activityType, accountType, activity.subtype)
         );
       })
       .sort((a, b) => b.activityDate.localeCompare(a.activityDate))

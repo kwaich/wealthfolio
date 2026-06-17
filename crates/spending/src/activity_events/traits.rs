@@ -18,6 +18,18 @@ pub trait ActivityEventsRepositoryTrait: Send + Sync {
     /// Activity ids currently tagged to a given event.
     async fn list_for_event(&self, event_id: &str) -> Result<Vec<String>>;
 
+    /// Returns activity_id → event_id for the requested event ids.
+    /// Activities tagged to other events are absent from the map.
+    async fn list_for_events(&self, event_ids: &[String]) -> Result<HashMap<String, String>> {
+        let mut out = HashMap::new();
+        for event_id in event_ids {
+            for activity_id in self.list_for_event(event_id).await? {
+                out.entry(activity_id).or_insert_with(|| event_id.clone());
+            }
+        }
+        Ok(out)
+    }
+
     /// Tag or untag an activity with a spending event.
     ///
     /// The tag lives in the `activity_events` join table, not on the core

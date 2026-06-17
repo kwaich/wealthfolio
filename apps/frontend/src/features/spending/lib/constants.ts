@@ -73,6 +73,13 @@ export function getCashActivityLabel(activityType: string, accountType?: string)
   return CASH_ACTIVITY_TYPE_LABELS[activityType as CashActivityType] ?? activityType;
 }
 
+export function getEffectiveCashActivityType(activity: {
+  activityType: string;
+  activityTypeOverride?: string | null;
+}): string {
+  return activity.activityTypeOverride ?? activity.activityType;
+}
+
 export function isCashActivityIncome(
   activityType: string,
   accountType?: string,
@@ -97,35 +104,35 @@ export function isCashActivityOutflow(activityType: string, accountType?: string
 export function getActivitySpendingAmount(
   activity: {
     activityType: string;
+    activityTypeOverride?: string | null;
     amount?: string | number | null;
     subtype?: string | null;
     sourceGroupId?: string | null;
   },
   accountType?: string,
 ): number {
+  const activityType = getEffectiveCashActivityType(activity);
   const amount =
     typeof activity.amount === "number" ? activity.amount : parseFloat(activity.amount ?? "0") || 0;
   const absAmount = Math.abs(amount);
 
   if (
     activity.sourceGroupId &&
-    (activity.activityType === "TRANSFER_IN" || activity.activityType === "TRANSFER_OUT")
+    (activityType === "TRANSFER_IN" || activityType === "TRANSFER_OUT")
   ) {
     return 0;
   }
 
   if (isCreditCardAccountType(accountType)) {
-    if (activity.activityType === "CREDIT") {
+    if (activityType === "CREDIT") {
       return -absAmount;
     }
-    return activity.activityType === "WITHDRAWAL" ||
-      activity.activityType === "FEE" ||
-      activity.activityType === "INTEREST"
+    return activityType === "WITHDRAWAL" || activityType === "FEE" || activityType === "INTEREST"
       ? absAmount
       : 0;
   }
 
-  if (activity.activityType === "CREDIT") {
+  if (activityType === "CREDIT") {
     if (activity.subtype === "REFUND" || activity.subtype === "REBATE") {
       return -absAmount;
     }
@@ -136,7 +143,7 @@ export function getActivitySpendingAmount(
     return 0;
   }
 
-  return OUTFLOW_TYPES.includes(activity.activityType as CashActivityType) ? absAmount : 0;
+  return OUTFLOW_TYPES.includes(activityType as CashActivityType) ? absAmount : 0;
 }
 
 export function getPositiveActivitySpendingAmount(

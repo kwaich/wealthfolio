@@ -37,6 +37,10 @@ import type { Device } from "@/features/devices-sync/types";
 import type { Account } from "@/lib/types";
 import { hasBrokerSync } from "../lib/plan-capabilities";
 import { hasReviewableActivityWarnings } from "../lib/import-run-review";
+import {
+  BROKER_SYNC_RUN_NEEDS_REVIEW_MESSAGE,
+  getBrokerSyncIssueMessage,
+} from "../lib/broker-sync-messages";
 import { NewAccountsFoundModal } from "../components/new-accounts-found-modal";
 
 export default function ConnectPage() {
@@ -737,11 +741,7 @@ function BrokerSyncAttentionSection({
             const account = accountById.get(issue.accountId);
             const accountName = account?.name || issue.accountId;
             const broker = account?.provider || issue.provider;
-            const message =
-              issue.lastError ||
-              (issue.syncStatus === "FAILED"
-                ? "Broker sync failed."
-                : "Broker sync needs review before the cursor can advance.");
+            const message = getBrokerSyncIssueMessage(issue.syncStatus, issue.lastError);
 
             return (
               <div key={`${issue.provider}:${issue.accountId}`} className="rounded-md border p-3">
@@ -799,7 +799,7 @@ function SyncHistoryItem({
     description =
       issueCount > 0
         ? `${issueCount} ${issueCount === 1 ? "item needs" : "items need"} your review`
-        : run.error || "Sync needs attention";
+        : BROKER_SYNC_RUN_NEEDS_REVIEW_MESSAGE;
   } else if (inserted > 0 || updated > 0 || removed > 0) {
     const parts: string[] = [];
     if (inserted > 0) {

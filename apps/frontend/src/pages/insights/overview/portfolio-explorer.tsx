@@ -1,5 +1,11 @@
 import { useAccountsSimplePerformance } from "@/hooks/use-accounts-simple-performance";
-import type { Account, Holding, PortfolioAllocations, TaxonomyAllocation } from "@/lib/types";
+import type {
+  Account,
+  AccountValueSource,
+  Holding,
+  PortfolioAllocations,
+  TaxonomyAllocation,
+} from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { Card, Icons, PrivacyAmount, Skeleton } from "@wealthfolio/ui";
 import { useMemo, useState } from "react";
@@ -18,6 +24,7 @@ interface PortfolioExplorerProps {
   accounts: Account[];
   /** In-scope account ids — drives per-account valuations for the Accounts/Groups lenses. */
   accountIds?: string[];
+  accountValuations?: AccountValueSource[];
   currency: string;
   isLoading?: boolean;
   onOpenAllocation: (allocation: TaxonomyAllocation, categoryId?: string) => void;
@@ -105,6 +112,7 @@ export function PortfolioExplorer({
   holdings,
   accounts,
   accountIds,
+  accountValuations,
   currency,
   isLoading,
   onOpenAllocation,
@@ -117,7 +125,10 @@ export function PortfolioExplorer({
     () => (accountIds ? accounts.filter((a) => accountIds.includes(a.id)) : accounts),
     [accounts, accountIds],
   );
-  const { data: performance = [] } = useAccountsSimplePerformance(scopedAccounts);
+  const { data: performance = [] } = useAccountsSimplePerformance(scopedAccounts, {
+    enabled: accountValuations === undefined,
+  });
+  const accountValues = accountValuations ?? performance;
 
   const lenses = useMemo<Lens[]>(() => {
     const list: Lens[] = [
@@ -126,7 +137,7 @@ export function PortfolioExplorer({
         key: "accounts",
         label: "Accounts",
         unit: "accounts",
-        nodes: accountTreeWeights(performance, scopedAccounts),
+        nodes: accountTreeWeights(accountValues, scopedAccounts),
       },
       taxonomyLens("sectors", "Sectors", "sectors", allocations?.sectors),
       taxonomyLens("regions", "Regions", "regions", allocations?.regions),
@@ -146,7 +157,7 @@ export function PortfolioExplorer({
       }
     }
     return list;
-  }, [allocations, holdings, scopedAccounts, performance]);
+  }, [allocations, holdings, scopedAccounts, accountValues]);
 
   const active = lenses.find((l) => l.key === activeKey) ?? lenses[0];
 

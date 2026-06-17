@@ -6,19 +6,24 @@
 use async_trait::async_trait;
 use chrono::{Duration, Utc};
 use log::{debug, info, warn};
+use rust_decimal::Decimal;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::accounts::{account_types, is_liability_account_type, AccountServiceTrait};
+use crate::accounts::{
+    account_types, is_liability_account_type, Account, AccountServiceTrait, TrackingMode,
+};
 use crate::activities::{Activity, ActivityServiceTrait, TransferPairResolution};
-use crate::assets::AssetServiceTrait;
+use crate::assets::{Asset, AssetServiceTrait};
 use crate::errors::Result;
+use crate::lots::LotRepositoryTrait;
 use crate::portfolio::holdings::HoldingsServiceTrait;
 use crate::portfolio::performance::is_external_transfer;
 use crate::portfolio::valuation::ValuationServiceTrait;
 use crate::quotes::QuoteServiceTrait;
 use crate::taxonomies::TaxonomyServiceTrait;
+use crate::utils::time_utils::{activity_date_in_tz, parse_user_timezone_or_default};
 
 use super::checks::{
     AccountConfigurationCheck, AssetHoldingInfo, ClassificationCheck, ConsistencyIssueInfo,
@@ -247,6 +252,7 @@ impl HealthService {
         taxonomy_service: Arc<dyn TaxonomyServiceTrait>,
         valuation_service: Arc<dyn ValuationServiceTrait>,
         activity_service: Arc<dyn ActivityServiceTrait>,
+        lot_repository: Arc<dyn LotRepositoryTrait>,
         configured_timezone: Option<&str>,
         client_timezone: Option<&str>,
     ) -> Result<HealthStatus> {
@@ -424,6 +430,11 @@ impl HealthService {
                     cash_balance: Some(info.cash_balance),
                     total_value_at_date: Some(info.total_value),
                     account_currency: Some(info.account_currency),
+                    activity_date: None,
+                    asset_symbol: None,
+                    asset_name: None,
+                    quantity: None,
+                    proceeds: None,
                 }
             })
             .collect();
@@ -456,6 +467,11 @@ impl HealthService {
                     cash_balance: Some(info.cash_balance),
                     total_value_at_date: Some(info.total_value),
                     account_currency: Some(info.account_currency),
+                    activity_date: None,
+                    asset_symbol: None,
+                    asset_name: None,
+                    quantity: None,
+                    proceeds: None,
                 });
             }
         }
@@ -472,8 +488,21 @@ impl HealthService {
 
         // Detect invalid, incomplete, or unreviewed transfer flows across all
         // activities so the Health Center can surface them.
-        let invalid_transfer_groups =
-            gather_invalid_transfer_groups(activity_service.as_ref(), &account_name_map);
+        let effective_timezone = effective_timezone(configured_timezone, client_timezone);
+        let invalid_transfer_groups = gather_invalid_transfer_groups(
+            activity_service.as_ref(),
+            &account_name_map,
+            effective_timezone,
+        );
+        let missing_lot_disposal_sells = gather_missing_lot_disposal_sells(
+            activity_service.as_ref(),
+            lot_repository.as_ref(),
+            asset_service.as_ref(),
+            &accounts,
+            effective_timezone,
+        )
+        .await;
+        consistency_issues.extend(missing_lot_disposal_sells);
 
         // Run checks with gathered data
         self.run_checks_with_data(
@@ -524,12 +553,22 @@ impl HealthService {
     }
 }
 
+fn effective_timezone<'a>(
+    configured_timezone: Option<&'a str>,
+    client_timezone: Option<&'a str>,
+) -> Option<&'a str> {
+    configured_timezone
+        .filter(|tz| !tz.trim().is_empty())
+        .or_else(|| client_timezone.filter(|tz| !tz.trim().is_empty()))
+}
+
 /// Loads all activities and resolves transfer groups, returning the ones that
 /// don't form a valid pair, plus posted ungrouped transfers that are not
 /// explicitly marked as external.
 fn gather_invalid_transfer_groups(
     activity_service: &dyn ActivityServiceTrait,
     account_names: &HashMap<String, String>,
+    timezone: Option<&str>,
 ) -> Vec<InvalidTransferGroupInfo> {
     let activities = match activity_service.get_activities() {
         Ok(activities) => activities,
@@ -542,30 +581,33 @@ fn gather_invalid_transfer_groups(
         }
     };
 
-    invalid_transfer_groups_from_activities(&activities, account_names)
+    invalid_transfer_groups_from_activities(&activities, account_names, timezone)
 }
 
 fn invalid_transfer_groups_from_activities(
     activities: &[Activity],
     account_names: &HashMap<String, String>,
+    timezone: Option<&str>,
 ) -> Vec<InvalidTransferGroupInfo> {
+    let tz = parse_user_timezone_or_default(timezone.unwrap_or_default());
     let resolution = TransferPairResolution::from_activities(activities);
     let by_id: HashMap<&str, &Activity> = activities.iter().map(|a| (a.id.as_str(), a)).collect();
 
     let mut groups: Vec<InvalidTransferGroupInfo> = resolution
         .invalid_groups()
         .iter()
-        .map(|group| {
-            let legs = group
+        .filter_map(|group| {
+            let legs: Vec<_> = group
                 .activity_ids
                 .iter()
                 .filter_map(|id| by_id.get(id.as_str()).copied())
-                .map(|act| transfer_leg_detail(act, account_names))
+                .filter(|act| act.is_posted() && !is_external_transfer(act))
+                .map(|act| transfer_leg_detail(act, account_names, tz))
                 .collect();
-            InvalidTransferGroupInfo {
+            (!legs.is_empty()).then(|| InvalidTransferGroupInfo {
                 group_id: group.group_id.clone(),
                 legs,
-            }
+            })
         })
         .collect();
 
@@ -576,7 +618,7 @@ fn invalid_transfer_groups_from_activities(
         {
             groups.push(InvalidTransferGroupInfo {
                 group_id: format!("ungrouped:{}", activity.id),
-                legs: vec![transfer_leg_detail(activity, account_names)],
+                legs: vec![transfer_leg_detail(activity, account_names, tz)],
             });
         }
     }
@@ -584,9 +626,201 @@ fn invalid_transfer_groups_from_activities(
     groups
 }
 
+async fn gather_missing_lot_disposal_sells(
+    activity_service: &dyn ActivityServiceTrait,
+    lot_repository: &dyn LotRepositoryTrait,
+    asset_service: &dyn AssetServiceTrait,
+    accounts: &[Account],
+    timezone: Option<&str>,
+) -> Vec<ConsistencyIssueInfo> {
+    let eligible_accounts: HashMap<String, &Account> = accounts
+        .iter()
+        .filter(|account| {
+            account.is_active
+                && !account.is_archived
+                && account.tracking_mode == TrackingMode::Transactions
+                && matches!(
+                    account.account_type.as_str(),
+                    account_types::SECURITIES | account_types::CRYPTOCURRENCY
+                )
+        })
+        .map(|account| (account.id.clone(), account))
+        .collect();
+    if eligible_accounts.is_empty() {
+        return Vec::new();
+    }
+
+    let activities = match activity_service.get_activities() {
+        Ok(activities) => activities,
+        Err(e) => {
+            warn!(
+                "Failed to load activities for missing lot disposal health check: {}",
+                e
+            );
+            return Vec::new();
+        }
+    };
+
+    let sell_activities: Vec<&Activity> = activities
+        .iter()
+        .filter(|activity| {
+            activity.is_posted()
+                && activity.asset_id.is_some()
+                && eligible_accounts.contains_key(&activity.account_id)
+                && activity.effective_type().eq_ignore_ascii_case("SELL")
+        })
+        .collect();
+    if sell_activities.is_empty() {
+        return Vec::new();
+    }
+
+    let sell_account_ids: std::collections::HashSet<String> = sell_activities
+        .iter()
+        .map(|activity| activity.account_id.clone())
+        .collect();
+    let mut disposal_activity_ids_by_account: HashMap<String, std::collections::HashSet<String>> =
+        HashMap::new();
+    for account_id in sell_account_ids {
+        match lot_repository
+            .get_lot_disposals_for_account(&account_id)
+            .await
+        {
+            Ok(disposals) => {
+                disposal_activity_ids_by_account.insert(
+                    account_id,
+                    disposals
+                        .into_iter()
+                        .map(|d| d.disposal_activity_id)
+                        .collect(),
+                );
+            }
+            Err(e) => {
+                warn!(
+                    "Failed to load lot disposals for account {} during health check: {}",
+                    account_id, e
+                );
+            }
+        }
+    }
+
+    let asset_ids: Vec<String> = sell_activities
+        .iter()
+        .filter_map(|activity| activity.asset_id.clone())
+        .collect();
+    let assets_by_id: HashMap<String, crate::assets::Asset> = asset_service
+        .get_assets_by_asset_ids(&asset_ids)
+        .await
+        .unwrap_or_else(|e| {
+            warn!(
+                "Failed to load assets for missing lot disposal health check: {}",
+                e
+            );
+            Vec::new()
+        })
+        .into_iter()
+        .map(|asset| (asset.id.clone(), asset))
+        .collect();
+
+    missing_lot_disposal_sells_from_data(
+        accounts,
+        &activities,
+        &disposal_activity_ids_by_account,
+        &assets_by_id,
+        timezone,
+    )
+}
+
+fn missing_lot_disposal_sells_from_data(
+    accounts: &[Account],
+    activities: &[Activity],
+    disposal_activity_ids_by_account: &HashMap<String, std::collections::HashSet<String>>,
+    assets_by_id: &HashMap<String, Asset>,
+    timezone: Option<&str>,
+) -> Vec<ConsistencyIssueInfo> {
+    let eligible_accounts: HashMap<String, &Account> = accounts
+        .iter()
+        .filter(|account| {
+            account.is_active
+                && !account.is_archived
+                && account.tracking_mode == TrackingMode::Transactions
+                && matches!(
+                    account.account_type.as_str(),
+                    account_types::SECURITIES | account_types::CRYPTOCURRENCY
+                )
+        })
+        .map(|account| (account.id.clone(), account))
+        .collect();
+
+    let tz = parse_user_timezone_or_default(timezone.unwrap_or_default());
+    activities
+        .iter()
+        .filter(|activity| {
+            activity.is_posted()
+                && activity.asset_id.is_some()
+                && eligible_accounts.contains_key(&activity.account_id)
+                && activity.effective_type().eq_ignore_ascii_case("SELL")
+        })
+        .filter(|activity| {
+            disposal_activity_ids_by_account
+                .get(&activity.account_id)
+                .is_some_and(|disposal_activity_ids| !disposal_activity_ids.contains(&activity.id))
+        })
+        .filter_map(|activity| {
+            let account = eligible_accounts.get(&activity.account_id)?;
+            let asset_id = activity.asset_id.as_ref()?;
+            let asset = assets_by_id.get(asset_id);
+            let asset_symbol = asset
+                .and_then(|a| {
+                    a.display_code
+                        .clone()
+                        .or_else(|| a.instrument_symbol.clone())
+                })
+                .or_else(|| Some(asset_id.clone()));
+            let asset_name = asset.and_then(|a| a.name.clone());
+            let proceeds = health_sell_net_proceeds(activity, asset);
+
+            Some(ConsistencyIssueInfo {
+                issue_type: super::checks::ConsistencyIssueType::MissingLotDisposalForSell,
+                record_id: activity.id.clone(),
+                description: account.name.clone(),
+                account_id: Some(activity.account_id.clone()),
+                asset_id: Some(asset_id.clone()),
+                first_negative_date: None,
+                cash_balance: None,
+                total_value_at_date: None,
+                account_currency: Some(activity.currency.clone()),
+                activity_date: Some(activity_date_in_tz(activity.activity_date, tz)),
+                asset_symbol,
+                asset_name,
+                quantity: activity.quantity.map(|q| q.abs()),
+                proceeds: Some(proceeds),
+            })
+        })
+        .collect()
+}
+
+fn health_sell_net_proceeds(activity: &Activity, asset: Option<&Asset>) -> Decimal {
+    let has_qty = activity.quantity.is_some_and(|qty| !qty.is_zero());
+    let has_unit_price = activity.unit_price.is_some_and(|price| !price.is_zero());
+    let use_activity_amount =
+        asset.is_some_and(|asset| asset.is_bond()) || !has_qty || !has_unit_price;
+
+    let gross = if use_activity_amount {
+        activity.amt()
+    } else {
+        let contract_multiplier = asset
+            .map(|asset| asset.contract_multiplier())
+            .unwrap_or(Decimal::ONE);
+        activity.qty() * activity.price() * contract_multiplier
+    };
+
+    gross - activity.fee_amt()
+}
+
 fn transfer_leg_detail(
     activity: &Activity,
     account_names: &HashMap<String, String>,
+    timezone: chrono_tz::Tz,
 ) -> TransferLegDetail {
     TransferLegDetail {
         account_id: activity.account_id.clone(),
@@ -597,7 +831,7 @@ fn transfer_leg_detail(
         activity_type: activity.effective_type().to_string(),
         amount: activity.amount,
         currency: activity.currency.clone(),
-        date: activity.activity_date.date_naive(),
+        date: activity_date_in_tz(activity.activity_date, timezone),
     }
 }
 
@@ -772,6 +1006,7 @@ impl HealthServiceTrait for HealthService {
         taxonomy_service: Arc<dyn TaxonomyServiceTrait>,
         valuation_service: Arc<dyn ValuationServiceTrait>,
         activity_service: Arc<dyn ActivityServiceTrait>,
+        lot_repository: Arc<dyn LotRepositoryTrait>,
         configured_timezone: Option<&str>,
         client_timezone: Option<&str>,
     ) -> Result<HealthStatus> {
@@ -785,6 +1020,7 @@ impl HealthServiceTrait for HealthService {
             taxonomy_service,
             valuation_service,
             activity_service,
+            lot_repository,
             configured_timezone,
             client_timezone,
         )
@@ -798,10 +1034,11 @@ mod tests {
     use crate::activities::{
         ActivityStatus, ACTIVITY_TYPE_TRANSFER_IN, ACTIVITY_TYPE_TRANSFER_OUT,
     };
+    use crate::assets::{Asset, AssetKind, InstrumentType, QuoteMode};
     use chrono::TimeZone;
     use rust_decimal_macros::dec;
     use serde_json::json;
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
 
     /// Mock dismissal store for testing.
     struct MockDismissalStore {
@@ -886,6 +1123,84 @@ mod tests {
         }
     }
 
+    fn health_account(id: &str, account_type: &str, tracking_mode: TrackingMode) -> Account {
+        let now = Utc.with_ymd_and_hms(2026, 6, 8, 12, 0, 0).unwrap();
+        Account {
+            id: id.to_string(),
+            name: "Business Investment".to_string(),
+            account_type: account_type.to_string(),
+            group: None,
+            currency: "USD".to_string(),
+            is_default: false,
+            is_active: true,
+            created_at: now.naive_utc(),
+            updated_at: now.naive_utc(),
+            platform_id: None,
+            account_number: None,
+            meta: None,
+            provider: None,
+            provider_account_id: None,
+            is_archived: false,
+            tracking_mode,
+        }
+    }
+
+    fn sell_activity(id: &str, account_id: &str, asset_id: &str) -> Activity {
+        let now = Utc.with_ymd_and_hms(2026, 6, 2, 2, 30, 0).unwrap();
+        Activity {
+            id: id.to_string(),
+            account_id: account_id.to_string(),
+            asset_id: Some(asset_id.to_string()),
+            activity_type: "SELL".to_string(),
+            activity_type_override: None,
+            source_type: None,
+            subtype: None,
+            status: ActivityStatus::Posted,
+            activity_date: now,
+            settlement_date: None,
+            quantity: Some(dec!(1)),
+            unit_price: Some(dec!(291.10598755)),
+            amount: None,
+            fee: None,
+            currency: "USD".to_string(),
+            fx_rate: None,
+            notes: None,
+            metadata: None,
+            source_system: Some("CSV".to_string()),
+            source_record_id: None,
+            source_group_id: None,
+            idempotency_key: None,
+            import_run_id: None,
+            is_user_modified: false,
+            needs_review: false,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    fn health_asset(id: &str) -> Asset {
+        let now = Utc.with_ymd_and_hms(2026, 6, 8, 12, 0, 0).unwrap();
+        Asset {
+            id: id.to_string(),
+            kind: AssetKind::Investment,
+            name: Some("Apple Inc.".to_string()),
+            display_code: Some("AAPL".to_string()),
+            notes: None,
+            metadata: None,
+            is_active: true,
+            quote_mode: QuoteMode::Market,
+            quote_ccy: "USD".to_string(),
+            instrument_type: Some(InstrumentType::Equity),
+            instrument_symbol: Some("AAPL".to_string()),
+            instrument_exchange_mic: Some("XNAS".to_string()),
+            instrument_key: None,
+            provider_config: None,
+            exchange_name: None,
+            created_at: now.naive_utc(),
+            updated_at: now.naive_utc(),
+        }
+    }
+
     #[test]
     fn ungrouped_non_external_transfer_is_reported_to_health_center() {
         let account_names = HashMap::from([("acc_tfsa".to_string(), "TFSA".to_string())]);
@@ -898,13 +1213,40 @@ mod tests {
             ActivityStatus::Posted,
         )];
 
-        let groups = invalid_transfer_groups_from_activities(&activities, &account_names);
+        let groups = invalid_transfer_groups_from_activities(&activities, &account_names, None);
 
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].group_id, "ungrouped:transfer-in-1");
         assert_eq!(groups[0].legs.len(), 1);
         assert_eq!(groups[0].legs[0].account_name, "TFSA");
         assert_eq!(groups[0].legs[0].activity_type, ACTIVITY_TYPE_TRANSFER_IN);
+    }
+
+    #[test]
+    fn invalid_transfer_group_dates_use_configured_timezone() {
+        let account_names = HashMap::from([("acc_tfsa".to_string(), "TFSA".to_string())]);
+        let mut activity = transfer_activity(
+            "transfer-in-1",
+            "acc_tfsa",
+            ACTIVITY_TYPE_TRANSFER_IN,
+            None,
+            false,
+            ActivityStatus::Posted,
+        );
+        activity.activity_date = Utc.with_ymd_and_hms(2024, 1, 4, 2, 13, 0).unwrap();
+        let activities = vec![activity];
+
+        let groups = invalid_transfer_groups_from_activities(
+            &activities,
+            &account_names,
+            Some("America/Toronto"),
+        );
+
+        assert_eq!(groups.len(), 1);
+        assert_eq!(
+            groups[0].legs[0].date,
+            chrono::NaiveDate::from_ymd_opt(2024, 1, 3).unwrap()
+        );
     }
 
     #[test]
@@ -931,6 +1273,22 @@ mod tests {
                 ActivityStatus::Pending,
             ),
             transfer_activity(
+                "external-orphan-transfer",
+                "acc_tfsa",
+                ACTIVITY_TYPE_TRANSFER_IN,
+                Some("orphan-transfer-group"),
+                true,
+                ActivityStatus::Posted,
+            ),
+            transfer_activity(
+                "pending-orphan-transfer",
+                "acc_tfsa",
+                ACTIVITY_TYPE_TRANSFER_IN,
+                Some("pending-transfer-group"),
+                false,
+                ActivityStatus::Pending,
+            ),
+            transfer_activity(
                 "paired-out",
                 "acc_cash",
                 ACTIVITY_TYPE_TRANSFER_OUT,
@@ -948,9 +1306,95 @@ mod tests {
             ),
         ];
 
-        let groups = invalid_transfer_groups_from_activities(&activities, &account_names);
+        let groups = invalid_transfer_groups_from_activities(&activities, &account_names, None);
 
         assert!(groups.is_empty());
+    }
+
+    #[test]
+    fn sell_with_matching_lot_disposal_is_not_reported() {
+        let accounts = vec![health_account(
+            "business",
+            account_types::SECURITIES,
+            TrackingMode::Transactions,
+        )];
+        let activities = vec![sell_activity("sell-aapl", "business", "aapl")];
+        let disposals = HashMap::from([(
+            "business".to_string(),
+            HashSet::from(["sell-aapl".to_string()]),
+        )]);
+        let assets = HashMap::from([("aapl".to_string(), health_asset("aapl"))]);
+
+        let issues = missing_lot_disposal_sells_from_data(
+            &accounts,
+            &activities,
+            &disposals,
+            &assets,
+            Some("America/Toronto"),
+        );
+
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn sell_without_lot_disposal_is_reported_with_local_date() {
+        let accounts = vec![health_account(
+            "business",
+            account_types::SECURITIES,
+            TrackingMode::Transactions,
+        )];
+        let activities = vec![sell_activity("sell-aapl", "business", "aapl")];
+        let disposals = HashMap::from([("business".to_string(), HashSet::new())]);
+        let assets = HashMap::from([("aapl".to_string(), health_asset("aapl"))]);
+
+        let issues = missing_lot_disposal_sells_from_data(
+            &accounts,
+            &activities,
+            &disposals,
+            &assets,
+            Some("America/Toronto"),
+        );
+
+        assert_eq!(issues.len(), 1);
+        assert_eq!(
+            issues[0].issue_type,
+            crate::health::checks::ConsistencyIssueType::MissingLotDisposalForSell
+        );
+        assert_eq!(issues[0].asset_symbol.as_deref(), Some("AAPL"));
+        assert_eq!(
+            issues[0].activity_date,
+            Some(chrono::NaiveDate::from_ymd_opt(2026, 6, 1).unwrap())
+        );
+        assert_eq!(issues[0].proceeds, Some(dec!(291.10598755)));
+    }
+
+    #[test]
+    fn missing_lot_sell_proceeds_follow_core_trade_amount_rules() {
+        let mut option_sell = sell_activity("sell-option", "business", "option");
+        option_sell.quantity = Some(dec!(2));
+        option_sell.unit_price = Some(dec!(1.5));
+        option_sell.amount = Some(dec!(999));
+        option_sell.fee = Some(dec!(0.25));
+
+        let mut option_asset = health_asset("option");
+        option_asset.instrument_type = Some(InstrumentType::Option);
+
+        assert_eq!(
+            health_sell_net_proceeds(&option_sell, Some(&option_asset)),
+            dec!(299.75)
+        );
+
+        let mut bond_sell = option_sell.clone();
+        bond_sell.id = "sell-bond".to_string();
+        bond_sell.amount = Some(dec!(950));
+
+        let mut bond_asset = health_asset("bond");
+        bond_asset.instrument_type = Some(InstrumentType::Bond);
+
+        assert_eq!(
+            health_sell_net_proceeds(&bond_sell, Some(&bond_asset)),
+            dec!(949.75)
+        );
     }
 
     #[tokio::test]

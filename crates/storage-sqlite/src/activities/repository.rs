@@ -1,4 +1,4 @@
-use chrono::{DateTime, NaiveDate, Utc};
+use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
 use diesel::expression_methods::ExpressionMethods;
 use diesel::prelude::*;
 use diesel::r2d2::{ConnectionManager, Pool};
@@ -15,10 +15,11 @@ use uuid::Uuid;
 use wealthfolio_core::accounts::{account_supports_purpose, AccountPurpose};
 use wealthfolio_core::activities::ActivityError;
 use wealthfolio_core::activities::{
-    import_type, Activity, ActivityBulkIdentifierMapping, ActivityBulkMutationResult,
-    ActivityDetails, ActivityRepositoryTrait, ActivitySearchResponse, ActivitySearchResponseMeta,
-    ActivityUpdate, ActivityUpsert, BulkUpsertResult, ImportMapping, ImportTemplate, IncomeData,
-    NewActivity, Sort, INCOME_ACTIVITY_TYPES, TRADING_ACTIVITY_TYPES,
+    import_type, is_cash_symbol, Activity, ActivityBulkIdentifierMapping,
+    ActivityBulkMutationResult, ActivityDetails, ActivityRepositoryTrait, ActivitySearchResponse,
+    ActivitySearchResponseMeta, ActivityUpdate, ActivityUpsert, BulkUpsertResult, ImportMapping,
+    ImportTemplate, IncomeData, NewActivity, Sort, ACTIVITY_TYPE_TRANSFER_IN,
+    ACTIVITY_TYPE_TRANSFER_OUT, INCOME_ACTIVITY_TYPES, TRADING_ACTIVITY_TYPES,
 };
 use wealthfolio_core::limits::ContributionActivity;
 use wealthfolio_core::{Error, Result};
@@ -202,11 +203,320 @@ fn set_transfer_flow_external(metadata: Option<String>, is_external: bool) -> Op
     Some(value.to_string())
 }
 
+fn transfer_flow_is_external(metadata: Option<&str>) -> bool {
+    metadata
+        .and_then(|metadata| serde_json::from_str::<serde_json::Value>(metadata).ok())
+        .and_then(|value| {
+            value
+                .get("flow")
+                .and_then(|flow| flow.get("is_external"))
+                .and_then(|value| value.as_bool())
+        })
+        .unwrap_or(false)
+}
+
+fn link_transfer_tolerance() -> Decimal {
+    Decimal::new(1, 6)
+}
+
+fn non_cash_transfer_asset_key(activity: &ActivityDB) -> Option<String> {
+    activity
+        .asset_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|asset_id| !asset_id.is_empty())
+        .filter(|asset_id| !is_cash_symbol(asset_id))
+        .map(str::to_uppercase)
+}
+
+fn effective_activity_type(activity: &ActivityDB) -> &str {
+    activity
+        .activity_type_override
+        .as_deref()
+        .unwrap_or(activity.activity_type.as_str())
+}
+
+fn source_group_blocks_transfer_link(
+    conn: &mut SqliteConnection,
+    source_group_id: Option<&str>,
+) -> Result<bool> {
+    let Some(group_id) = source_group_id
+        .map(str::trim)
+        .filter(|group_id| !group_id.is_empty())
+    else {
+        return Ok(false);
+    };
+
+    let group_activities = activities::table
+        .filter(activities::source_group_id.eq(group_id))
+        .select(ActivityDB::as_select())
+        .load::<ActivityDB>(conn)
+        .map_err(StorageError::from)?;
+    if group_activities.len() != 2 {
+        return Ok(false);
+    }
+
+    let transfer_in = group_activities
+        .iter()
+        .find(|activity| effective_activity_type(activity) == ACTIVITY_TYPE_TRANSFER_IN);
+    let transfer_out = group_activities
+        .iter()
+        .find(|activity| effective_activity_type(activity) == ACTIVITY_TYPE_TRANSFER_OUT);
+
+    let (Some(transfer_in), Some(transfer_out)) = (transfer_in, transfer_out) else {
+        return Ok(false);
+    };
+    if transfer_in.account_id == transfer_out.account_id {
+        return Ok(false);
+    }
+
+    Ok(validate_link_transfer_asset_shape(transfer_in, transfer_out).is_ok())
+}
+
+fn clear_invalid_source_group_for_external_transfer(
+    conn: &mut SqliteConnection,
+    activity: &mut ActivityDB,
+) -> Result<()> {
+    let is_transfer = matches!(
+        effective_activity_type(activity),
+        ACTIVITY_TYPE_TRANSFER_IN | ACTIVITY_TYPE_TRANSFER_OUT
+    );
+    if !is_transfer || !transfer_flow_is_external(activity.metadata.as_deref()) {
+        return Ok(());
+    }
+    if !source_group_blocks_transfer_link(conn, activity.source_group_id.as_deref())? {
+        activity.source_group_id = None;
+    }
+    Ok(())
+}
+
+fn parse_optional_decimal(value: Option<&String>) -> Option<Decimal> {
+    value
+        .and_then(|value| Decimal::from_str(value.trim()).ok())
+        .map(|value| value.abs())
+}
+
+fn validate_link_transfer_asset_shape(
+    transfer_in: &ActivityDB,
+    transfer_out: &ActivityDB,
+) -> Result<()> {
+    let in_asset = non_cash_transfer_asset_key(transfer_in);
+    let out_asset = non_cash_transfer_asset_key(transfer_out);
+    if in_asset.is_none() && out_asset.is_none() {
+        return Ok(());
+    }
+
+    if in_asset != out_asset {
+        return Err(Error::from(ActivityError::InvalidData(
+            "Security transfer legs use different assets".to_string(),
+        )));
+    }
+
+    let in_qty = parse_optional_decimal(transfer_in.quantity.as_ref());
+    let out_qty = parse_optional_decimal(transfer_out.quantity.as_ref());
+    match (in_qty, out_qty) {
+        (Some(in_qty), Some(out_qty)) if (in_qty - out_qty).abs() <= link_transfer_tolerance() => {
+            Ok(())
+        }
+        (Some(_), Some(_)) => Err(Error::from(ActivityError::InvalidData(
+            "Security transfer legs use different quantities".to_string(),
+        ))),
+        _ => Err(Error::from(ActivityError::InvalidData(
+            "Security transfer legs must both include quantity".to_string(),
+        ))),
+    }
+}
+
 // Inherent methods for ActivityRepository
 impl ActivityRepository {
     /// Creates a new ActivityRepository instance
     pub fn new(pool: Arc<Pool<ConnectionManager<SqliteConnection>>>, writer: WriteHandle) -> Self {
         Self { pool, writer }
+    }
+
+    fn naive_date_start_utc(date: NaiveDate) -> DateTime<Utc> {
+        DateTime::from_naive_utc_and_offset(date.and_time(NaiveTime::MIN), Utc)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn search_activities_with_utc_bounds(
+        &self,
+        page: i64,
+        page_size: i64,
+        account_id_filter: Option<Vec<String>>,
+        activity_type_filter: Option<Vec<String>>,
+        asset_id_keyword: Option<String>,
+        sort: Option<Sort>,
+        needs_review_filter: Option<bool>,
+        date_from_utc: Option<DateTime<Utc>>,
+        date_to_utc_exclusive: Option<DateTime<Utc>>,
+        instrument_type_filter: Option<Vec<String>>,
+    ) -> Result<ActivitySearchResponse> {
+        let mut conn = get_connection(&self.pool)?;
+
+        let offset = page * page_size;
+
+        let create_base_query = |_conn: &SqliteConnection| {
+            let mut query = activities::table
+                .inner_join(accounts::table.on(activities::account_id.eq(accounts::id)))
+                .left_join(assets::table.on(activities::asset_id.eq(assets::id.nullable())))
+                .filter(accounts::is_archived.eq(false))
+                .into_boxed();
+
+            if let Some(ref account_ids) = account_id_filter {
+                query = query.filter(activities::account_id.eq_any(account_ids));
+            }
+            if let Some(ref activity_types) = activity_type_filter {
+                query = query.filter(
+                    sql::<Text>(
+                        "COALESCE(activities.activity_type_override, activities.activity_type)",
+                    )
+                    .eq_any(activity_types),
+                );
+            }
+            if let Some(ref keyword) = asset_id_keyword {
+                let pattern = format!("%{}%", keyword);
+                query = query.filter(
+                    assets::id
+                        .like(pattern.clone())
+                        .or(assets::name.like(pattern.clone()))
+                        .or(assets::display_code.like(pattern.clone()))
+                        .or(activities::notes.like(pattern)),
+                );
+            }
+            if let Some(needs_review) = needs_review_filter {
+                if needs_review {
+                    query = query.filter(activities::status.eq("DRAFT"));
+                } else {
+                    query = query.filter(activities::status.ne("DRAFT"));
+                }
+            }
+            if let Some(from_utc) = date_from_utc {
+                query = query.filter(activities::activity_date.ge(from_utc.to_rfc3339()));
+            }
+            if let Some(to_utc) = date_to_utc_exclusive {
+                query = query.filter(activities::activity_date.lt(to_utc.to_rfc3339()));
+            }
+            if let Some(ref instrument_types) = instrument_type_filter {
+                query = query.filter(assets::instrument_type.eq_any(instrument_types));
+            }
+
+            if let Some(ref sort) = sort {
+                match sort.id.as_str() {
+                    "date" => {
+                        if sort.desc {
+                            query = query.order((
+                                activities::activity_date.desc(),
+                                activities::created_at.asc(),
+                            ));
+                        } else {
+                            query = query.order((
+                                activities::activity_date.asc(),
+                                activities::created_at.asc(),
+                            ));
+                        }
+                    }
+                    "activityType" => {
+                        if sort.desc {
+                            query = query.order(
+                                sql::<Text>(
+                                    "COALESCE(activities.activity_type_override, activities.activity_type)",
+                                )
+                                .desc(),
+                            );
+                        } else {
+                            query = query.order(
+                                sql::<Text>(
+                                    "COALESCE(activities.activity_type_override, activities.activity_type)",
+                                )
+                                .asc(),
+                            );
+                        }
+                    }
+                    "assetSymbol" => {
+                        if sort.desc {
+                            query = query.order(activities::asset_id.desc());
+                        } else {
+                            query = query.order(activities::asset_id.asc());
+                        }
+                    }
+                    "accountName" => {
+                        if sort.desc {
+                            query = query.order(accounts::name.desc());
+                        } else {
+                            query = query.order(accounts::name.asc());
+                        }
+                    }
+                    _ => {
+                        query = query.order((
+                            activities::activity_date.desc(),
+                            activities::created_at.asc(),
+                        ))
+                    }
+                }
+            } else {
+                query = query.order((
+                    activities::activity_date.desc(),
+                    activities::created_at.asc(),
+                ));
+            }
+
+            query
+        };
+
+        let total_row_count = create_base_query(&conn)
+            .count()
+            .get_result::<i64>(&mut conn)
+            .map_err(StorageError::from)?;
+
+        let results_db = create_base_query(&conn)
+            .select((
+                activities::id,
+                activities::account_id,
+                activities::asset_id,
+                sql::<Text>(
+                    "COALESCE(activities.activity_type_override, activities.activity_type)",
+                ),
+                activities::subtype,
+                activities::status,
+                activities::activity_date,
+                activities::quantity,
+                activities::unit_price,
+                activities::currency,
+                activities::fee,
+                activities::amount,
+                activities::notes,
+                activities::fx_rate,
+                activities::needs_review,
+                activities::is_user_modified,
+                activities::source_system,
+                activities::source_record_id,
+                activities::source_group_id,
+                activities::idempotency_key,
+                activities::import_run_id,
+                activities::created_at,
+                activities::updated_at,
+                accounts::name,
+                accounts::currency,
+                assets::display_code.nullable(),
+                assets::name.nullable(),
+                assets::instrument_exchange_mic.nullable(),
+                assets::quote_mode.nullable(),
+                assets::instrument_type.nullable(),
+                activities::metadata,
+            ))
+            .limit(page_size)
+            .offset(offset)
+            .load::<ActivityDetailsDB>(&mut conn)
+            .map_err(StorageError::from)?;
+
+        let results: Vec<ActivityDetails> =
+            results_db.into_iter().map(ActivityDetails::from).collect();
+
+        Ok(ActivitySearchResponse {
+            data: results,
+            meta: ActivitySearchResponseMeta { total_row_count },
+        })
     }
 }
 
@@ -296,181 +606,51 @@ impl ActivityRepositoryTrait for ActivityRepository {
         date_to: Option<NaiveDate>,        // Optional end date filter (inclusive)
         instrument_type_filter: Option<Vec<String>>, // Optional instrument_type filter
     ) -> Result<ActivitySearchResponse> {
-        let mut conn = get_connection(&self.pool)?;
+        let date_from_utc = date_from.map(Self::naive_date_start_utc);
+        let date_to_utc_exclusive = date_to
+            .and_then(|date| date.succ_opt())
+            .map(Self::naive_date_start_utc);
 
-        let offset = page * page_size;
+        self.search_activities_with_utc_bounds(
+            page,
+            page_size,
+            account_id_filter,
+            activity_type_filter,
+            asset_id_keyword,
+            sort,
+            needs_review_filter,
+            date_from_utc,
+            date_to_utc_exclusive,
+            instrument_type_filter,
+        )
+    }
 
-        // Function to create base query - now using LEFT JOIN for assets since asset_id can be NULL
-        let create_base_query = |_conn: &SqliteConnection| {
-            let mut query = activities::table
-                .inner_join(accounts::table.on(activities::account_id.eq(accounts::id)))
-                .left_join(assets::table.on(activities::asset_id.eq(assets::id.nullable())))
-                .filter(accounts::is_archived.eq(false))
-                .into_boxed();
-
-            if let Some(ref account_ids) = account_id_filter {
-                query = query.filter(activities::account_id.eq_any(account_ids));
-            }
-            if let Some(ref activity_types) = activity_type_filter {
-                query = query.filter(
-                    sql::<Text>(
-                        "COALESCE(activities.activity_type_override, activities.activity_type)",
-                    )
-                    .eq_any(activity_types),
-                );
-            }
-            if let Some(ref keyword) = asset_id_keyword {
-                let pattern = format!("%{}%", keyword);
-                query = query.filter(
-                    assets::id
-                        .like(pattern.clone())
-                        .or(assets::name.like(pattern.clone()))
-                        .or(assets::display_code.like(pattern.clone()))
-                        .or(activities::notes.like(pattern)),
-                );
-            }
-            // Map needs_review_filter to status filter (DRAFT status means needs review)
-            if let Some(needs_review) = needs_review_filter {
-                if needs_review {
-                    query = query.filter(activities::status.eq("DRAFT"));
-                } else {
-                    query = query.filter(activities::status.ne("DRAFT"));
-                }
-            }
-            // Date range filters (activity_date is stored as RFC3339 string, compare lexicographically)
-            if let Some(from_date) = date_from {
-                // Start of day in RFC3339 format for lexicographic comparison
-                let from_str = format!("{}T00:00:00", from_date);
-                query = query.filter(activities::activity_date.ge(from_str));
-            }
-            if let Some(to_date) = date_to {
-                // End of day in RFC3339 format for lexicographic comparison
-                let to_str = format!("{}T23:59:59", to_date);
-                query = query.filter(activities::activity_date.le(to_str));
-            }
-            if let Some(ref instrument_types) = instrument_type_filter {
-                query = query.filter(assets::instrument_type.eq_any(instrument_types));
-            }
-
-            // Apply sorting
-            if let Some(ref sort) = sort {
-                match sort.id.as_str() {
-                    "date" => {
-                        if sort.desc {
-                            query = query.order((
-                                activities::activity_date.desc(),
-                                activities::created_at.asc(),
-                            ));
-                        } else {
-                            query = query.order((
-                                activities::activity_date.asc(),
-                                activities::created_at.asc(),
-                            ));
-                        }
-                    }
-                    "activityType" => {
-                        if sort.desc {
-                            query = query.order(
-                                sql::<Text>(
-                                    "COALESCE(activities.activity_type_override, activities.activity_type)",
-                                )
-                                .desc(),
-                            );
-                        } else {
-                            query = query.order(
-                                sql::<Text>(
-                                    "COALESCE(activities.activity_type_override, activities.activity_type)",
-                                )
-                                .asc(),
-                            );
-                        }
-                    }
-                    "assetSymbol" => {
-                        if sort.desc {
-                            query = query.order(activities::asset_id.desc());
-                        } else {
-                            query = query.order(activities::asset_id.asc());
-                        }
-                    }
-                    "accountName" => {
-                        if sort.desc {
-                            query = query.order(accounts::name.desc());
-                        } else {
-                            query = query.order(accounts::name.asc());
-                        }
-                    }
-                    _ => {
-                        query = query.order((
-                            activities::activity_date.desc(),
-                            activities::created_at.asc(),
-                        ))
-                    } // Default order
-                }
-            } else {
-                query = query.order((
-                    activities::activity_date.desc(),
-                    activities::created_at.asc(),
-                )); // Default order
-            }
-
-            query
-        };
-
-        // Count query
-        let total_row_count = create_base_query(&conn)
-            .count()
-            .get_result::<i64>(&mut conn)
-            .map_err(StorageError::from)?;
-
-        // Data fetching query - updated to match new schema fields
-        let results_db = create_base_query(&conn)
-            .select((
-                activities::id,
-                activities::account_id,
-                activities::asset_id,
-                sql::<Text>(
-                    "COALESCE(activities.activity_type_override, activities.activity_type)",
-                ),
-                activities::subtype,
-                activities::status,
-                activities::activity_date,
-                activities::quantity,
-                activities::unit_price,
-                activities::currency,
-                activities::fee,
-                activities::amount,
-                activities::notes,
-                activities::fx_rate,
-                activities::needs_review,
-                activities::is_user_modified,
-                activities::source_system,
-                activities::source_record_id,
-                activities::source_group_id,
-                activities::idempotency_key,
-                activities::import_run_id,
-                activities::created_at,
-                activities::updated_at,
-                accounts::name,
-                accounts::currency,
-                assets::display_code.nullable(),
-                assets::name.nullable(),
-                assets::instrument_exchange_mic.nullable(),
-                assets::quote_mode.nullable(),
-                assets::instrument_type.nullable(),
-                activities::metadata,
-            ))
-            .limit(page_size)
-            .offset(offset)
-            .load::<ActivityDetailsDB>(&mut conn)
-            .map_err(StorageError::from)?;
-
-        let results: Vec<ActivityDetails> =
-            results_db.into_iter().map(ActivityDetails::from).collect();
-
-        Ok(ActivitySearchResponse {
-            data: results,
-            meta: ActivitySearchResponseMeta { total_row_count },
-        })
+    #[allow(clippy::too_many_arguments)]
+    fn search_activities_in_utc_range(
+        &self,
+        page: i64,
+        page_size: i64,
+        account_id_filter: Option<Vec<String>>,
+        activity_type_filter: Option<Vec<String>>,
+        asset_id_keyword: Option<String>,
+        sort: Option<Sort>,
+        needs_review_filter: Option<bool>,
+        date_from_utc: Option<DateTime<Utc>>,
+        date_to_utc_exclusive: Option<DateTime<Utc>>,
+        instrument_type_filter: Option<Vec<String>>,
+    ) -> Result<ActivitySearchResponse> {
+        self.search_activities_with_utc_bounds(
+            page,
+            page_size,
+            account_id_filter,
+            activity_type_filter,
+            asset_id_keyword,
+            sort,
+            needs_review_filter,
+            date_from_utc,
+            date_to_utc_exclusive,
+            instrument_type_filter,
+        )
     }
 
     async fn create_activity(&self, new_activity: NewActivity) -> Result<Activity> {
@@ -577,6 +757,10 @@ impl ActivityRepositoryTrait for ActivityRepository {
                 if activity_to_update.metadata.is_none() {
                     activity_to_update.metadata = metadata;
                 }
+                clear_invalid_source_group_for_external_transfer(
+                    tx.conn(),
+                    &mut activity_to_update,
+                )?;
                 preserve_broker_base_type(
                     &mut activity_to_update,
                     &existing_activity_type,
@@ -668,7 +852,7 @@ impl ActivityRepositoryTrait for ActivityRepository {
                     .map_err(|e| Error::from(ActivityError::NotFound(e.to_string())))?;
 
                 let (mut transfer_in, mut transfer_out) =
-                    match (a.activity_type.as_str(), b.activity_type.as_str()) {
+                    match (effective_activity_type(&a), effective_activity_type(&b)) {
                         (ACTIVITY_TYPE_TRANSFER_IN, ACTIVITY_TYPE_TRANSFER_OUT) => (a, b),
                         (ACTIVITY_TYPE_TRANSFER_OUT, ACTIVITY_TYPE_TRANSFER_IN) => (b, a),
                         _ => {
@@ -679,7 +863,13 @@ impl ActivityRepositoryTrait for ActivityRepository {
                         }
                     };
 
-                if transfer_in.source_group_id.is_some() || transfer_out.source_group_id.is_some() {
+                if source_group_blocks_transfer_link(
+                    tx.conn(),
+                    transfer_in.source_group_id.as_deref(),
+                )? || source_group_blocks_transfer_link(
+                    tx.conn(),
+                    transfer_out.source_group_id.as_deref(),
+                )? {
                     return Err(Error::from(ActivityError::InvalidData(
                         "One or both activities are already linked to another transfer".to_string(),
                     )));
@@ -689,6 +879,7 @@ impl ActivityRepositoryTrait for ActivityRepository {
                         "Both transfer legs share the same account".to_string(),
                     )));
                 }
+                validate_link_transfer_asset_shape(&transfer_in, &transfer_out)?;
 
                 let group_id = Uuid::new_v4().to_string();
                 let now = chrono::Utc::now().to_rfc3339();
@@ -758,7 +949,7 @@ impl ActivityRepositoryTrait for ActivityRepository {
                     .map_err(|e| Error::from(ActivityError::NotFound(e.to_string())))?;
 
                 let (mut transfer_in, mut transfer_out) =
-                    match (a.activity_type.as_str(), b.activity_type.as_str()) {
+                    match (effective_activity_type(&a), effective_activity_type(&b)) {
                         (ACTIVITY_TYPE_TRANSFER_IN, ACTIVITY_TYPE_TRANSFER_OUT) => (a, b),
                         (ACTIVITY_TYPE_TRANSFER_OUT, ACTIVITY_TYPE_TRANSFER_IN) => (b, a),
                         _ => {
@@ -963,6 +1154,7 @@ impl ActivityRepositoryTrait for ActivityRepository {
                     if activity_db.metadata.is_none() {
                         activity_db.metadata = metadata;
                     }
+                    clear_invalid_source_group_for_external_transfer(tx.conn(), &mut activity_db)?;
                     preserve_broker_base_type(
                         &mut activity_db,
                         &existing_activity_type,
@@ -2815,6 +3007,65 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn search_activities_in_utc_range_uses_exact_timestamp_bounds() {
+        let (pool, writer) = setup_db();
+        let repo = ActivityRepository::new(pool.clone(), writer);
+
+        {
+            let mut conn = get_connection(&pool).expect("conn");
+            insert_broker_account_and_import_run(&mut conn);
+            diesel::sql_query(
+                "INSERT INTO activities \
+                 (id, account_id, asset_id, activity_type, activity_type_override, source_type, subtype, \
+                  status, activity_date, settlement_date, quantity, unit_price, amount, fee, currency, \
+                  fx_rate, notes, metadata, source_system, source_record_id, source_group_id, \
+                  idempotency_key, import_run_id, is_user_modified, needs_review, created_at, updated_at) \
+                 VALUES \
+                 ('local-evening-transfer', 'broker-local-account', NULL, 'TRANSFER_IN', NULL, NULL, NULL, \
+                  'POSTED', '2024-01-04T02:13:00+00:00', NULL, NULL, NULL, '1685.43', NULL, 'USD', \
+                  NULL, 'Belongs to Jan 3 in Toronto', NULL, 'CSV', 'range-1', NULL, \
+                  'local-evening-transfer-key', 'local-import-run', 0, 0, \
+                  '2024-01-04T02:13:00+00:00', '2024-01-04T02:13:00+00:00'), \
+                 ('next-local-day-transfer', 'broker-local-account', NULL, 'TRANSFER_IN', NULL, NULL, NULL, \
+                  'POSTED', '2024-01-04T05:30:00+00:00', NULL, NULL, NULL, '10', NULL, 'USD', \
+                  NULL, 'Belongs to Jan 4 in Toronto', NULL, 'CSV', 'range-2', NULL, \
+                  'next-local-day-transfer-key', 'local-import-run', 0, 0, \
+                  '2024-01-04T05:30:00+00:00', '2024-01-04T05:30:00+00:00')",
+            )
+            .execute(&mut conn)
+            .expect("insert activities");
+        }
+
+        let date_from_utc = DateTime::parse_from_rfc3339("2024-01-03T05:00:00+00:00")
+            .unwrap()
+            .with_timezone(&Utc);
+        let date_to_utc_exclusive = DateTime::parse_from_rfc3339("2024-01-04T05:00:00+00:00")
+            .unwrap()
+            .with_timezone(&Utc);
+
+        let response = repo
+            .search_activities_in_utc_range(
+                0,
+                10,
+                None,
+                Some(vec!["TRANSFER_IN".to_string()]),
+                None,
+                Some(Sort {
+                    id: "date".to_string(),
+                    desc: true,
+                }),
+                None,
+                Some(date_from_utc),
+                Some(date_to_utc_exclusive),
+                None,
+            )
+            .expect("search by utc range");
+
+        assert_eq!(response.meta.total_row_count, 1);
+        assert_eq!(response.data[0].id, "local-evening-transfer");
+    }
+
+    #[tokio::test]
     async fn notes_only_broker_edit_preserves_type_override_and_base_type_clears_it() {
         let (pool, writer) = setup_db();
         let repo = ActivityRepository::new(pool.clone(), writer);
@@ -3332,6 +3583,219 @@ mod tests {
         assert_eq!(activity_user_modified(&mut conn, "transfer-in"), 1);
         assert_eq!(activity_user_modified(&mut conn, "transfer-out"), 1);
         assert_eq!(sync_outbox_count(&mut conn), 2);
+    }
+
+    #[tokio::test]
+    async fn link_transfer_activities_repairs_orphan_source_group() {
+        let (pool, writer) = setup_db();
+        let repo = ActivityRepository::new(pool.clone(), writer);
+        let mut conn = get_connection(&pool).expect("conn");
+
+        insert_account(&mut conn, "acc-a");
+        insert_account(&mut conn, "acc-b");
+        insert_transfer_activity(
+            &mut conn,
+            "orphan-in",
+            "acc-a",
+            "TRANSFER_IN",
+            Some("orphan-group"),
+            Some(r#"{"flow":{"is_external":false}}"#),
+        );
+        insert_transfer_activity(
+            &mut conn,
+            "transfer-out",
+            "acc-b",
+            "TRANSFER_OUT",
+            None,
+            None,
+        );
+
+        let (transfer_in, transfer_out) = repo
+            .link_transfer_activities("orphan-in".to_string(), "transfer-out".to_string())
+            .await
+            .expect("orphaned transfer should be repairable");
+
+        assert_eq!(transfer_in.id, "orphan-in");
+        assert_eq!(transfer_out.id, "transfer-out");
+        assert_ne!(transfer_in.source_group_id.as_deref(), Some("orphan-group"));
+        assert!(transfer_in.source_group_id.is_some());
+        assert_eq!(transfer_in.source_group_id, transfer_out.source_group_id);
+        assert_eq!(
+            transfer_in.metadata.as_ref().and_then(|m| {
+                m.get("flow")
+                    .and_then(|flow| flow.get("is_external"))
+                    .and_then(|value| value.as_bool())
+            }),
+            Some(false)
+        );
+    }
+
+    #[tokio::test]
+    async fn update_external_transfer_clears_invalid_source_group() {
+        let (pool, writer) = setup_db();
+        let repo = ActivityRepository::new(pool.clone(), writer);
+        let mut conn = get_connection(&pool).expect("conn");
+
+        insert_account(&mut conn, "acc-a");
+        insert_transfer_activity(
+            &mut conn,
+            "orphan-in",
+            "acc-a",
+            "TRANSFER_IN",
+            Some("orphan-group"),
+            Some(r#"{"flow":{"is_external":false}}"#),
+        );
+
+        let updated = repo
+            .update_activity(ActivityUpdate {
+                id: "orphan-in".to_string(),
+                account_id: "acc-a".to_string(),
+                asset: None,
+                activity_type: "TRANSFER_IN".to_string(),
+                subtype: None,
+                activity_date: "2024-01-15T00:00:00Z".to_string(),
+                quantity: Some(None),
+                unit_price: Some(None),
+                currency: "USD".to_string(),
+                fee: Some(None),
+                amount: Some(Some(Decimal::new(100, 0))),
+                status: Some(ActivityStatus::Posted),
+                notes: None,
+                fx_rate: None,
+                metadata: Some(r#"{"flow":{"is_external":true}}"#.to_string()),
+            })
+            .await
+            .expect("external transfer update should succeed");
+
+        assert_eq!(updated.source_group_id, None);
+        assert_eq!(
+            updated.metadata.as_ref().and_then(|m| {
+                m.get("flow")
+                    .and_then(|flow| flow.get("is_external"))
+                    .and_then(|value| value.as_bool())
+            }),
+            Some(true)
+        );
+        let stored_group: Option<String> = activities::table
+            .filter(activities::id.eq("orphan-in"))
+            .select(activities::source_group_id)
+            .first(&mut conn)
+            .expect("stored source group");
+        assert_eq!(stored_group, None);
+    }
+
+    #[tokio::test]
+    async fn link_transfer_activities_rejects_security_asset_or_quantity_mismatch() {
+        let (pool, writer) = setup_db();
+        let repo = ActivityRepository::new(pool.clone(), writer);
+        let mut conn = get_connection(&pool).expect("conn");
+
+        insert_account(&mut conn, "acc-a");
+        insert_account(&mut conn, "acc-b");
+
+        let insert_asset = |conn: &mut SqliteConnection, id: &str| {
+            diesel::insert_into(assets::table)
+                .values((
+                    assets::id.eq(id.to_string()),
+                    assets::kind.eq("INVESTMENT".to_string()),
+                    assets::is_active.eq(1),
+                    assets::quote_mode.eq("MANUAL".to_string()),
+                    assets::quote_ccy.eq("USD".to_string()),
+                    assets::created_at.eq("2024-01-15T00:00:00+00:00".to_string()),
+                    assets::updated_at.eq("2024-01-15T00:00:00+00:00".to_string()),
+                ))
+                .execute(conn)
+                .expect("insert asset");
+        };
+        insert_asset(&mut conn, "SEC:AAPL:XNAS");
+        insert_asset(&mut conn, "SEC:MSFT:XNAS");
+
+        let set_security_fields =
+            |conn: &mut SqliteConnection, id: &str, asset_id: &str, quantity: &str| {
+                diesel::update(activities::table.find(id))
+                    .set((
+                        activities::asset_id.eq(Some(asset_id.to_string())),
+                        activities::quantity.eq(Some(quantity.to_string())),
+                        activities::unit_price.eq(Some("100".to_string())),
+                        activities::amount.eq(None::<String>),
+                    ))
+                    .execute(conn)
+                    .expect("set security transfer fields");
+            };
+
+        insert_transfer_activity(&mut conn, "asset-out", "acc-a", "TRANSFER_OUT", None, None);
+        insert_transfer_activity(&mut conn, "asset-in", "acc-b", "TRANSFER_IN", None, None);
+        set_security_fields(&mut conn, "asset-out", "SEC:AAPL:XNAS", "10");
+        set_security_fields(&mut conn, "asset-in", "SEC:MSFT:XNAS", "10");
+
+        let asset_mismatch = repo
+            .link_transfer_activities("asset-in".to_string(), "asset-out".to_string())
+            .await;
+        assert!(asset_mismatch.is_err());
+
+        insert_transfer_activity(
+            &mut conn,
+            "quantity-out",
+            "acc-a",
+            "TRANSFER_OUT",
+            None,
+            None,
+        );
+        insert_transfer_activity(&mut conn, "quantity-in", "acc-b", "TRANSFER_IN", None, None);
+        set_security_fields(&mut conn, "quantity-out", "SEC:AAPL:XNAS", "10");
+        set_security_fields(&mut conn, "quantity-in", "SEC:AAPL:XNAS", "9");
+
+        let quantity_mismatch = repo
+            .link_transfer_activities("quantity-in".to_string(), "quantity-out".to_string())
+            .await;
+        assert!(quantity_mismatch.is_err());
+
+        let groups: Vec<Option<String>> = activities::table
+            .filter(activities::id.eq_any(["asset-out", "asset-in", "quantity-out", "quantity-in"]))
+            .select(activities::source_group_id)
+            .load(&mut conn)
+            .expect("load source groups");
+        assert!(groups.iter().all(Option::is_none));
+    }
+
+    #[tokio::test]
+    async fn link_and_unlink_transfer_activities_use_effective_activity_type() {
+        let (pool, writer) = setup_db();
+        let repo = ActivityRepository::new(pool.clone(), writer);
+        let mut conn = get_connection(&pool).expect("conn");
+
+        insert_account(&mut conn, "acc-a");
+        insert_account(&mut conn, "acc-b");
+        insert_transfer_activity(&mut conn, "override-out", "acc-a", "FEE", None, None);
+        diesel::update(activities::table.find("override-out"))
+            .set(activities::activity_type_override.eq(Some("TRANSFER_OUT".to_string())))
+            .execute(&mut conn)
+            .expect("set transfer override");
+        insert_transfer_activity(&mut conn, "override-in", "acc-b", "TRANSFER_IN", None, None);
+
+        let (transfer_in, transfer_out) = repo
+            .link_transfer_activities("override-out".to_string(), "override-in".to_string())
+            .await
+            .expect("link effective transfer pair");
+
+        assert_eq!(transfer_in.id, "override-in");
+        assert_eq!(transfer_out.id, "override-out");
+        assert_eq!(
+            transfer_out.activity_type_override.as_deref(),
+            Some("TRANSFER_OUT")
+        );
+        assert!(transfer_in.source_group_id.is_some());
+        assert_eq!(transfer_in.source_group_id, transfer_out.source_group_id);
+
+        let (unlinked_in, unlinked_out) = repo
+            .unlink_transfer_activities("override-out".to_string(), "override-in".to_string())
+            .await
+            .expect("unlink effective transfer pair");
+
+        assert_eq!(unlinked_in.id, "override-in");
+        assert_eq!(unlinked_out.id, "override-out");
+        assert!(unlinked_in.source_group_id.is_none());
+        assert!(unlinked_out.source_group_id.is_none());
     }
 
     #[tokio::test]

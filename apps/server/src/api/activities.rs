@@ -12,6 +12,10 @@ use wealthfolio_core::activities::{
     ActivitySearchResponse, ActivityUpdate, ImportActivitiesResult, ImportAssetCandidate,
     ImportAssetPreviewItem, ImportMappingData, ImportTemplateData, InternalTransferPairRequest,
     InternalTransferPairResponse, NewActivity, ParseConfig, ParsedCsvResult,
+    TransferMatchCandidate, TransferMatchCandidateRequest,
+};
+use wealthfolio_core::utils::time_utils::{
+    local_date_range_utc_bounds, parse_user_timezone_or_default,
 };
 
 use super::shared::parse_date_optional;
@@ -81,8 +85,12 @@ async fn search_activities(
     // Parse date filters
     let date_from_parsed = parse_date_optional(body.date_from, "dateFrom")?;
     let date_to_parsed = parse_date_optional(body.date_to, "dateTo")?;
+    let timezone = state.timezone.read().unwrap().clone();
+    let tz = parse_user_timezone_or_default(&timezone);
+    let (date_from_utc, date_to_utc_exclusive) =
+        local_date_range_utc_bounds(date_from_parsed, date_to_parsed, tz)?;
 
-    let resp = state.activity_service.search_activities(
+    let resp = state.activity_service.search_activities_in_utc_range(
         body.page,
         body.page_size,
         account_ids,
@@ -90,8 +98,8 @@ async fn search_activities(
         body.asset_id_keyword,
         sort_normalized,
         body.needs_review_filter,
-        date_from_parsed,
-        date_to_parsed,
+        date_from_utc,
+        date_to_utc_exclusive,
         instrument_types,
     )?;
     Ok(Json(resp))
@@ -102,6 +110,7 @@ async fn create_activity(
     Json(activity): Json<NewActivity>,
 ) -> ApiResult<Json<Activity>> {
     let created = state.activity_service.create_activity(activity).await?;
+    state.health_service.clear_cache().await;
 
     // Domain events handle asset enrichment and portfolio recalculation
     Ok(Json(created))
@@ -112,6 +121,7 @@ async fn update_activity(
     Json(activity): Json<ActivityUpdate>,
 ) -> ApiResult<Json<Activity>> {
     let updated = state.activity_service.update_activity(activity).await?;
+    state.health_service.clear_cache().await;
     // Domain events handle asset enrichment and portfolio recalculation
     Ok(Json(updated))
 }
@@ -124,6 +134,7 @@ async fn save_activities(
         .activity_service
         .bulk_mutate_activities(request)
         .await?;
+    state.health_service.clear_cache().await;
     // Domain events handle asset enrichment and portfolio recalculation
     Ok(Json(result))
 }
@@ -133,6 +144,7 @@ async fn delete_activity(
     State(state): State<Arc<AppState>>,
 ) -> ApiResult<Json<Activity>> {
     let deleted = state.activity_service.delete_activity(id).await?;
+    state.health_service.clear_cache().await;
     // Domain events handle portfolio recalculation
     Ok(Json(deleted))
 }
@@ -145,6 +157,16 @@ async fn get_transfer_pair_for_activity(
     Ok(Json(pair))
 }
 
+async fn find_transfer_match_candidates(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<TransferMatchCandidateRequest>,
+) -> ApiResult<Json<Vec<TransferMatchCandidate>>> {
+    let candidates = state
+        .activity_service
+        .find_transfer_match_candidates(request)?;
+    Ok(Json(candidates))
+}
+
 async fn save_internal_transfer_pair(
     State(state): State<Arc<AppState>>,
     Json(request): Json<InternalTransferPairRequest>,
@@ -153,6 +175,7 @@ async fn save_internal_transfer_pair(
         .activity_service
         .save_internal_transfer_pair(request)
         .await?;
+    state.health_service.clear_cache().await;
     Ok(Json(pair))
 }
 
@@ -171,6 +194,7 @@ async fn link_transfer_activities(
         .activity_service
         .link_transfer_activities(body.activity_a_id, body.activity_b_id)
         .await?;
+    state.health_service.clear_cache().await;
     // Domain events handle portfolio recalculation
     Ok(Json(pair))
 }
@@ -183,6 +207,7 @@ async fn unlink_transfer_activities(
         .activity_service
         .unlink_transfer_activities(body.activity_a_id, body.activity_b_id)
         .await?;
+    state.health_service.clear_cache().await;
     // Domain events handle portfolio recalculation
     Ok(Json(pair))
 }
@@ -216,6 +241,7 @@ async fn import_activities(
         .activity_service
         .import_activities(body.activities)
         .await?;
+    state.health_service.clear_cache().await;
     // Domain events handle asset enrichment and portfolio recalculation
     Ok(Json(result))
 }
@@ -417,6 +443,10 @@ pub fn router() -> Router<Arc<AppState>> {
         .route(
             "/activities/transfer-pair",
             post(save_internal_transfer_pair),
+        )
+        .route(
+            "/activities/transfer-match-candidates",
+            post(find_transfer_match_candidates),
         )
         .route("/activities/link", post(link_transfer_activities))
         .route("/activities/unlink", post(unlink_transfer_activities))

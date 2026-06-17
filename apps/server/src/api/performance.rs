@@ -239,6 +239,20 @@ fn account_tracking_modes_from_map(
         .collect()
 }
 
+fn account_types_from_map(
+    accounts_by_id: &HashMap<String, Account>,
+    account_ids: &[String],
+) -> HashMap<String, String> {
+    account_ids
+        .iter()
+        .filter_map(|account_id| {
+            accounts_by_id
+                .get(account_id)
+                .map(|account| (account.id.clone(), account.account_type.clone()))
+        })
+        .collect()
+}
+
 async fn calculate_performance_history(
     State(state): State<Arc<AppState>>,
     Json(body): Json<PerfBody>,
@@ -271,6 +285,7 @@ async fn calculate_performance_history(
             return Ok(Json(result));
         }
         let tracking_modes = account_tracking_modes_from_map(&accounts_by_id, &account_ids);
+        let account_types = account_types_from_map(&accounts_by_id, &account_ids);
         let mut result = state
             .performance_service
             .calculate_performance_history_for_accounts(
@@ -278,6 +293,7 @@ async fn calculate_performance_history(
                 &account_ids,
                 &resolved.base_currency,
                 &tracking_modes,
+                &account_types,
                 start,
                 end,
             )
@@ -291,23 +307,24 @@ async fn calculate_performance_history(
         }
         result
     } else {
-        let authoritative_tracking_mode = if body.item_type == "account" {
-            let account = state.account_service.get_account(&body.item_id)?;
-            if !account.is_active
-                || account.is_archived
-                || !account_supports_purpose(&account.account_type, AccountPurpose::Performance)
-            {
-                return Ok(Json(empty_performance_metrics(
-                    &body.item_id,
-                    account.currency,
-                    start,
-                    end,
-                )));
-            }
-            Some(account.tracking_mode)
-        } else {
-            tracking_mode
-        };
+        let (authoritative_tracking_mode, authoritative_account_type) =
+            if body.item_type == "account" {
+                let account = state.account_service.get_account(&body.item_id)?;
+                if !account.is_active
+                    || account.is_archived
+                    || !account_supports_purpose(&account.account_type, AccountPurpose::Performance)
+                {
+                    return Ok(Json(empty_performance_metrics(
+                        &body.item_id,
+                        account.currency,
+                        start,
+                        end,
+                    )));
+                }
+                (Some(account.tracking_mode), Some(account.account_type))
+            } else {
+                (tracking_mode, None)
+            };
         state
             .performance_service
             .calculate_performance_history(
@@ -316,6 +333,7 @@ async fn calculate_performance_history(
                 start,
                 end,
                 authoritative_tracking_mode,
+                authoritative_account_type.as_deref(),
             )
             .await?
     };
@@ -355,6 +373,7 @@ async fn calculate_performance_summary(
             return Ok(Json(result));
         }
         let tracking_modes = account_tracking_modes_from_map(&accounts_by_id, &account_ids);
+        let account_types = account_types_from_map(&accounts_by_id, &account_ids);
         let mut result = state
             .performance_service
             .calculate_performance_summary_for_accounts(
@@ -362,6 +381,7 @@ async fn calculate_performance_summary(
                 &account_ids,
                 &resolved.base_currency,
                 &tracking_modes,
+                &account_types,
                 start,
                 end,
                 profile,
@@ -376,23 +396,24 @@ async fn calculate_performance_summary(
         }
         result
     } else {
-        let authoritative_tracking_mode = if body.item_type == "account" {
-            let account = state.account_service.get_account(&body.item_id)?;
-            if !account.is_active
-                || account.is_archived
-                || !account_supports_purpose(&account.account_type, AccountPurpose::Performance)
-            {
-                return Ok(Json(empty_performance_metrics(
-                    &body.item_id,
-                    account.currency,
-                    start,
-                    end,
-                )));
-            }
-            Some(account.tracking_mode)
-        } else {
-            tracking_mode
-        };
+        let (authoritative_tracking_mode, authoritative_account_type) =
+            if body.item_type == "account" {
+                let account = state.account_service.get_account(&body.item_id)?;
+                if !account.is_active
+                    || account.is_archived
+                    || !account_supports_purpose(&account.account_type, AccountPurpose::Performance)
+                {
+                    return Ok(Json(empty_performance_metrics(
+                        &body.item_id,
+                        account.currency,
+                        start,
+                        end,
+                    )));
+                }
+                (Some(account.tracking_mode), Some(account.account_type))
+            } else {
+                (tracking_mode, None)
+            };
         state
             .performance_service
             .calculate_performance_summary(
@@ -401,6 +422,7 @@ async fn calculate_performance_summary(
                 start,
                 end,
                 authoritative_tracking_mode,
+                authoritative_account_type.as_deref(),
                 profile,
             )
             .await?
@@ -447,6 +469,7 @@ async fn get_performance_summaries(
                 &account_ids,
                 &base,
                 &account_tracking_modes_from_map(&accounts_by_id, &account_ids),
+                &account_types_from_map(&accounts_by_id, &account_ids),
                 start,
                 end,
                 profile,

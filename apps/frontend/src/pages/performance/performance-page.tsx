@@ -432,9 +432,10 @@ function AttributionDetailMetric({
       description: "Tax withholdings on income",
     },
     {
-      label: "Residual",
+      label: "Unexplained change",
       value: Number(result.attribution.residual),
-      description: "Unallocated rounding and adjustments",
+      description:
+        "Difference not explained by available flows, income, gain/loss, FX, fees, and taxes",
     },
   ];
   const flowRows: AttributionRow[] = [

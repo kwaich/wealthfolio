@@ -75,6 +75,7 @@ export function AccountSnapshotHistory({
     queryClient.invalidateQueries({ queryKey: QueryKeys.valuationHistory(account.id) });
     queryClient.invalidateQueries({ queryKey: [QueryKeys.HISTORY_VALUATION] });
     queryClient.invalidateQueries({ queryKey: [QueryKeys.latestValuations] });
+    queryClient.invalidateQueries({ queryKey: [QueryKeys.CURRENT_VALUATION] });
     if (date) {
       queryClient.invalidateQueries({ queryKey: QueryKeys.snapshotHoldings(account.id, date) });
     }

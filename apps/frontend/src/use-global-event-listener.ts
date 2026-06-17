@@ -29,6 +29,9 @@ const TOAST_IDS = {
   brokerSyncStart: "broker-sync-start",
 } as const;
 
+const BROKER_SYNC_FAILURE_DESCRIPTION =
+  "We couldn't sync your broker data. Please try again later.";
+
 interface MarketSyncCompletePayload {
   failed_syncs?: [string, string][];
   skipped_reasons?: [string, string][];
@@ -241,9 +244,10 @@ const useGlobalEventListener = () => {
         }
       } else {
         toast.error("Broker Sync Failed", {
-          description: message,
+          description: BROKER_SYNC_FAILURE_DESCRIPTION,
           duration: 10000,
         });
+        logger.error("Broker sync failed: " + message);
       }
     };
 
@@ -252,9 +256,10 @@ const useGlobalEventListener = () => {
       // Dismiss the loading toast
       toast.dismiss(TOAST_IDS.brokerSyncStart);
       toast.error("Broker Sync Failed", {
-        description: error,
+        description: BROKER_SYNC_FAILURE_DESCRIPTION,
         duration: 10000,
       });
+      logger.error("Broker sync error: " + error);
     };
 
     const setupListeners = async () => {

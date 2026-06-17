@@ -370,7 +370,8 @@ export const ACTIVITY_FORM_CONFIG: Record<
         activity?.assetId,
       );
       const transferMode = transferIsSecurity ? "securities" : "cash";
-      // Derive isExternal from metadata (if flow.is_external is true)
+      // Reflect only the persisted external flag. Unpaired transfers stay unchecked
+      // until the user explicitly marks them external.
       const flowMetadata = activity?.metadata?.flow as { is_external?: boolean } | undefined;
       const isExternal = flowMetadata?.is_external === true;
       // Derive direction from activity type

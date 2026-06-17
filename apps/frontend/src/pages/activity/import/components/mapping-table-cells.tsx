@@ -117,6 +117,7 @@ interface ActivityTypeDisplayCellProps {
   appType: string | null;
   subtype?: string;
   allowedActivityTypes?: readonly ActivityType[];
+  getActivityTypeLabel?: (activityType: ActivityType) => string;
   handleActivityTypeMapping: (csvActivity: string, activityType: string) => void;
 }
 function ActivityTypeDisplayCell({
@@ -124,6 +125,7 @@ function ActivityTypeDisplayCell({
   appType,
   subtype,
   allowedActivityTypes,
+  getActivityTypeLabel = (activityType) => activityType,
   handleActivityTypeMapping,
 }: ActivityTypeDisplayCellProps) {
   const trimmedCsvType = csvType.trim().toUpperCase();
@@ -156,7 +158,7 @@ function ActivityTypeDisplayCell({
             )}
             onClick={() => handleActivityTypeMapping(trimmedCsvType, "" as ActivityType)}
           >
-            {appType === ACTIVITY_SKIP ? "Skipped" : appType}
+            {appType === ACTIVITY_SKIP ? "Skipped" : getActivityTypeLabel(appType as ActivityType)}
           </Badge>
         ) : (
           <SearchableSelect
@@ -167,7 +169,7 @@ function ActivityTypeDisplayCell({
                     t !== ActivityType.UNKNOWN &&
                     (!allowedActivityTypes || allowedActivityTypes.includes(t)),
                 )
-                .map((type) => ({ value: type, label: type })),
+                .map((type) => ({ value: type, label: getActivityTypeLabel(type) })),
               {
                 value: ACTIVITY_SKIP,
                 label: "SKIP",
@@ -180,6 +182,7 @@ function ActivityTypeDisplayCell({
             }
             placeholder="Map type"
             className={cn(MAPPING_TRIGGER_UNMAPPED_CLASS, "w-[140px]")}
+            contentClassName="w-[220px]"
           />
         )}
       </div>
@@ -358,6 +361,7 @@ export function MappingCell({
   invalidSymbols,
   invalidAccounts,
   allowedActivityTypes,
+  getActivityTypeLabel,
 }: {
   field: ImportFormat;
   row: CsvRowData;
@@ -374,6 +378,7 @@ export function MappingCell({
   invalidSymbols: string[];
   invalidAccounts: string[];
   allowedActivityTypes?: readonly ActivityType[];
+  getActivityTypeLabel?: (activityType: ActivityType) => string;
 }) {
   // Get the field's value from the row
   const value = getMappedValue(row, field);
@@ -406,6 +411,7 @@ export function MappingCell({
         appType={appType}
         subtype={subtype}
         allowedActivityTypes={allowedActivityTypes}
+        getActivityTypeLabel={getActivityTypeLabel}
         handleActivityTypeMapping={handleActivityTypeMapping}
       />
     );

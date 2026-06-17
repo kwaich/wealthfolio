@@ -834,12 +834,51 @@ impl AnalyticsService {
     }
 }
 
-fn activity_date_in_window(
-    activity_date: &DateTime<Utc>,
-    start: Option<&DateTime<Utc>>,
-    end: Option<&DateTime<Utc>>,
+fn event_overlaps_window(
+    event_start: &str,
+    event_end: &str,
+    window_start: Option<&DateTime<Utc>>,
+    window_end: Option<&DateTime<Utc>>,
 ) -> bool {
-    start.is_none_or(|start| activity_date >= start) && end.is_none_or(|end| activity_date <= end)
+    // Events have YYYY-MM-DD date strings; compare date keys lexicographically.
+    if let Some(ws) = window_start {
+        let window_start_key = format!("{}-{:02}-{:02}", ws.year(), ws.month(), ws.day());
+        if event_end < window_start_key.as_str() {
+            return false;
+        }
+    }
+    if let Some(we) = window_end {
+        let window_end_key = format!("{}-{:02}-{:02}", we.year(), we.month(), we.day());
+        if event_start > window_end_key.as_str() {
+            return false;
+        }
+    }
+    true
+}
+
+fn group_activities_by_visible_event(
+    activities: Vec<Activity>,
+    tag_map: HashMap<String, String>,
+    visible_event_ids: &HashSet<String>,
+    account_types: &HashMap<String, String>,
+) -> HashMap<String, Vec<Activity>> {
+    let mut by_event: HashMap<String, Vec<Activity>> = HashMap::new();
+    for activity in activities {
+        let Some(event_id) = tag_map.get(&activity.id).cloned() else {
+            continue;
+        };
+        if !visible_event_ids.contains(&event_id) {
+            continue;
+        }
+        let Some(classification) = classification_for(&activity, account_types) else {
+            continue;
+        };
+        if classification.spending_amount(activity_abs_amount(&activity)) == Decimal::ZERO {
+            continue;
+        }
+        by_event.entry(event_id).or_default().push(activity);
+    }
+    by_event
 }
 
 fn empty_summary(period: &str) -> SpendingSummary {
@@ -1171,22 +1210,25 @@ impl AnalyticsService {
             .map(|s| DateTime::parse_from_rfc3339(s).map(|d| d.with_timezone(&Utc)))
             .transpose()?;
 
-        let in_window = |event_start: &str, event_end: &str| -> bool {
-            // Events have YYYY-MM-DD date strings; compare lexicographically
-            if let Some(ws) = window_start {
-                let we_iso = format!("{}-{:02}-{:02}", ws.year(), ws.month(), ws.day());
-                if event_end < we_iso.as_str() {
-                    return false;
-                }
-            }
-            if let Some(we) = window_end {
-                let ws_iso = format!("{}-{:02}-{:02}", we.year(), we.month(), we.day());
-                if event_start > ws_iso.as_str() {
-                    return false;
-                }
-            }
-            true
-        };
+        let visible_events: Vec<_> = events
+            .into_iter()
+            .filter(|ev| {
+                event_overlaps_window(
+                    &ev.event.start_date,
+                    &ev.event.end_date,
+                    window_start.as_ref(),
+                    window_end.as_ref(),
+                )
+            })
+            .collect();
+        if visible_events.is_empty() {
+            return Ok(Vec::new());
+        }
+        let visible_event_ids: Vec<String> = visible_events
+            .iter()
+            .map(|ev| ev.event.id.clone())
+            .collect();
+        let visible_event_id_set: HashSet<String> = visible_event_ids.iter().cloned().collect();
 
         // Load category metadata for spending taxonomy
         let taxonomy_with_cats = self
@@ -1206,40 +1248,34 @@ impl AnalyticsService {
             })
             .collect();
 
-        // Load all activities once, then narrow to the date window *before*
-        // hitting the join table — preloading tags for activities we'll drop
-        // immediately would pull in junk ids on a wide history.
-        let activities = self
-            .activity_repo
-            .get_activities_by_account_ids(&target_accounts)
-            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        let activities_in_window: Vec<Activity> = activities
-            .into_iter()
-            .filter(|a| {
-                activity_date_in_window(
-                    &a.activity_date,
-                    window_start.as_ref(),
-                    window_end.as_ref(),
-                )
-            })
-            .collect();
-        let activity_ids: Vec<String> = activities_in_window.iter().map(|a| a.id.clone()).collect();
+        // Event reporting is tag-based: the request window chooses which
+        // events are visible, but every in-scope activity tagged to those
+        // events contributes to the event total, even when the activity date is
+        // before/after the event's own reporting window. Start from the
+        // visible event tags so this stays bounded by tagged activity count
+        // instead of scanning all spending history for the account set.
         let tag_map = self
             .activity_events
-            .list_for_activities(&activity_ids)
+            .list_for_events(&visible_event_ids)
             .await?;
-        let mut by_event: HashMap<String, Vec<Activity>> = HashMap::new();
-        for a in activities_in_window {
-            if let Some(eid) = tag_map.get(&a.id).cloned() {
-                let Some(classification) = classification_for(&a, &account_types) else {
-                    continue;
-                };
-                if classification.spending_amount(activity_abs_amount(&a)) == Decimal::ZERO {
-                    continue;
-                }
-                by_event.entry(eid).or_default().push(a);
-            }
-        }
+        let mut tagged_activity_ids: Vec<String> = tag_map.keys().cloned().collect();
+        tagged_activity_ids.sort();
+        tagged_activity_ids.dedup();
+        let target_account_ids: HashSet<&str> =
+            target_accounts.iter().map(String::as_str).collect();
+        let activities = self
+            .activity_repo
+            .get_activities_by_ids(&tagged_activity_ids)
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?
+            .into_iter()
+            .filter(|activity| target_account_ids.contains(activity.account_id.as_str()))
+            .collect();
+        let mut by_event = group_activities_by_visible_event(
+            activities,
+            tag_map,
+            &visible_event_id_set,
+            &account_types,
+        );
 
         let currency = req.currency.unwrap_or_else(|| "USD".to_string());
         // FX as-of: end of the requested window if provided; otherwise today.
@@ -1269,11 +1305,8 @@ impl AnalyticsService {
                 .push(asg);
         }
 
-        let mut out = Vec::with_capacity(events.len());
-        for ev in events {
-            if !in_window(&ev.event.start_date, &ev.event.end_date) {
-                continue;
-            }
+        let mut out = Vec::with_capacity(visible_events.len());
+        for ev in visible_events {
             let acts = by_event.remove(&ev.event.id).unwrap_or_default();
 
             let mut total = Decimal::ZERO;
@@ -1730,28 +1763,94 @@ mod tests {
     }
 
     #[test]
-    fn event_summary_window_filters_activity_dates() {
+    fn event_window_selects_events_by_event_dates() {
         let start = Utc.with_ymd_and_hms(2024, 2, 1, 0, 0, 0).unwrap();
         let end = Utc.with_ymd_and_hms(2024, 2, 29, 23, 59, 59).unwrap();
-        let in_window = Utc.with_ymd_and_hms(2024, 2, 10, 12, 0, 0).unwrap();
-        let before_window = Utc.with_ymd_and_hms(2024, 1, 31, 23, 59, 59).unwrap();
-        let after_window = Utc.with_ymd_and_hms(2024, 3, 1, 0, 0, 0).unwrap();
+        assert!(event_overlaps_window(
+            "2024-01-30",
+            "2024-02-02",
+            Some(&start),
+            Some(&end)
+        ));
+        assert!(event_overlaps_window(
+            "2024-02-10",
+            "2024-02-12",
+            Some(&start),
+            Some(&end)
+        ));
+        assert!(!event_overlaps_window(
+            "2024-01-01",
+            "2024-01-31",
+            Some(&start),
+            Some(&end)
+        ));
+        assert!(!event_overlaps_window(
+            "2024-03-01",
+            "2024-03-03",
+            Some(&start),
+            Some(&end)
+        ));
+    }
 
-        assert!(activity_date_in_window(
-            &in_window,
-            Some(&start),
-            Some(&end)
-        ));
-        assert!(!activity_date_in_window(
-            &before_window,
-            Some(&start),
-            Some(&end)
-        ));
-        assert!(!activity_date_in_window(
-            &after_window,
-            Some(&start),
-            Some(&end)
-        ));
+    #[test]
+    fn event_summary_groups_all_tagged_activities_for_visible_event() {
+        let (mut before, _) = spending_activity("flight", "WITHDRAWAL", 300, "travel", 5);
+        before.activity_date = Utc.with_ymd_and_hms(2024, 5, 20, 12, 0, 0).unwrap();
+        let (mut during, _) = spending_activity("meal", "WITHDRAWAL", 80, "travel", 6);
+        during.activity_date = Utc.with_ymd_and_hms(2024, 6, 12, 12, 0, 0).unwrap();
+        let (mut after, _) = spending_activity("deposit", "WITHDRAWAL", 120, "travel", 7);
+        after.activity_date = Utc.with_ymd_and_hms(2024, 7, 2, 12, 0, 0).unwrap();
+
+        let grouped = group_activities_by_visible_event(
+            vec![before, during, after],
+            HashMap::from([
+                ("flight".to_string(), "holiday".to_string()),
+                ("meal".to_string(), "holiday".to_string()),
+                ("deposit".to_string(), "holiday".to_string()),
+            ]),
+            &HashSet::from(["holiday".to_string()]),
+            &HashMap::from([(
+                "card-account".to_string(),
+                account_types::CREDIT_CARD.to_string(),
+            )]),
+        );
+
+        let mut ids = grouped
+            .get("holiday")
+            .unwrap()
+            .iter()
+            .map(|activity| activity.id.as_str())
+            .collect::<Vec<_>>();
+        ids.sort_unstable();
+        assert_eq!(ids, vec!["deposit", "flight", "meal"]);
+    }
+
+    #[test]
+    fn event_summary_ignores_tags_for_events_outside_requested_window() {
+        let (visible, _) = spending_activity("visible", "WITHDRAWAL", 100, "travel", 6);
+        let (hidden, _) = spending_activity("hidden", "WITHDRAWAL", 100, "travel", 6);
+
+        let grouped = group_activities_by_visible_event(
+            vec![visible, hidden],
+            HashMap::from([
+                ("visible".to_string(), "visible-event".to_string()),
+                ("hidden".to_string(), "hidden-event".to_string()),
+            ]),
+            &HashSet::from(["visible-event".to_string()]),
+            &HashMap::from([(
+                "card-account".to_string(),
+                account_types::CREDIT_CARD.to_string(),
+            )]),
+        );
+
+        let ids = grouped
+            .get("visible-event")
+            .unwrap()
+            .iter()
+            .map(|activity| activity.id.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(ids, vec!["visible"]);
+        assert!(!grouped.contains_key("hidden-event"));
     }
 
     #[test]

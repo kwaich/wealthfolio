@@ -15,6 +15,7 @@ use wealthfolio_core::{
         ActivityUpdate, BrokerSyncProfileData, ImportAssetCandidate, ImportAssetPreviewItem,
         ImportMappingData, ImportTemplateData, ImportTemplateScope, InternalTransferPairRequest,
         InternalTransferPairResponse, NewActivity, SaveBrokerSyncProfileRulesRequest, Sort,
+        TransferMatchCandidate, TransferMatchCandidateRequest,
     },
     assets::{
         Asset, AssetMetadata, AssetResolutionInput, AssetResolutionOutput, AssetServiceTrait,
@@ -433,6 +434,13 @@ impl ActivityServiceTrait for MockActivityService {
                 total_row_count: self.activities.len() as i64,
             },
         })
+    }
+
+    fn find_transfer_match_candidates(
+        &self,
+        _request: TransferMatchCandidateRequest,
+    ) -> CoreResult<Vec<TransferMatchCandidate>> {
+        Ok(Vec::new())
     }
 
     fn get_first_activity_date(
@@ -1431,6 +1439,7 @@ impl PerformanceServiceTrait for MockPerformanceService {
         _start_date: Option<NaiveDate>,
         _end_date: Option<NaiveDate>,
         _tracking_mode: Option<TrackingMode>,
+        _account_type: Option<&str>,
     ) -> CoreResult<PerformanceResult> {
         Ok(mock_performance_result(item_id))
     }
@@ -1441,10 +1450,11 @@ impl PerformanceServiceTrait for MockPerformanceService {
         _account_ids: &[String],
         _base_currency: &str,
         _account_tracking_modes: &std::collections::HashMap<String, TrackingMode>,
+        _account_types: &std::collections::HashMap<String, String>,
         _start_date: Option<NaiveDate>,
         _end_date: Option<NaiveDate>,
     ) -> CoreResult<PerformanceResult> {
-        self.calculate_performance_history("account", scope_id, None, None, None)
+        self.calculate_performance_history("account", scope_id, None, None, None, None)
             .await
     }
 
@@ -1455,6 +1465,7 @@ impl PerformanceServiceTrait for MockPerformanceService {
         _start_date: Option<NaiveDate>,
         _end_date: Option<NaiveDate>,
         _tracking_mode: Option<TrackingMode>,
+        _account_type: Option<&str>,
         _profile: PerformanceSummaryProfile,
     ) -> CoreResult<PerformanceResult> {
         Ok(mock_performance_result(item_id))
@@ -1466,6 +1477,7 @@ impl PerformanceServiceTrait for MockPerformanceService {
         _account_ids: &[String],
         _base_currency: &str,
         _account_tracking_modes: &std::collections::HashMap<String, TrackingMode>,
+        _account_types: &std::collections::HashMap<String, String>,
         _start_date: Option<NaiveDate>,
         _end_date: Option<NaiveDate>,
         _profile: PerformanceSummaryProfile,
@@ -1473,6 +1485,7 @@ impl PerformanceServiceTrait for MockPerformanceService {
         self.calculate_performance_summary(
             "account",
             scope_id,
+            None,
             None,
             None,
             None,
@@ -1668,6 +1681,7 @@ impl HealthServiceTrait for MockHealthService {
         _taxonomy_service: Arc<dyn TaxonomyServiceTrait>,
         _valuation_service: Arc<dyn ValuationServiceTrait>,
         _activity_service: Arc<dyn ActivityServiceTrait>,
+        _lot_repository: Arc<dyn wealthfolio_core::lots::LotRepositoryTrait>,
         _configured_timezone: Option<&str>,
         _client_timezone: Option<&str>,
     ) -> CoreResult<HealthStatus> {

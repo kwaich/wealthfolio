@@ -8,6 +8,7 @@ interface ActivityUrlFilters {
   activityTypes?: ActivityType[];
   dateFrom?: string;
   dateTo?: string;
+  searchQuery?: string;
 }
 
 export type ActivityTab = "investments" | "spending";
@@ -18,6 +19,7 @@ export function resolveActivityUrlFilters(searchParams: URLSearchParams): Activi
   const typesRaw = searchParams.get("types")?.trim();
   const dateFrom = searchParams.get("from")?.trim();
   const dateTo = searchParams.get("to")?.trim();
+  const searchQuery = searchParams.get("q")?.trim();
 
   const activityTypes = typesRaw
     ? (typesRaw
@@ -32,6 +34,7 @@ export function resolveActivityUrlFilters(searchParams: URLSearchParams): Activi
     ...(activityTypes && activityTypes.length > 0 ? { activityTypes } : {}),
     ...(dateFrom ? { dateFrom } : {}),
     ...(dateTo ? { dateTo } : {}),
+    ...(searchQuery ? { searchQuery } : {}),
   };
 }
 
@@ -51,6 +54,7 @@ export function clearActivityUrlFilters(searchParams: URLSearchParams): URLSearc
   next.delete("types");
   next.delete("from");
   next.delete("to");
+  next.delete("q");
   return next;
 }
 
@@ -64,5 +68,11 @@ export function clearActivityUrlDateFilters(searchParams: URLSearchParams): URLS
 export function clearActivityUrlTypeFilters(searchParams: URLSearchParams): URLSearchParams {
   const next = new URLSearchParams(searchParams);
   next.delete("types");
+  return next;
+}
+
+export function clearActivityUrlSearchFilter(searchParams: URLSearchParams): URLSearchParams {
+  const next = new URLSearchParams(searchParams);
+  next.delete("q");
   return next;
 }

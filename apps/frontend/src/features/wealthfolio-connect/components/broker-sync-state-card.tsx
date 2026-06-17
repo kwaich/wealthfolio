@@ -4,6 +4,7 @@ import { Icons } from "@wealthfolio/ui/components/ui/icons";
 import { formatDistanceToNow } from "date-fns";
 import type { Account, Platform } from "@/lib/types";
 import type { BrokerSyncState, SyncStatus } from "../types";
+import { getBrokerSyncIssueMessage } from "../lib/broker-sync-messages";
 
 interface BrokerSyncStateCardProps {
   syncState: BrokerSyncState;
@@ -86,7 +87,9 @@ export function BrokerSyncStateCard({ syncState, account, platform }: BrokerSync
       {/* Show error message if failed */}
       {syncState.syncStatus === "FAILED" && syncState.lastError && (
         <div className="border-t px-4 py-3">
-          <p className="text-sm text-red-600 dark:text-red-400">{syncState.lastError}</p>
+          <p className="text-sm text-red-600 dark:text-red-400">
+            {getBrokerSyncIssueMessage(syncState.syncStatus, syncState.lastError)}
+          </p>
         </div>
       )}
     </Card>

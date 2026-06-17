@@ -10,6 +10,7 @@ import { format } from "date-fns";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import type { ImportRun, ImportRunStatus } from "../types";
+import { BROKER_SYNC_RUN_FAILED_MESSAGE } from "../lib/broker-sync-messages";
 
 interface ImportRunsListProps {
   runs: ImportRun[];
@@ -160,7 +161,9 @@ function ImportRunItem({ run }: { run: ImportRun }) {
             {/* Error */}
             {run.error && (
               <div className="rounded-md bg-red-50 p-2 dark:bg-red-900/20">
-                <p className="text-sm text-red-600 dark:text-red-400">{run.error}</p>
+                <p className="text-sm text-red-600 dark:text-red-400">
+                  {BROKER_SYNC_RUN_FAILED_MESSAGE}
+                </p>
               </div>
             )}
 

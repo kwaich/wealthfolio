@@ -40,6 +40,7 @@ export function AddonStoreCard({
   isRatingSubmitting: _isRatingSubmitting = false,
 }: AddonStoreCardProps) {
   const [ratingDialogOpen, setRatingDialogOpen] = React.useState(false);
+  const addonDetailUrl = `https://wealthfolio.app/addons/${encodeURIComponent(listing.id)}`;
 
   const formatDownloads = (downloads: number) => {
     if (downloads >= 1000000) {
@@ -220,9 +221,9 @@ export function AddonStoreCard({
 
                   {listing.changelogUrl && (
                     <Button variant="outline" asChild>
-                      <ExternalLink href={listing.changelogUrl}>
+                      <ExternalLink href={addonDetailUrl}>
                         <Icons.ExternalLink className="mr-2 h-4 w-4" />
-                        Changelog
+                        Add-on Page
                       </ExternalLink>
                     </Button>
                   )}
@@ -414,10 +415,10 @@ export function AddonStoreCard({
 
                 {listing.changelogUrl && (
                   <Button variant="outline" asChild>
-                    <a href={listing.changelogUrl} target="_blank" rel="noopener noreferrer">
+                    <ExternalLink href={addonDetailUrl}>
                       <Icons.ExternalLink className="mr-2 h-4 w-4" />
-                      Changelog
-                    </a>
+                      Add-on Page
+                    </ExternalLink>
                   </Button>
                 )}
               </div>

@@ -4,11 +4,17 @@ import { getHistoricalValuations } from "@/adapters";
 import { QueryKeys } from "@/lib/query-keys";
 import { format } from "date-fns";
 
+interface UseValuationHistoryOptions {
+  enabled?: boolean;
+}
+
 export function useValuationHistory(
   dateRange: DateRange | undefined,
   filter: AccountScope = { type: "all" },
+  options: UseValuationHistoryOptions = {},
 ) {
   const dateRangeMode = dateRange === undefined ? "all" : "range";
+  const isEnabled = options.enabled ?? true;
   const startDate = dateRange?.from ? format(dateRange.from, "yyyy-MM-dd") : undefined;
   const endDate = dateRange?.to ? format(dateRange.to, "yyyy-MM-dd") : undefined;
   const {
@@ -34,7 +40,7 @@ export function useValuationHistory(
 
       return getHistoricalValuations(filter, startDate, endDate);
     },
-    enabled: dateRangeMode === "all" || (!!startDate && !!endDate),
+    enabled: isEnabled && (dateRangeMode === "all" || (!!startDate && !!endDate)),
     placeholderData: keepPreviousData,
   });
 

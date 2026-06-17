@@ -8,6 +8,7 @@ import { useMemo } from "react";
 import { Link } from "react-router-dom";
 import { useImportRunsInfinite } from "../hooks";
 import type { ImportRun, ImportRunStatus } from "../types";
+import { BROKER_SYNC_RUN_FAILED_MESSAGE } from "../lib/broker-sync-messages";
 
 const statusConfig: Record<
   ImportRunStatus,
@@ -214,7 +215,7 @@ function SyncRunItem({ run }: { run: ImportRun }) {
       {/* Error message */}
       {run.error && (
         <div className="mt-2 rounded-md bg-red-50 p-2 dark:bg-red-900/20">
-          <p className="text-xs text-red-600 dark:text-red-400">{run.error}</p>
+          <p className="text-xs text-red-600 dark:text-red-400">{BROKER_SYNC_RUN_FAILED_MESSAGE}</p>
         </div>
       )}
 

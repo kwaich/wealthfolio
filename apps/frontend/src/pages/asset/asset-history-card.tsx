@@ -4,11 +4,10 @@ import HistoryChart, {
   type HistoryChartActivityMarker,
   type HistoryChartData,
 } from "@/components/history-chart-symbol";
-import type { TradeMarkerVariant } from "@/components/history-chart-marker";
 import { useBalancePrivacy } from "@/hooks/use-balance-privacy";
 import { useSyncMarketDataMutation } from "@/hooks/use-sync-market-data";
 import { QueryKeys } from "@/lib/query-keys";
-import { ActivityDetails, ActivityType, DateRange, Quote, TimePeriod } from "@/lib/types";
+import { ActivityDetails, DateRange, Quote, TimePeriod } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { ActivityDateSheet } from "@/pages/activity/components/activity-date-sheet";
 import { useQuery } from "@tanstack/react-query";
@@ -33,6 +32,13 @@ import {
 } from "@wealthfolio/ui";
 import { format, subMonths } from "date-fns";
 import React, { useCallback, useMemo, useState } from "react";
+import {
+  ASSET_MARKER_ACTIVITY_TYPES,
+  activityMarkerLabel,
+  activityMarkerTone,
+  activityMarkerVariant,
+  isAssetMarkerActivity,
+} from "./asset-history-markers";
 import { RefreshQuotesConfirmDialog } from "./refresh-quotes-confirm-dialog";
 
 interface AssetHistoryProps {
@@ -104,21 +110,21 @@ const AssetHistoryCard: React.FC<AssetHistoryProps> = ({
 
   const activityDateFrom = dateRange?.from ? format(dateRange.from, "yyyy-MM-dd") : undefined;
   const activityDateTo = dateRange?.to ? format(dateRange.to, "yyyy-MM-dd") : undefined;
-  const { data: tradeActivities = [], isLoading: isTradeActivitiesLoading } =
-    useAssetTradeActivities({
+  const { data: markerActivities = [], isLoading: isMarkerActivitiesLoading } =
+    useAssetMarkerActivities({
       assetId,
       dateFrom: activityDateFrom,
       dateTo: activityDateTo,
       enabled: showActivityMarkers,
     });
   const { chartData, activityMarkers } = useMemo(
-    () => buildChartActivityData(filteredData, showActivityMarkers ? tradeActivities : []),
-    [filteredData, showActivityMarkers, tradeActivities],
+    () => buildChartActivityData(filteredData, showActivityMarkers ? markerActivities : []),
+    [filteredData, showActivityMarkers, markerActivities],
   );
   const selectedDateActivities = useMemo(() => {
     if (!selectedActivityDate) return [];
-    return tradeActivities.filter((activity) => dateKey(activity) === selectedActivityDate);
-  }, [selectedActivityDate, tradeActivities]);
+    return markerActivities.filter((activity) => dateKey(activity) === selectedActivityDate);
+  }, [selectedActivityDate, markerActivities]);
 
   const { ganAmount, percentage, calculatedAt } = useMemo(() => {
     const lastFilteredDate = filteredData.at(-1)?.timestamp;
@@ -270,7 +276,7 @@ const AssetHistoryCard: React.FC<AssetHistoryProps> = ({
         onOpenChange={setIsActivitySheetOpen}
         date={selectedActivityDate}
         activities={selectedDateActivities}
-        isLoading={isTradeActivitiesLoading}
+        isLoading={isMarkerActivitiesLoading}
       />
     </>
   );
@@ -289,20 +295,20 @@ interface UseAssetTradeActivitiesOptions {
   enabled: boolean;
 }
 
-function useAssetTradeActivities({
+function useAssetMarkerActivities({
   assetId,
   dateFrom,
   dateTo,
   enabled,
 }: UseAssetTradeActivitiesOptions) {
   return useQuery({
-    queryKey: [QueryKeys.ACTIVITY_DATA, "asset-trade-markers", assetId, dateFrom, dateTo],
-    queryFn: () => fetchAssetTradeActivities({ assetId, dateFrom, dateTo }),
+    queryKey: [QueryKeys.ACTIVITY_DATA, "asset-activity-markers", assetId, dateFrom, dateTo],
+    queryFn: () => fetchAssetMarkerActivities({ assetId, dateFrom, dateTo }),
     enabled: enabled && assetId.length > 0,
   });
 }
 
-async function fetchAssetTradeActivities({
+async function fetchAssetMarkerActivities({
   assetId,
   dateFrom,
   dateTo,
@@ -324,19 +330,14 @@ async function fetchAssetTradeActivities({
         symbol: assetId,
         dateFrom,
         dateTo,
-        activityTypes: [ActivityType.BUY, ActivityType.SELL],
+        activityTypes: [...ASSET_MARKER_ACTIVITY_TYPES],
         needsReview: false,
       },
       "",
       { id: "date", desc: false },
     );
     activities.push(
-      ...response.data.filter(
-        (activity) =>
-          activity.assetId === assetId &&
-          (activity.activityType === ActivityType.BUY ||
-            activity.activityType === ActivityType.SELL),
-      ),
+      ...response.data.filter((activity) => isAssetMarkerActivity(activity, assetId)),
     );
     totalRowCount = response.meta.totalRowCount;
     page += 1;
@@ -361,7 +362,10 @@ function buildChartActivityData(
     const key = dateKey(activity);
     const chartActivity = {
       id: activity.id,
-      variant: tradeMarkerVariant(activity.activityType),
+      variant: activityMarkerVariant(activity.activityType),
+      markerLabel: activityMarkerLabel(activity.activityType),
+      markerTone: activityMarkerTone(activity.activityType),
+      activityType: activity.activityType,
       date: activity.date,
       quantity: activity.quantity,
       unitPrice: activity.unitPrice,
@@ -392,6 +396,8 @@ function buildChartActivityData(
         id: activity.id,
         point: chartPoint,
         variant: activity.variant,
+        markerLabel: activity.markerLabel,
+        markerTone: activity.markerTone,
       });
     }
   });
@@ -404,10 +410,6 @@ function dateKey(value: { timestamp: string } | { date?: string | Date }) {
   if (!date) return "";
   if (typeof date === "string") return date.slice(0, 10);
   return format(date, "yyyy-MM-dd");
-}
-
-function tradeMarkerVariant(activityType: ActivityType): TradeMarkerVariant {
-  return activityType === ActivityType.BUY ? "buy" : "sell";
 }
 
 export default AssetHistoryCard;

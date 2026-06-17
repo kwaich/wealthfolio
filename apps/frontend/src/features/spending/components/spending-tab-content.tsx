@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FC, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type FC } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
   Bar,
@@ -21,21 +21,10 @@ import { cn, formatAmount, formatDateISO } from "@/lib/utils";
 import Balance from "@/pages/dashboard/balance";
 
 import {
-  AnimatedToggleGroup,
   Icons,
-  MonthYearPicker,
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
   PrivacyAmount,
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-  SheetTrigger,
   Skeleton,
   formatCompactAmount,
-  useIsMobile,
   usePersistentState,
 } from "@wealthfolio/ui";
 
@@ -45,6 +34,24 @@ import { useCashActivities, useUncategorizedCount } from "../hooks/use-cash-acti
 import { useSpendingReport } from "../hooks/use-spending-report";
 import { useSpendingSettings } from "../hooks/use-spending-settings";
 import { topCategoryId } from "../lib/category-rollup";
+import {
+  SPENDING_MONTH_PARAM,
+  SPENDING_MONTH_STORAGE_KEY,
+  addMonthsToMonthKey,
+  localDateFromParts,
+  monthKeyFromParts,
+  monthLabel,
+  monthRange,
+  parseMonthKey,
+} from "../lib/month-period";
+import {
+  DASHBOARD_PERIOD_UPDATED_AT_STORAGE_KEY,
+  INSIGHTS_PERIOD_STORAGE_KEY,
+  INSIGHTS_PERIOD_UPDATED_AT_STORAGE_KEY,
+  normalizeReportsPeriod,
+  periodPreferenceTimestamp,
+  shouldPreferDashboardPeriod,
+} from "../lib/period-preferences";
 import type { ReportsPeriod } from "../lib/reports-period";
 import { FOREST_THEME, themeBg, type Palette } from "../lib/theme";
 import {
@@ -57,32 +64,22 @@ import {
   localDateBoundaryToISOString,
   localDateParts,
   zonedCalendarDateBoundaryToDate,
-  type ZonedCalendarDate,
 } from "../lib/timezone";
 import { BudgetLineChartCard } from "./budget-line-chart-card";
 import { CashFlowStrip } from "./cash-flow-strip";
 import { EventsCard } from "./events-card";
 import { RecentActivityCard } from "./recent-activity-card";
+import { SpendingPeriodSelector } from "./spending-period-toggle";
 
 const FUTURE_BAR = "#E5E7EB";
 const SPENDING_TAXONOMY = "spending_categories";
-type SpendingDashboardPeriod = "MTD" | "LAST_MONTH" | "30D" | "3M" | "6M" | "YTD" | "1Y";
+type SpendingDashboardPeriod = "MTD" | "LAST_MONTH" | "3M" | "6M" | "YTD" | "1Y";
 
 type SpendingSelection =
   | { kind: "period"; code: SpendingDashboardPeriod }
   | { kind: "month"; monthKey: string; restoreCode: SpendingDashboardPeriod };
 
 const SPENDING_DASHBOARD_PERIODS: SpendingDashboardPeriod[] = [
-  "MTD",
-  "LAST_MONTH",
-  "30D",
-  "3M",
-  "6M",
-  "YTD",
-  "1Y",
-];
-
-const VISIBLE_SPENDING_DASHBOARD_PERIODS: SpendingDashboardPeriod[] = [
   "MTD",
   "LAST_MONTH",
   "3M",
@@ -93,35 +90,13 @@ const VISIBLE_SPENDING_DASHBOARD_PERIODS: SpendingDashboardPeriod[] = [
 
 const DEFAULT_INTERVAL: SpendingDashboardPeriod = "MTD";
 const INTERVAL_STORAGE_KEY = "spending-interval";
-const MONTH_STORAGE_KEY = "spending-month";
-const MONTH_PARAM = "spendingMonth";
 const INTERVAL_DESCRIPTIONS: Record<SpendingDashboardPeriod, string> = {
   MTD: "this month",
   LAST_MONTH: "last month",
-  "30D": "past 30 days",
   "3M": "past 3 months",
   "6M": "past 6 months",
   YTD: "year to date",
   "1Y": "past year",
-};
-const SPENDING_DASHBOARD_PERIOD_LABELS: Record<SpendingDashboardPeriod, ReactNode> = {
-  MTD: (
-    <>
-      <span className="hidden sm:inline">This month</span>
-      <span className="sm:hidden">MTD</span>
-    </>
-  ),
-  LAST_MONTH: (
-    <>
-      <span className="hidden sm:inline">Last month</span>
-      <span className="sm:hidden">Prev</span>
-    </>
-  ),
-  "30D": "30D",
-  "3M": "3M",
-  "6M": "6M",
-  YTD: "YTD",
-  "1Y": "1Y",
 };
 
 // The three insights stages, surfaced as a "Dig deeper" strip under Recent
@@ -156,56 +131,6 @@ function rangeToReportRequest(range: DateRange | undefined, timezone?: string | 
   };
 }
 
-function localDateFromParts(date: ZonedCalendarDate): Date {
-  return new Date(date.year, date.month - 1, date.day);
-}
-
-function monthKeyFromParts(date: Pick<ZonedCalendarDate, "year" | "month">): string {
-  return `${date.year}-${String(date.month).padStart(2, "0")}`;
-}
-
-function parseMonthKey(value: string | null | undefined): { year: number; month: number } | null {
-  if (!value || !/^\d{4}-(0[1-9]|1[0-2])$/.test(value)) return null;
-  const [year, month] = value.split("-").map(Number);
-  return { year, month };
-}
-
-function currentMonthKey(timezone?: string | null): string {
-  return monthKeyFromParts(getZonedDateParts(new Date(), timezone));
-}
-
-function addMonthsToMonthKey(monthKey: string, months: number): string {
-  const parts = parseMonthKey(monthKey);
-  if (!parts) return monthKey;
-  return monthKeyFromParts(addCalendarMonths({ ...parts, day: 1 }, months));
-}
-
-function monthRange(monthKey: string): DateRange {
-  const parts = parseMonthKey(monthKey) ?? parseMonthKey(currentMonthKey());
-  const month = parts ?? getZonedDateParts(new Date());
-  const start = { ...month, day: 1 };
-  const end = { ...month, day: daysInCalendarMonth(month.year, month.month) };
-  return { from: localDateFromParts(start), to: localDateFromParts(end) };
-}
-
-function monthLabel(monthKey: string, format: "long" | "short" = "long"): string {
-  const parts = parseMonthKey(monthKey);
-  if (!parts) return "";
-  return new Date(parts.year, parts.month - 1, 1).toLocaleString(undefined, {
-    month: format,
-    year: "numeric",
-  });
-}
-
-function compactMonthLabel(monthKey: string): string {
-  const parts = parseMonthKey(monthKey);
-  if (!parts) return "";
-  const month = new Date(parts.year, parts.month - 1, 1).toLocaleString(undefined, {
-    month: "short",
-  });
-  return `${month} '${String(parts.year).slice(2)}`;
-}
-
 function isSpendingDashboardPeriod(
   value: string | null | undefined,
 ): value is SpendingDashboardPeriod {
@@ -216,7 +141,6 @@ function normalizeSpendingDashboardPeriod(
   value: string | null | undefined,
 ): SpendingDashboardPeriod {
   if (isSpendingDashboardPeriod(value)) return value;
-  if (value === "1M") return "30D";
   if (value === "5Y" || value === "ALL") return "1Y";
   return DEFAULT_INTERVAL;
 }
@@ -238,8 +162,6 @@ function spendingIntervalData(code: SpendingDashboardPeriod, timezone?: string |
           },
         };
       }
-      case "30D":
-        return { start: addCalendarDays(today, -29), end: today };
       case "3M":
         return { start: addCalendarMonths(today, -3), end: today };
       case "6M":
@@ -262,7 +184,7 @@ function spendingIntervalData(code: SpendingDashboardPeriod, timezone?: string |
 }
 
 function insightPeriodForDashboardInterval(code: SpendingDashboardPeriod): ReportsPeriod {
-  if (code === "LAST_MONTH") return "MTD";
+  if (code === "LAST_MONTH") return "LAST_MONTH";
   return code;
 }
 
@@ -272,7 +194,7 @@ function selectionFromParams(
   persistedMonth: string | null,
 ): SpendingSelection {
   const intervalParam = params.get("spendingInterval");
-  const monthParam = params.get(MONTH_PARAM);
+  const monthParam = params.get(SPENDING_MONTH_PARAM);
   const restoreCode = normalizeSpendingDashboardPeriod(intervalParam ?? persistedInterval);
   const monthKey = monthParam ?? (intervalParam === null ? persistedMonth : null);
   if (monthKey && parseMonthKey(monthKey)) return { kind: "month", monthKey, restoreCode };
@@ -303,7 +225,7 @@ function selectionData(selection: SpendingSelection, timezone?: string | null) {
     return {
       range: monthRange(selection.monthKey),
       description: monthLabel(selection.monthKey),
-      insightPeriod: "MTD" as ReportsPeriod,
+      insightPeriod: "LAST_MONTH" as ReportsPeriod,
     };
   }
 
@@ -325,69 +247,6 @@ function previousFullMonthRange(range: DateRange): DateRange | undefined {
 function usesCalendarMonthComparison(selection: SpendingSelection) {
   return (
     selection.kind === "month" || (selection.kind === "period" && selection.code === "LAST_MONTH")
-  );
-}
-
-interface SpendingDashboardPeriodSelectorProps {
-  value: SpendingDashboardPeriod | null;
-  onValueChange: (next: SpendingDashboardPeriod) => void;
-  customMonth: string | null;
-  maxMonth: string;
-  onCustomMonthChange: (monthKey: string | null) => void;
-  isLoading?: boolean;
-  className?: string;
-}
-
-function SpendingDashboardPeriodSelector({
-  value,
-  onValueChange,
-  customMonth,
-  maxMonth,
-  onCustomMonthChange,
-  isLoading,
-  className,
-}: SpendingDashboardPeriodSelectorProps) {
-  const isMobile = useIsMobile();
-  const items = VISIBLE_SPENDING_DASHBOARD_PERIODS.map((period) => ({
-    value: period,
-    label: SPENDING_DASHBOARD_PERIOD_LABELS[period],
-    title: INTERVAL_DESCRIPTIONS[period],
-  }));
-
-  return (
-    <div
-      className={cn("pointer-events-none relative w-full min-w-0", className)}
-      aria-busy={isLoading ? "true" : undefined}
-    >
-      <div
-        className={cn(
-          "pointer-events-none relative z-30 flex w-full justify-center overflow-x-auto overflow-y-hidden",
-          "touch-pan-x snap-x snap-mandatory overscroll-x-contain scroll-smooth",
-          "px-2 md:px-0",
-          "[&::-webkit-scrollbar]:hidden",
-          "[scrollbar-width:none]",
-          "[-webkit-overflow-scrolling:touch]",
-        )}
-      >
-        <div className="pointer-events-auto flex items-center gap-1.5">
-          <AnimatedToggleGroup
-            items={items}
-            value={value}
-            onValueChange={onValueChange}
-            size={isMobile ? "compact" : "sm"}
-            variant="default"
-            className="bg-transparent"
-          />
-          <MonthPickerButton
-            value={customMonth}
-            defaultViewMonth={maxMonth}
-            maxDate={maxMonth}
-            onSelect={onCustomMonthChange}
-            onClear={customMonth ? () => onCustomMonthChange(null) : undefined}
-          />
-        </div>
-      </div>
-    </div>
   );
 }
 
@@ -451,8 +310,20 @@ export default function SpendingTabContent() {
     DEFAULT_INTERVAL,
   );
   const [persistedMonth, setPersistedMonth] = usePersistentState<string | null>(
-    MONTH_STORAGE_KEY,
+    SPENDING_MONTH_STORAGE_KEY,
     null,
+  );
+  const [persistedInsightPeriod] = usePersistentState<string | null>(
+    INSIGHTS_PERIOD_STORAGE_KEY,
+    null,
+  );
+  const [insightPeriodUpdatedAt] = usePersistentState<string>(
+    INSIGHTS_PERIOD_UPDATED_AT_STORAGE_KEY,
+    "0",
+  );
+  const [dashboardPeriodUpdatedAt, setDashboardPeriodUpdatedAt] = usePersistentState<string>(
+    DASHBOARD_PERIOD_UPDATED_AT_STORAGE_KEY,
+    "0",
   );
   const selection = useMemo(
     () => selectionFromParams(searchParams, persistedInterval, persistedMonth),
@@ -613,12 +484,20 @@ export default function SpendingTabContent() {
   // accounts. Single-currency users see the same number either way.
   const currency = baseCurrency;
   const dashboardInsightHref = useMemo(() => {
-    const rangeParams =
-      dateRange?.from && dateRange?.to
-        ? `&from=${formatDateISO(dateRange.from)}&to=${formatDateISO(dateRange.to)}`
+    const preferDashboardPeriod = shouldPreferDashboardPeriod({
+      persistedInsightPeriod,
+      dashboardUpdatedAt: dashboardPeriodUpdatedAt,
+      insightUpdatedAt: insightPeriodUpdatedAt,
+    });
+    const linkPeriod = preferDashboardPeriod
+      ? insightPeriod
+      : (normalizeReportsPeriod(persistedInsightPeriod) ?? insightPeriod);
+    const monthParams =
+      preferDashboardPeriod && selection.kind === "month"
+        ? `&${SPENDING_MONTH_PARAM}=${selection.monthKey}`
         : "";
     const href = (stage: (typeof INSIGHT_STAGES)[number]["stage"], hash = "") =>
-      `/spending/insights?stage=${stage}&period=${insightPeriod}${rangeParams}${hash}`;
+      `/spending/insights?stage=${stage}&period=${linkPeriod}${monthParams}${hash}`;
     const cashflow = href("where", "#cashflow");
     return {
       where: href("where"),
@@ -626,7 +505,13 @@ export default function SpendingTabContent() {
       when: href("when"),
       cashflow,
     };
-  }, [insightPeriod, dateRange]);
+  }, [
+    dashboardPeriodUpdatedAt,
+    insightPeriod,
+    insightPeriodUpdatedAt,
+    persistedInsightPeriod,
+    selection,
+  ]);
   const accountTypeById = useMemo(
     () => new Map(accounts.map((account) => [account.id, account.accountType])),
     [accounts],
@@ -652,11 +537,12 @@ export default function SpendingTabContent() {
   const handleIntervalSelect = (code: SpendingDashboardPeriod) => {
     setPersistedInterval(code);
     setPersistedMonth(null);
+    setDashboardPeriodUpdatedAt(periodPreferenceTimestamp());
     setSearchParams(
       (prev) => {
         const p = new URLSearchParams(prev);
         p.set("spendingInterval", code);
-        p.delete(MONTH_PARAM);
+        p.delete(SPENDING_MONTH_PARAM);
         return p;
       },
       { replace: true },
@@ -672,15 +558,16 @@ export default function SpendingTabContent() {
 
   const handleCustomMonthSelect = (monthKey: string | null) => {
     setPersistedMonth(monthKey);
+    setDashboardPeriodUpdatedAt(periodPreferenceTimestamp());
     setSearchParams(
       (prev) => {
         const p = new URLSearchParams(prev);
         if (monthKey) {
           p.set("spendingInterval", restoreCode);
-          p.set(MONTH_PARAM, monthKey);
+          p.set(SPENDING_MONTH_PARAM, monthKey);
         } else {
           p.set("spendingInterval", restoreCode);
-          p.delete(MONTH_PARAM);
+          p.delete(SPENDING_MONTH_PARAM);
         }
         return p;
       },
@@ -700,7 +587,6 @@ export default function SpendingTabContent() {
     switch (selection.code) {
       case "MTD":
       case "LAST_MONTH":
-      case "30D":
         return "day";
       case "3M":
       case "6M":
@@ -1109,7 +995,7 @@ export default function SpendingTabContent() {
             </ResponsiveContainer>
           )}
           <div className="flex w-full justify-center">
-            <SpendingDashboardPeriodSelector
+            <SpendingPeriodSelector
               className="pointer-events-auto relative z-20 w-full max-w-screen-sm sm:max-w-screen-md md:max-w-2xl lg:max-w-3xl"
               value={selectedPeriod}
               onValueChange={handleIntervalSelect}
@@ -1271,6 +1157,8 @@ export default function SpendingTabContent() {
                   activities={activities}
                   accountTypeById={accountTypeById}
                   categoriesMeta={categoriesMeta}
+                  eventSummaryEndDate={reportReq.endDate}
+                  eventSummaryStartDate={reportReq.startDate}
                   periodEndDate={dateRange?.to ? formatDateISO(dateRange.to) : reportReq.endDate}
                   periodStartDate={
                     dateRange?.from ? formatDateISO(dateRange.from) : reportReq.startDate
@@ -1287,88 +1175,6 @@ export default function SpendingTabContent() {
 }
 
 // ─── small inline components ──────────────────────────────────────────────
-
-function MonthPickerButton({
-  value,
-  defaultViewMonth,
-  maxDate,
-  onSelect,
-  onClear,
-}: {
-  value: string | null;
-  defaultViewMonth: string;
-  maxDate: string;
-  onSelect: (monthKey: string) => void;
-  onClear?: () => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const isMobile = useIsMobile();
-  const label = value ? compactMonthLabel(value) : null;
-  const trigger = (
-    <button
-      type="button"
-      className={cn(
-        "flex h-8 items-center justify-center rounded-full transition-colors",
-        label
-          ? "bg-background/80 border-border/60 gap-1 border px-2.5 text-xs font-medium"
-          : "bg-muted text-foreground/90 hover:text-foreground w-8",
-      )}
-      aria-label={label ? `Viewing ${label}, click to change` : "Pick a specific month"}
-    >
-      {label ? <span>{label}</span> : <Icons.Calendar className="h-3.5 w-3.5" />}
-    </button>
-  );
-  const picker = (
-    <MonthYearPicker
-      value={value ?? defaultViewMonth}
-      maxDate={maxDate}
-      className={
-        isMobile
-          ? "w-full max-w-none p-0 [&>div:first-child]:mb-5 [&>div:first-child_button]:h-11 [&>div:first-child_button]:w-11 [&_.grid]:gap-3 [&_.grid_button]:h-12 [&_.grid_button]:text-base"
-          : undefined
-      }
-      onChange={(monthKey) => {
-        onSelect(monthKey);
-        setOpen(false);
-      }}
-    />
-  );
-
-  return (
-    <div className="flex items-center gap-1">
-      {isMobile ? (
-        <Sheet open={open} onOpenChange={setOpen}>
-          <SheetTrigger asChild>{trigger}</SheetTrigger>
-          <SheetContent side="bottom" className="rounded-t-4xl mx-1 p-0">
-            <SheetHeader className="border-border border-b px-6 py-4">
-              <SheetTitle>Select month</SheetTitle>
-            </SheetHeader>
-            <div className="px-5 py-5 pb-[calc(env(safe-area-inset-bottom,0px)+1.25rem)]">
-              {picker}
-            </div>
-          </SheetContent>
-        </Sheet>
-      ) : (
-        <Popover open={open} onOpenChange={setOpen}>
-          <PopoverTrigger asChild>{trigger}</PopoverTrigger>
-          <PopoverContent className="w-auto p-0" align="center">
-            {picker}
-          </PopoverContent>
-        </Popover>
-      )}
-      {label && onClear && (
-        <button
-          type="button"
-          onClick={onClear}
-          className="text-muted-foreground hover:text-foreground flex h-5 w-5 items-center justify-center rounded-full text-base leading-none transition-colors"
-          aria-label="Clear month selection"
-        >
-          ×
-        </button>
-      )}
-    </div>
-  );
-}
 
 function SegmentedToggle({
   items,

@@ -7,8 +7,10 @@ import { toast } from "sonner";
 
 import { createActivity, updateActivity } from "@/adapters";
 import { useAccounts } from "@/hooks/use-accounts";
+import { useIsMobileViewport } from "@/hooks/use-platform";
 import { useTaxonomy } from "@/hooks/use-taxonomies";
 import { QueryKeys } from "@/lib/query-keys";
+import { cn } from "@/lib/utils";
 import { invalidateSpendingCaches } from "../lib/invalidation";
 import type { Account, Activity, ActivityCreate, ActivityUpdate } from "@/lib/types";
 
@@ -23,6 +25,8 @@ import {
   FormMessage,
   Icons,
   MoneyInput,
+  RadioGroup,
+  RadioGroupItem,
   Select,
   SelectContent,
   SelectItem,
@@ -81,6 +85,46 @@ const formSchema = z.object({
 
 type FormValues = z.infer<typeof formSchema>;
 
+function getMobileTypeIcon(type: FormValues["activityType"]) {
+  switch (type) {
+    case "DEPOSIT":
+      return Icons.ArrowDown;
+    case "WITHDRAWAL":
+      return Icons.ArrowUp;
+    case "INTEREST":
+      return Icons.Percent;
+    case "CREDIT":
+      return Icons.RefreshCw;
+    case "FEE":
+      return Icons.DollarSign;
+    case "TAX":
+      return Icons.Receipt;
+    case "TRANSFER_IN":
+    case "TRANSFER_OUT":
+      return Icons.ArrowLeftRight;
+  }
+}
+
+function getMobileTypeDescription(type: FormValues["activityType"]) {
+  switch (type) {
+    case "DEPOSIT":
+      return "Money received in this account";
+    case "WITHDRAWAL":
+      return "Money spent or paid from this account";
+    case "INTEREST":
+      return "Interest earned on this account";
+    case "CREDIT":
+      return "Refund or credit adjustment";
+    case "FEE":
+      return "Account or transaction fee";
+    case "TAX":
+      return "Tax payment from this account";
+    case "TRANSFER_IN":
+    case "TRANSFER_OUT":
+      return "Move money between accounts";
+  }
+}
+
 interface CashActivityFormProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -101,6 +145,8 @@ export function CashActivityForm({
   onTransferClick,
 }: CashActivityFormProps) {
   const isEditing = !!activity?.id;
+  const isMobile = useIsMobileViewport();
+  const [currentStep, setCurrentStep] = useState<1 | 2>(isEditing ? 2 : 1);
   const qc = useQueryClient();
   const { accounts } = useAccounts({ filterActive: false });
   const { settings } = useSpendingSettings();
@@ -177,6 +223,7 @@ export function CashActivityForm({
             : "",
       });
       setEventId(activity?.eventId ?? null);
+      setCurrentStep(activity?.id ? 2 : 1);
     }
   }, [open, activity, spendingAccounts, form]);
 
@@ -193,6 +240,16 @@ export function CashActivityForm({
     if (!isEditing) return all.filter((t) => t !== "TRANSFER_IN" && t !== "TRANSFER_OUT");
     return all;
   }, [activity?.activityType, isEditing, selectedAccount?.accountType]);
+  const mobileTypeOptions = useMemo(
+    () =>
+      activityTypeOptions.map((type) => ({
+        type,
+        label: getCashActivityLabel(type, selectedAccount?.accountType),
+        description: getMobileTypeDescription(type),
+        Icon: getMobileTypeIcon(type),
+      })),
+    [activityTypeOptions, selectedAccount?.accountType],
+  );
   const isIncomeType = isCashActivityIncome(
     watchType,
     selectedAccount?.accountType,
@@ -283,280 +340,467 @@ export function CashActivityForm({
     },
   });
 
+  const isMobileCreate = isMobile && !isEditing;
+  const showChoiceFields = !isMobileCreate || currentStep === 1;
+  const showDetailsFields = !isMobileCreate || currentStep === 2;
+
+  const handleMobileNext = async () => {
+    const isValid = await form.trigger(["accountId", "activityType"]);
+    if (isValid) setCurrentStep(2);
+  };
+
+  const handleTransferAction = async () => {
+    if (!onTransferClick) return;
+    const isValid = await form.trigger("accountId");
+    if (!isValid || !watchAccountId) return;
+    onOpenChange(false);
+    onTransferClick(watchAccountId);
+  };
+
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="w-full sm:max-w-md">
-        <SheetHeader>
-          <SheetTitle>{isEditing ? "Edit Transaction" : "Add Transaction"}</SheetTitle>
-          <SheetDescription>
-            {isEditing
-              ? "Update an existing transaction."
-              : "Add a new transaction on a tracked spending account."}
-          </SheetDescription>
+      <SheetContent
+        side={isMobile ? "bottom" : "right"}
+        className={cn(
+          isMobile
+            ? "rounded-t-4xl mx-1 flex h-[90vh] flex-col p-0"
+            : "flex w-full flex-col overflow-hidden sm:max-w-md",
+        )}
+      >
+        <SheetHeader className={cn(isMobile && "border-b px-6 py-4 text-center")}>
+          <div className={cn(isMobile && "flex flex-col items-center space-y-2")}>
+            <SheetTitle>{isEditing ? "Edit Transaction" : "Add Transaction"}</SheetTitle>
+            {isMobileCreate && (
+              <div className="flex gap-1.5">
+                {[1, 2].map((step) => (
+                  <div
+                    key={step}
+                    className={cn(
+                      "h-1.5 w-10 rounded-full transition-colors",
+                      step === currentStep
+                        ? "bg-primary"
+                        : step < currentStep
+                          ? "bg-primary/50"
+                          : "bg-muted",
+                    )}
+                  />
+                ))}
+              </div>
+            )}
+            {!isMobileCreate && (
+              <SheetDescription>
+                {isEditing
+                  ? "Update an existing transaction."
+                  : "Add a new transaction on a tracked spending account."}
+              </SheetDescription>
+            )}
+          </div>
         </SheetHeader>
         <Form {...form}>
           <form
             onSubmit={form.handleSubmit((v) => saveMutation.mutate(v))}
-            className="mt-6 space-y-4 px-1"
+            className={cn(
+              isMobile
+                ? "flex min-h-0 flex-1 flex-col"
+                : "mt-6 min-h-0 flex-1 overflow-y-auto px-1 pb-1",
+            )}
           >
-            <FormField
-              control={form.control}
-              name="accountId"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Account</FormLabel>
-                  <Select onValueChange={field.onChange} value={field.value}>
-                    <FormControl>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select an account" />
-                      </SelectTrigger>
-                    </FormControl>
-                    <SelectContent>
-                      {spendingAccounts.map((acc) => (
-                        <SelectItem key={acc.id} value={acc.id}>
-                          {acc.name} ({acc.currency})
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+            <div className={cn(isMobile && "flex-1 overflow-y-auto")}>
+              <div className={cn("space-y-4", isMobile && "p-4")}>
+                {showChoiceFields && (
+                  <>
+                    <FormField
+                      control={form.control}
+                      name="accountId"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Account</FormLabel>
+                          <Select onValueChange={field.onChange} value={field.value}>
+                            <FormControl>
+                              <SelectTrigger>
+                                <SelectValue placeholder="Select an account" />
+                              </SelectTrigger>
+                            </FormControl>
+                            <SelectContent>
+                              {spendingAccounts.map((acc) => (
+                                <SelectItem key={acc.id} value={acc.id}>
+                                  {acc.name} ({acc.currency})
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
 
-            <FormField
-              control={form.control}
-              name="activityType"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Type</FormLabel>
-                  <Select onValueChange={field.onChange} value={field.value}>
-                    <FormControl>
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                    </FormControl>
-                    <SelectContent>
-                      {activityTypeOptions.map((t) => (
-                        <SelectItem key={t} value={t}>
-                          {getCashActivityLabel(t, selectedAccount?.accountType)}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
+                    {isMobileCreate ? (
+                      <FormField
+                        control={form.control}
+                        name="activityType"
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel className="text-lg font-semibold">
+                              Select Transaction Type
+                            </FormLabel>
+                            <FormControl>
+                              <RadioGroup onValueChange={field.onChange} value={field.value}>
+                                <div className="space-y-2">
+                                  {mobileTypeOptions.map(({ type, label, description, Icon }) => (
+                                    <div key={type}>
+                                      <RadioGroupItem
+                                        value={type}
+                                        id={`spending-mobile-type-${type}`}
+                                        className="peer sr-only"
+                                      />
+                                      <label
+                                        htmlFor={`spending-mobile-type-${type}`}
+                                        className={cn(
+                                          "flex cursor-pointer items-start gap-3 rounded-lg border p-4 transition-all",
+                                          "hover:bg-muted/50",
+                                          "peer-data-[state=checked]:border-primary peer-data-[state=checked]:bg-primary/5",
+                                          "active:scale-[0.98]",
+                                        )}
+                                      >
+                                        <div className="mt-0.5 flex-shrink-0">
+                                          <div className="bg-muted flex h-10 w-10 items-center justify-center rounded-full transition-colors">
+                                            <Icon className="text-muted-foreground h-5 w-5" />
+                                          </div>
+                                        </div>
+                                        <div className="min-w-0 flex-1">
+                                          <div className="text-foreground font-medium">{label}</div>
+                                          <div className="text-muted-foreground mt-1 text-sm">
+                                            {description}
+                                          </div>
+                                        </div>
+                                      </label>
+                                    </div>
+                                  ))}
+                                </div>
+                              </RadioGroup>
+                            </FormControl>
+                            <FormMessage />
+                          </FormItem>
+                        )}
+                      />
+                    ) : (
+                      <>
+                        <FormField
+                          control={form.control}
+                          name="activityType"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Type</FormLabel>
+                              <Select onValueChange={field.onChange} value={field.value}>
+                                <FormControl>
+                                  <SelectTrigger>
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                </FormControl>
+                                <SelectContent>
+                                  {activityTypeOptions.map((t) => (
+                                    <SelectItem key={t} value={t}>
+                                      {getCashActivityLabel(t, selectedAccount?.accountType)}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
 
-            {/* Transfer button — creation only, redirects to the full transfer form */}
-            {!isEditing && onTransferClick && (
-              <FormItem>
-                <FormLabel>{isCreditCardAccount ? "Payment" : "Transfer"}</FormLabel>
+                        {/* Transfer button — creation only, redirects to the full transfer form */}
+                        {!isEditing && onTransferClick && (
+                          <FormItem>
+                            <FormLabel>{isCreditCardAccount ? "Payment" : "Transfer"}</FormLabel>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className="w-full justify-start gap-2"
+                              disabled={!watchAccountId}
+                              onClick={handleTransferAction}
+                            >
+                              <Icons.ArrowLeftRight className="h-4 w-4" />
+                              {transferActionLabel}
+                            </Button>
+                          </FormItem>
+                        )}
+                      </>
+                    )}
+
+                    {isMobileCreate && onTransferClick && (
+                      <button
+                        type="button"
+                        className={cn(
+                          "flex w-full items-start gap-3 rounded-lg border p-4 text-left transition-all",
+                          "hover:bg-muted/50 active:scale-[0.98]",
+                          "disabled:cursor-not-allowed disabled:opacity-50",
+                        )}
+                        disabled={!watchAccountId}
+                        onClick={handleTransferAction}
+                      >
+                        <div className="mt-0.5 flex-shrink-0">
+                          <div className="bg-muted flex h-10 w-10 items-center justify-center rounded-full transition-colors">
+                            <Icons.ArrowLeftRight className="text-muted-foreground h-5 w-5" />
+                          </div>
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="text-foreground font-medium">{transferActionLabel}</div>
+                          <div className="text-muted-foreground mt-1 text-sm">
+                            {isCreditCardAccount
+                              ? "Pay this card from another account"
+                              : "Move money between accounts"}
+                          </div>
+                        </div>
+                      </button>
+                    )}
+                  </>
+                )}
+
+                {showDetailsFields && (
+                  <>
+                    <FormField
+                      control={form.control}
+                      name="activityDate"
+                      render={({ field }) => (
+                        <FormItem className="flex flex-col">
+                          <FormLabel>Date</FormLabel>
+                          <DatePickerInput
+                            value={field.value}
+                            onChange={(d?: Date) => field.onChange(d)}
+                            disabled={field.disabled}
+                            enableTime
+                          />
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    <FormField
+                      control={form.control}
+                      name="amount"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Amount</FormLabel>
+                          <FormControl>
+                            <MoneyInput
+                              value={field.value}
+                              onValueChange={(v: number | undefined) => field.onChange(v ?? 0)}
+                              placeholder="0.00"
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+
+                    <FormField
+                      control={form.control}
+                      name="category"
+                      render={({ field }) => {
+                        const [, currentCatId] = field.value?.split(":") ?? [];
+                        const currentCat = currentCatId
+                          ? allCategoriesById.get(currentCatId)
+                          : null;
+                        const currentParent = currentCat?.parentId
+                          ? allCategoriesById.get(currentCat.parentId)
+                          : null;
+                        return (
+                          <FormItem>
+                            <FormLabel>{isNeutralBucket ? "Category" : categoryLabel}</FormLabel>
+                            {isNeutralBucket ? (
+                              <div className="border-input bg-muted/40 text-muted-foreground h-input-height flex items-center rounded-md border px-3 py-2 text-sm">
+                                Neutral transfer
+                              </div>
+                            ) : (
+                              <QuickCategorizePopover
+                                scope={categoryScope}
+                                selectedCategoryId={currentCatId ?? null}
+                                onSelect={(tax, catId) => field.onChange(`${tax}:${catId}`)}
+                                onClear={() => field.onChange("")}
+                                trigger={
+                                  <FormControl>
+                                    <button
+                                      type="button"
+                                      className="border-input bg-input-bg dark:bg-input/30 hover:bg-accent/30 ring-offset-background focus:ring-ring h-input-height flex w-full items-center justify-between rounded-md border px-3 py-2 text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2"
+                                      aria-label={
+                                        currentCat
+                                          ? `Change category (${currentCat.name})`
+                                          : "Pick a category"
+                                      }
+                                    >
+                                      {currentCat ? (
+                                        <span className="flex min-w-0 items-center gap-2">
+                                          {currentCat.color && (
+                                            <span
+                                              className="h-2.5 w-2.5 shrink-0 rounded-full"
+                                              style={{ backgroundColor: currentCat.color }}
+                                              aria-hidden="true"
+                                            />
+                                          )}
+                                          <span className="truncate">
+                                            {currentParent ? `${currentParent.name} / ` : ""}
+                                            {currentCat.name}
+                                          </span>
+                                        </span>
+                                      ) : (
+                                        <span className="text-muted-foreground">
+                                          Pick a category (optional)
+                                        </span>
+                                      )}
+                                      <Icons.ChevronDown
+                                        className="ml-2 h-4 w-4 shrink-0 opacity-50"
+                                        aria-hidden="true"
+                                      />
+                                    </button>
+                                  </FormControl>
+                                }
+                              />
+                            )}
+                            <FormMessage />
+                          </FormItem>
+                        );
+                      }}
+                    />
+
+                    <FormItem>
+                      <FormLabel>Event</FormLabel>
+                      <QuickEventPopover
+                        selectedEventId={eventId}
+                        onSelect={setEventId}
+                        onClear={() => setEventId(null)}
+                        defaultDate={form.watch("activityDate") ?? undefined}
+                        trigger={
+                          <button
+                            type="button"
+                            className="border-input bg-input-bg dark:bg-input/30 hover:bg-accent/30 ring-offset-background focus:ring-ring h-input-height flex w-full items-center justify-between rounded-md border px-3 py-2 text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2"
+                            aria-label={
+                              eventId && eventsById.get(eventId)
+                                ? `Change event (${eventsById.get(eventId)?.name})`
+                                : "Tag an event"
+                            }
+                          >
+                            {(() => {
+                              const ev = eventId ? eventsById.get(eventId) : null;
+                              if (!ev) {
+                                return (
+                                  <span className="text-muted-foreground">
+                                    Tag an event (optional)
+                                  </span>
+                                );
+                              }
+                              const color =
+                                eventTypeById.get(ev.eventTypeId)?.color ??
+                                "var(--muted-foreground)";
+                              return (
+                                <span className="flex min-w-0 items-center gap-2">
+                                  <span
+                                    className="h-2.5 w-2.5 shrink-0 rounded-full"
+                                    style={{ backgroundColor: color }}
+                                    aria-hidden="true"
+                                  />
+                                  <span className="truncate">{ev.name}</span>
+                                </span>
+                              );
+                            })()}
+                            <Icons.ChevronDown
+                              className="ml-2 h-4 w-4 shrink-0 opacity-50"
+                              aria-hidden="true"
+                            />
+                          </button>
+                        }
+                      />
+                    </FormItem>
+
+                    <FormField
+                      control={form.control}
+                      name="notes"
+                      render={({ field }) => (
+                        <FormItem>
+                          <FormLabel>Notes / Payee</FormLabel>
+                          <FormControl>
+                            <Textarea
+                              placeholder="e.g., AMAZON*MARKETPLACE, STARBUCKS COFFEE"
+                              className="resize-none"
+                              {...field}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </>
+                )}
+              </div>
+            </div>
+
+            {isMobile ? (
+              <SheetFooter className="mt-auto border-t px-6 py-4 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
+                <div className="flex w-full gap-3">
+                  {currentStep > 1 && !isEditing && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => setCurrentStep(1)}
+                      className="flex-1"
+                      disabled={saveMutation.isPending}
+                    >
+                      <Icons.ArrowLeft className="mr-2 h-4 w-4" />
+                      Back
+                    </Button>
+                  )}
+
+                  {currentStep < 2 && !isEditing ? (
+                    <Button
+                      type="button"
+                      onClick={handleMobileNext}
+                      className="flex-1 font-medium"
+                      disabled={!watchAccountId}
+                    >
+                      Next
+                      <Icons.ArrowRight className="ml-2 h-4 w-4" />
+                    </Button>
+                  ) : (
+                    <Button
+                      type="submit"
+                      className="flex-1 font-medium"
+                      disabled={saveMutation.isPending}
+                    >
+                      {saveMutation.isPending ? (
+                        <Icons.Spinner className="mr-2 h-4 w-4 animate-spin" />
+                      ) : (
+                        <Icons.Check className="mr-2 h-4 w-4" />
+                      )}
+                      {isEditing ? "Update" : "Create"} Transaction
+                    </Button>
+                  )}
+                </div>
+              </SheetFooter>
+            ) : (
+              <SheetFooter className="gap-2 pt-4">
                 <Button
                   type="button"
                   variant="outline"
-                  className="w-full justify-start gap-2"
-                  disabled={!watchAccountId}
-                  onClick={() => {
-                    onOpenChange(false);
-                    onTransferClick(watchAccountId);
-                  }}
+                  onClick={() => onOpenChange(false)}
+                  disabled={saveMutation.isPending}
                 >
-                  <Icons.ArrowLeftRight className="h-4 w-4" />
-                  {transferActionLabel}
+                  Cancel
                 </Button>
-              </FormItem>
+                <Button type="submit" disabled={saveMutation.isPending}>
+                  {saveMutation.isPending ? (
+                    <>
+                      <Icons.Spinner className="mr-2 h-4 w-4 animate-spin" />
+                      Saving...
+                    </>
+                  ) : isEditing ? (
+                    "Update"
+                  ) : (
+                    "Create"
+                  )}
+                </Button>
+              </SheetFooter>
             )}
-
-            <FormField
-              control={form.control}
-              name="activityDate"
-              render={({ field }) => (
-                <FormItem className="flex flex-col">
-                  <FormLabel>Date</FormLabel>
-                  <DatePickerInput
-                    value={field.value}
-                    onChange={(d?: Date) => field.onChange(d)}
-                    disabled={field.disabled}
-                    enableTime
-                  />
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            <FormField
-              control={form.control}
-              name="amount"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Amount</FormLabel>
-                  <FormControl>
-                    <MoneyInput
-                      value={field.value}
-                      onValueChange={(v: number | undefined) => field.onChange(v ?? 0)}
-                      placeholder="0.00"
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            <FormField
-              control={form.control}
-              name="category"
-              render={({ field }) => {
-                const [, currentCatId] = field.value?.split(":") ?? [];
-                const currentCat = currentCatId ? allCategoriesById.get(currentCatId) : null;
-                const currentParent = currentCat?.parentId
-                  ? allCategoriesById.get(currentCat.parentId)
-                  : null;
-                return (
-                  <FormItem>
-                    <FormLabel>{isNeutralBucket ? "Category" : categoryLabel}</FormLabel>
-                    {isNeutralBucket ? (
-                      <div className="border-input bg-muted/40 text-muted-foreground h-input-height flex items-center rounded-md border px-3 py-2 text-sm">
-                        Neutral transfer
-                      </div>
-                    ) : (
-                      <QuickCategorizePopover
-                        scope={categoryScope}
-                        selectedCategoryId={currentCatId ?? null}
-                        onSelect={(tax, catId) => field.onChange(`${tax}:${catId}`)}
-                        onClear={() => field.onChange("")}
-                        trigger={
-                          <FormControl>
-                            <button
-                              type="button"
-                              className="border-input bg-input-bg dark:bg-input/30 hover:bg-accent/30 ring-offset-background focus:ring-ring h-input-height flex w-full items-center justify-between rounded-md border px-3 py-2 text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2"
-                              aria-label={
-                                currentCat
-                                  ? `Change category (${currentCat.name})`
-                                  : "Pick a category"
-                              }
-                            >
-                              {currentCat ? (
-                                <span className="flex min-w-0 items-center gap-2">
-                                  {currentCat.color && (
-                                    <span
-                                      className="h-2.5 w-2.5 shrink-0 rounded-full"
-                                      style={{ backgroundColor: currentCat.color }}
-                                      aria-hidden="true"
-                                    />
-                                  )}
-                                  <span className="truncate">
-                                    {currentParent ? `${currentParent.name} / ` : ""}
-                                    {currentCat.name}
-                                  </span>
-                                </span>
-                              ) : (
-                                <span className="text-muted-foreground">
-                                  Pick a category (optional)
-                                </span>
-                              )}
-                              <Icons.ChevronDown
-                                className="ml-2 h-4 w-4 shrink-0 opacity-50"
-                                aria-hidden="true"
-                              />
-                            </button>
-                          </FormControl>
-                        }
-                      />
-                    )}
-                    <FormMessage />
-                  </FormItem>
-                );
-              }}
-            />
-
-            <FormItem>
-              <FormLabel>Event</FormLabel>
-              <QuickEventPopover
-                selectedEventId={eventId}
-                onSelect={setEventId}
-                onClear={() => setEventId(null)}
-                defaultDate={form.watch("activityDate") ?? undefined}
-                trigger={
-                  <button
-                    type="button"
-                    className="border-input bg-input-bg dark:bg-input/30 hover:bg-accent/30 ring-offset-background focus:ring-ring h-input-height flex w-full items-center justify-between rounded-md border px-3 py-2 text-sm transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2"
-                    aria-label={
-                      eventId && eventsById.get(eventId)
-                        ? `Change event (${eventsById.get(eventId)?.name})`
-                        : "Tag an event"
-                    }
-                  >
-                    {(() => {
-                      const ev = eventId ? eventsById.get(eventId) : null;
-                      if (!ev) {
-                        return (
-                          <span className="text-muted-foreground">Tag an event (optional)</span>
-                        );
-                      }
-                      const color =
-                        eventTypeById.get(ev.eventTypeId)?.color ?? "var(--muted-foreground)";
-                      return (
-                        <span className="flex min-w-0 items-center gap-2">
-                          <span
-                            className="h-2.5 w-2.5 shrink-0 rounded-full"
-                            style={{ backgroundColor: color }}
-                            aria-hidden="true"
-                          />
-                          <span className="truncate">{ev.name}</span>
-                        </span>
-                      );
-                    })()}
-                    <Icons.ChevronDown
-                      className="ml-2 h-4 w-4 shrink-0 opacity-50"
-                      aria-hidden="true"
-                    />
-                  </button>
-                }
-              />
-            </FormItem>
-
-            <FormField
-              control={form.control}
-              name="notes"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Notes / Payee</FormLabel>
-                  <FormControl>
-                    <Textarea
-                      placeholder="e.g., AMAZON*MARKETPLACE, STARBUCKS COFFEE"
-                      className="resize-none"
-                      {...field}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            <SheetFooter className="gap-2 pt-4">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => onOpenChange(false)}
-                disabled={saveMutation.isPending}
-              >
-                Cancel
-              </Button>
-              <Button type="submit" disabled={saveMutation.isPending}>
-                {saveMutation.isPending ? (
-                  <>
-                    <Icons.Spinner className="mr-2 h-4 w-4 animate-spin" />
-                    Saving...
-                  </>
-                ) : isEditing ? (
-                  "Update"
-                ) : (
-                  "Create"
-                )}
-              </Button>
-            </SheetFooter>
           </form>
         </Form>
       </SheetContent>

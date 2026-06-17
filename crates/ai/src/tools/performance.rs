@@ -215,6 +215,7 @@ impl<E: AiEnvironment + 'static> Tool for GetPerformanceTool<E> {
                     start_date,
                     Some(end_date),
                     Some(account.tracking_mode),
+                    Some(&account.account_type),
                 )
                 .await
                 .map_err(|e| AiError::ToolExecutionFailed(e.to_string()))?
@@ -225,6 +226,7 @@ impl<E: AiEnvironment + 'static> Tool for GetPerformanceTool<E> {
                 .get_active_non_archived_accounts()
                 .map_err(|e| AiError::ToolExecutionFailed(e.to_string()))?;
             let mut account_tracking_modes = std::collections::HashMap::new();
+            let mut account_types = std::collections::HashMap::new();
             let account_ids: Vec<String> = accounts
                 .into_iter()
                 .filter(|account| {
@@ -232,6 +234,7 @@ impl<E: AiEnvironment + 'static> Tool for GetPerformanceTool<E> {
                 })
                 .map(|account| {
                     account_tracking_modes.insert(account.id.clone(), account.tracking_mode);
+                    account_types.insert(account.id.clone(), account.account_type.clone());
                     account.id
                 })
                 .collect();
@@ -242,6 +245,7 @@ impl<E: AiEnvironment + 'static> Tool for GetPerformanceTool<E> {
                     &account_ids,
                     &self.base_currency,
                     &account_tracking_modes,
+                    &account_types,
                     start_date,
                     Some(end_date),
                 )

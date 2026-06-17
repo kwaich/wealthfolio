@@ -3,10 +3,22 @@ import { AccountType } from "@/lib/constants";
 import {
   getActivitySpendingAmount,
   getActivityTypesForAccount,
+  getEffectiveCashActivityType,
   isCashActivityIncome,
 } from "./constants";
 
 describe("spending constants", () => {
+  describe("getEffectiveCashActivityType", () => {
+    it("prefers activity type overrides", () => {
+      expect(
+        getEffectiveCashActivityType({
+          activityType: "WITHDRAWAL",
+          activityTypeOverride: "TRANSFER_OUT",
+        }),
+      ).toBe("TRANSFER_OUT");
+    });
+  });
+
   describe("getActivityTypesForAccount", () => {
     it("uses card-specific activity options for credit cards", () => {
       expect(getActivityTypesForAccount(AccountType.CREDIT_CARD)).toEqual([
@@ -90,6 +102,30 @@ describe("spending constants", () => {
         getActivitySpendingAmount(
           { activityType: "TRANSFER_OUT", amount: "100", sourceGroupId: "transfer-1" },
           AccountType.CASH,
+        ),
+      ).toBe(0);
+    });
+
+    it("uses activity type overrides for transfer spending treatment", () => {
+      expect(
+        getActivitySpendingAmount(
+          {
+            activityType: "WITHDRAWAL",
+            activityTypeOverride: "TRANSFER_OUT",
+            amount: "100",
+            sourceGroupId: "transfer-1",
+          },
+          AccountType.CASH,
+        ),
+      ).toBe(0);
+      expect(
+        getActivitySpendingAmount(
+          {
+            activityType: "WITHDRAWAL",
+            activityTypeOverride: "TRANSFER_IN",
+            amount: "100",
+          },
+          AccountType.CREDIT_CARD,
         ),
       ).toBe(0);
     });

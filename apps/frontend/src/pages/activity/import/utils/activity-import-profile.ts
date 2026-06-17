@@ -1,4 +1,10 @@
-import { AccountType, ActivityType, IMPORT_REQUIRED_FIELDS, ImportFormat } from "@/lib/constants";
+import {
+  AccountType,
+  ActivityType,
+  ActivityTypeNames,
+  IMPORT_REQUIRED_FIELDS,
+  ImportFormat,
+} from "@/lib/constants";
 import type { Account, ImportMappingData } from "@/lib/types";
 
 const ACTIVITY_SKIP = "_SKIP_";
@@ -28,6 +34,7 @@ export interface ActivityImportProfile {
   requiredMappingFields: readonly ImportFormat[];
   assetResolutionEnabled: boolean;
   allowedActivityTypes: readonly ActivityType[];
+  activityTypeLabels?: Partial<Record<ActivityType, string>>;
   reviewColumns: readonly ImportReviewColumnId[];
 }
 
@@ -123,6 +130,12 @@ export const CASH_TRANSACTION_IMPORT_PROFILE: ActivityImportProfile = {
 export const CREDIT_CARD_TRANSACTION_IMPORT_PROFILE: ActivityImportProfile = {
   ...CASH_TRANSACTION_IMPORT_PROFILE,
   allowedActivityTypes: CREDIT_CARD_ACTIVITY_TYPES,
+  activityTypeLabels: {
+    [ActivityType.WITHDRAWAL]: "Charge",
+    [ActivityType.TRANSFER_IN]: "Payment",
+    [ActivityType.CREDIT]: "Refund / Credit",
+    [ActivityType.INTEREST]: "Interest Charge",
+  },
 };
 
 export function getActivityImportProfileForAccountType(
@@ -238,6 +251,13 @@ export function activityTypeAllowedForImportProfile(
   return profile.allowedActivityTypes.includes(activityType.toUpperCase() as ActivityType);
 }
 
+export function getActivityTypeLabelForImportProfile(
+  activityType: ActivityType,
+  profile: ActivityImportProfile,
+): string {
+  return profile.activityTypeLabels?.[activityType] ?? ActivityTypeNames[activityType];
+}
+
 function appendAliases(
   mappings: Record<string, string[]>,
   activityType: ActivityType,
@@ -289,6 +309,9 @@ export function getDefaultActivityMappingsForImportProfile(
       "REVERSAL",
       "STATEMENT CREDIT",
       "CREDIT ADJUSTMENT",
+      "CASHBACK",
+      "CASH BACK",
+      "REWARDS",
     ]);
     appendAliases(mappings, ActivityType.FEE, ["ANNUAL FEE", "LATE FEE", "SERVICE FEE"]);
     appendAliases(mappings, ActivityType.INTEREST, ["INTEREST CHARGE", "FINANCE CHARGE"]);
@@ -313,7 +336,14 @@ export function getDefaultActivityMappingsForImportProfile(
     appendAliases(mappings, ActivityType.TRANSFER_IN, ["TRANSFER IN", "TRANSFER_IN"]);
     appendAliases(mappings, ActivityType.TRANSFER_OUT, ["TRANSFER OUT", "TRANSFER_OUT"]);
     appendAliases(mappings, ActivityType.INTEREST, ["INTEREST", "INTEREST EARNED"]);
-    appendAliases(mappings, ActivityType.CREDIT, ["REFUND", "REVERSAL", "CREDIT"]);
+    appendAliases(mappings, ActivityType.CREDIT, [
+      "REFUND",
+      "REVERSAL",
+      "CREDIT",
+      "CASHBACK",
+      "CASH BACK",
+      "REWARDS",
+    ]);
   }
 
   return mappings;

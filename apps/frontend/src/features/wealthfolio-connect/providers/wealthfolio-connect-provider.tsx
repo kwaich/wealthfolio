@@ -1,5 +1,6 @@
 import {
   deleteSecret,
+  getCurrentDeepLinks,
   isDesktop,
   listenDeepLink,
   logger,
@@ -24,6 +25,7 @@ import { authenticate as authenticateWithASWebAuth } from "tauri-plugin-web-auth
 import { clearSyncSession, restoreSyncSession, storeSyncSession } from "../services/auth-service";
 import { getUserInfo } from "../services/broker-service";
 import type { UserInfo } from "../types";
+import { parseAuthCallbackUrl } from "../lib/auth-callback";
 
 // Auth configuration - these are public/publishable keys (safe for client-side)
 // Can be overridden via environment variables: CONNECT_AUTH_URL and CONNECT_AUTH_PUBLISHABLE_KEY
@@ -51,42 +53,8 @@ const HOSTED_OAUTH_CALLBACK_URL =
   (import.meta.env.CONNECT_OAUTH_CALLBACK_URL as string) ||
   "https://connect.wealthfolio.app/deeplink";
 
-type AuthCallbackPayload = { type: "code"; code: string } | { type: "error"; message: string };
-
-function parseAuthCallbackUrl(url: string): AuthCallbackPayload | null {
-  try {
-    const urlObj = new URL(url);
-    const hashParams = new URLSearchParams(urlObj.hash.substring(1));
-
-    const error =
-      urlObj.searchParams.get("error_description") ??
-      urlObj.searchParams.get("error") ??
-      hashParams.get("error_description") ??
-      hashParams.get("error");
-    if (error) {
-      return { type: "error", message: error };
-    }
-
-    const code = urlObj.searchParams.get("code");
-    if (code) {
-      return { type: "code", code };
-    }
-
-    const hasAccessToken =
-      hashParams.has("access_token") || urlObj.searchParams.has("access_token") || false;
-    if (hasAccessToken) {
-      return {
-        type: "error",
-        message:
-          "Unexpected token callback (access_token). This app expects Auth Code + PKCE; ensure Supabase is configured for PKCE and your hosted callback forwards the ?code=... parameter.",
-      };
-    }
-
-    return null;
-  } catch {
-    return null;
-  }
-}
+const parseConfiguredAuthCallbackUrl = (url: string) =>
+  parseAuthCallbackUrl(url, { hostedCallbackUrl: HOSTED_OAUTH_CALLBACK_URL });
 
 interface WealthfolioConnectContextValue {
   isEnabled: boolean;
@@ -226,11 +194,16 @@ function EnabledWealthfolioConnectProvider({ children }: { children: ReactNode }
   const [error, setError] = useState<string | null>(null);
 
   const supabaseRef = useRef<SupabaseClient | null>(null);
+  const processedAuthCodesRef = useRef<Set<string>>(new Set());
 
   // Initialize Supabase client
   supabaseRef.current ??= createSupabaseClient();
 
   const supabase = supabaseRef.current;
+
+  const clearProcessedAuthCodes = useCallback(() => {
+    processedAuthCodesRef.current.clear();
+  }, []);
 
   // Store tokens: refresh token goes to backend (for cloud API calls) and locally (for session restoration)
   const storeTokens = useCallback(async (session: Session | null) => {
@@ -274,7 +247,7 @@ function EnabledWealthfolioConnectProvider({ children }: { children: ReactNode }
   // Handle auth callback from URL (deep link or web redirect)
   const handleAuthCallback = useCallback(
     async (url: string) => {
-      const payload = parseAuthCallbackUrl(url);
+      const payload = parseConfiguredAuthCallbackUrl(url);
 
       if (!payload) {
         logger.error("Failed to parse auth callback URL - no payload");
@@ -286,6 +259,12 @@ function EnabledWealthfolioConnectProvider({ children }: { children: ReactNode }
         setError(payload.message);
         return;
       }
+
+      if (processedAuthCodesRef.current.has(payload.code)) {
+        logger.debug("Skipping duplicate auth callback code");
+        return;
+      }
+      processedAuthCodesRef.current.add(payload.code);
 
       try {
         const { data, error: exchangeError } = await supabase.auth.exchangeCodeForSession(
@@ -308,13 +287,14 @@ function EnabledWealthfolioConnectProvider({ children }: { children: ReactNode }
         await storeTokens(data.session);
         setSession(data.session);
         setUser(data.session.user);
+        clearProcessedAuthCodes();
         logger.info("Auth callback completed successfully");
       } catch (err) {
         logger.error(`Error in handleAuthCallback: ${err instanceof Error ? err.message : err}`);
         setError(err instanceof Error ? err.message : "Failed to complete sign in");
       }
     },
-    [supabase, storeTokens],
+    [supabase, storeTokens, clearProcessedAuthCodes],
   );
 
   // Restore session from stored tokens on mount
@@ -385,13 +365,15 @@ function EnabledWealthfolioConnectProvider({ children }: { children: ReactNode }
     if (!isDesktop) return;
 
     let unlistenFn: (() => Promise<void>) | undefined;
+    let cancelled = false;
 
     const setupDeepLinkListener = async () => {
       try {
         unlistenFn = await listenDeepLink<string>((event) => {
+          if (cancelled) return;
           const url = event.payload;
 
-          const authPayload = parseAuthCallbackUrl(url);
+          const authPayload = parseConfiguredAuthCallbackUrl(url);
           if (authPayload) {
             void handleAuthCallback(url);
           }
@@ -399,11 +381,25 @@ function EnabledWealthfolioConnectProvider({ children }: { children: ReactNode }
       } catch (_err) {
         logger.error("Failed to set up deep link listener.");
       }
+
+      try {
+        const currentUrls = await getCurrentDeepLinks();
+        if (cancelled) return;
+
+        for (const url of currentUrls) {
+          if (parseConfiguredAuthCallbackUrl(url)) {
+            void handleAuthCallback(url);
+          }
+        }
+      } catch (_err) {
+        logger.error("Failed to read startup deep links.");
+      }
     };
 
     void setupDeepLinkListener();
 
     return () => {
+      cancelled = true;
       void unlistenFn?.();
     };
   }, [handleAuthCallback]);
@@ -412,7 +408,7 @@ function EnabledWealthfolioConnectProvider({ children }: { children: ReactNode }
   // This works for both web and desktop (when OAuth happens in webview)
   useEffect(() => {
     const currentUrl = window.location.href;
-    if (parseAuthCallbackUrl(currentUrl)) {
+    if (parseConfiguredAuthCallbackUrl(currentUrl)) {
       void handleAuthCallback(currentUrl);
       // Clean up URL after handling
       window.history.replaceState({}, document.title, window.location.pathname);
@@ -491,6 +487,7 @@ function EnabledWealthfolioConnectProvider({ children }: { children: ReactNode }
     async (provider: "google" | "apple" | "github") => {
       setIsLoading(true);
       setError(null);
+      clearProcessedAuthCodes();
 
       try {
         const isTauri = isDesktop;
@@ -577,13 +574,14 @@ function EnabledWealthfolioConnectProvider({ children }: { children: ReactNode }
         setIsLoading(false);
       }
     },
-    [supabase, handleAuthCallback],
+    [supabase, handleAuthCallback, clearProcessedAuthCodes],
   );
 
   const signInWithMagicLink = useCallback(
     async (email: string) => {
       setIsLoading(true);
       setError(null);
+      clearProcessedAuthCodes();
 
       try {
         const isTauri = isDesktop;
@@ -619,7 +617,7 @@ function EnabledWealthfolioConnectProvider({ children }: { children: ReactNode }
         setIsLoading(false);
       }
     },
-    [supabase],
+    [supabase, clearProcessedAuthCodes],
   );
 
   const verifyOtp = useCallback(

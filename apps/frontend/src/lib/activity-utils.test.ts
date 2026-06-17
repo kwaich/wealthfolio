@@ -13,6 +13,7 @@ import {
   isAssetIdentityRequired,
   needsImportAssetResolution,
   calculateActivityValue,
+  calculateActivityCashImpact,
   formatSplitRatio,
 } from "./activity-utils";
 import { ActivityDetails } from "./types";
@@ -368,6 +369,92 @@ describe("Activity Utilities", () => {
 
       // Transfer out of securities: qty × price + fee (mirrors SELL-like handling for value display)
       expect(calculateActivityValue(transferOut)).toBe(1500);
+    });
+
+    it("calculates signed cash impact for trading and cash activities", () => {
+      expect(
+        calculateActivityCashImpact(
+          createActivity({
+            activityType: ActivityType.BUY,
+            quantity: "10",
+            unitPrice: "100",
+            fee: "10",
+          }),
+        ),
+      ).toBe(-1010);
+
+      expect(
+        calculateActivityCashImpact(
+          createActivity({
+            activityType: ActivityType.SELL,
+            quantity: "10",
+            unitPrice: "100",
+            fee: "10",
+          }),
+        ),
+      ).toBe(990);
+
+      expect(
+        calculateActivityCashImpact(
+          createActivity({
+            activityType: ActivityType.DEPOSIT,
+            amount: "500",
+            fee: "0",
+          }),
+        ),
+      ).toBe(500);
+
+      expect(
+        calculateActivityCashImpact(
+          createActivity({
+            activityType: ActivityType.WITHDRAWAL,
+            amount: "100",
+            fee: "5",
+          }),
+        ),
+      ).toBe(-105);
+    });
+
+    it("does not treat securities transfers or asset-backed income as cash impact", () => {
+      expect(
+        calculateActivityCashImpact(
+          createActivity({
+            activityType: ActivityType.TRANSFER_IN,
+            assetSymbol: "AAPL",
+            assetId: "AAPL",
+            quantity: "10",
+            unitPrice: "100",
+            amount: "0",
+            fee: "0",
+          }),
+        ),
+      ).toBe(0);
+
+      expect(
+        calculateActivityCashImpact(
+          createActivity({
+            activityType: ActivityType.DIVIDEND,
+            subtype: ACTIVITY_SUBTYPES.DRIP,
+            quantity: "1",
+            unitPrice: "100",
+            amount: "100",
+            fee: "0",
+          }),
+        ),
+      ).toBe(0);
+
+      expect(
+        calculateActivityCashImpact(
+          createActivity({
+            activityType: ActivityType.DIVIDEND,
+            subtype: null,
+            assetSymbol: "AAPL",
+            assetId: "AAPL",
+            amount: "100",
+            fee: "0",
+          }),
+        ),
+      ).toBe(100);
     });
   });
 

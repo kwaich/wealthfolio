@@ -1,5 +1,6 @@
 import { TickerAvatar } from "@/components/ticker-avatar";
 import {
+  calculateActivityCashImpact,
   calculateActivityValue,
   isAssetBackedIncomeActivity,
   isCashActivity,
@@ -12,45 +13,151 @@ import { ActivityType, ActivityTypeNames } from "@/lib/constants";
 import { parseOccSymbol } from "@/lib/occ-symbol";
 import { useSettingsContext } from "@/lib/settings-provider";
 import type { ActivityDetails } from "@/lib/types";
-import { cn, formatDateTime } from "@/lib/utils";
-import { Card, EmptyPlaceholder, formatAmount } from "@wealthfolio/ui";
+import { cn, formatDateTime, parseLocalDate } from "@/lib/utils";
+import type { CashAuditReviewTarget } from "@/pages/account/cash-audit";
+import { Button, Card, EmptyPlaceholder, formatAmount, Icons } from "@wealthfolio/ui";
+import { format } from "date-fns";
+import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import { buildActivityFilterUrl } from "../utils/activity-links";
+
+type CashAuditFilter = "all" | "cash-impacting" | "possible-missing";
+
+interface ActivityCashLedgerRow {
+  activity: ActivityDetails;
+  cashImpact: number;
+  runningBalance?: number;
+  crossesNegative: boolean;
+}
 
 interface ActivityDateListProps {
   activities: ActivityDetails[];
+  endingCashBalance?: number;
+  cashCurrency?: string;
+  cashAuditTarget?: CashAuditReviewTarget;
 }
 
-export function ActivityDateList({ activities }: ActivityDateListProps) {
+export function ActivityDateList({
+  activities,
+  endingCashBalance,
+  cashCurrency,
+  cashAuditTarget,
+}: ActivityDateListProps) {
   const { settings } = useSettingsContext();
   const appTimezone = settings?.timezone?.trim() || undefined;
+  const [cashAuditFilter, setCashAuditFilter] = useState<CashAuditFilter>("all");
+
+  const cashLedger = useMemo(
+    () => buildCashLedger(activities, endingCashBalance),
+    [activities, endingCashBalance],
+  );
+  const hasCashContext =
+    cashLedger.startingCashBalance !== undefined &&
+    cashAuditTarget?.hasExplainingActivity !== false;
+
+  const filteredLedgerRows = useMemo(() => {
+    if (!hasCashContext) return cashLedger.rows;
+    if (cashAuditFilter === "cash-impacting") {
+      return cashLedger.rows.filter((row) => row.cashImpact !== 0);
+    }
+    if (cashAuditFilter === "possible-missing") {
+      return cashLedger.rows.filter(
+        (row) =>
+          row.cashImpact < 0 &&
+          (row.crossesNegative || (row.runningBalance !== undefined && row.runningBalance < 0)),
+      );
+    }
+    return cashLedger.rows;
+  }, [cashAuditFilter, cashLedger.rows, hasCashContext]);
 
   if (activities.length === 0) {
     return (
-      <EmptyPlaceholder>
-        <EmptyPlaceholder.Icon name="Activity" />
-        <EmptyPlaceholder.Title>No activities</EmptyPlaceholder.Title>
-        <EmptyPlaceholder.Description>
-          No activities were found for this date.
-        </EmptyPlaceholder.Description>
-      </EmptyPlaceholder>
+      <div className="space-y-3">
+        {cashAuditTarget ? <CashAuditCallout cashAuditTarget={cashAuditTarget} /> : null}
+        <EmptyPlaceholder>
+          <EmptyPlaceholder.Icon name="Activity" />
+          <EmptyPlaceholder.Title>No activities</EmptyPlaceholder.Title>
+          <EmptyPlaceholder.Description>
+            No activities were found for this date.
+          </EmptyPlaceholder.Description>
+        </EmptyPlaceholder>
+      </div>
     );
   }
 
+  const currency =
+    cashCurrency ?? activities[0]?.accountCurrency ?? activities[0]?.currency ?? "USD";
+  const crossingRow = cashLedger.rows.find((row) => row.crossesNegative);
+  const accountId = activities[0]?.accountId;
+
   return (
-    <div className="space-y-2">
-      {activities.map((activity) => (
-        <ActivityDateListItem key={activity.id} activity={activity} appTimezone={appTimezone} />
+    <div className="space-y-3">
+      {hasCashContext ? (
+        <CashAuditSummary
+          startingCashBalance={cashLedger.startingCashBalance}
+          endingCashBalance={endingCashBalance}
+          totalCashImpact={cashLedger.totalCashImpact}
+          currency={currency}
+          crossingRow={crossingRow}
+          accountId={accountId}
+          cashAuditTarget={cashAuditTarget}
+        />
+      ) : null}
+
+      {hasCashContext ? (
+        <div className="flex flex-wrap gap-2">
+          <CashAuditFilterButton
+            label="All"
+            active={cashAuditFilter === "all"}
+            onClick={() => setCashAuditFilter("all")}
+          />
+          <CashAuditFilterButton
+            label="Cash-impacting"
+            active={cashAuditFilter === "cash-impacting"}
+            onClick={() => setCashAuditFilter("cash-impacting")}
+          />
+          <CashAuditFilterButton
+            label="Possible missing cash"
+            active={cashAuditFilter === "possible-missing"}
+            onClick={() => setCashAuditFilter("possible-missing")}
+          />
+        </div>
+      ) : null}
+
+      {filteredLedgerRows.length === 0 ? (
+        <EmptyPlaceholder>
+          <EmptyPlaceholder.Icon name="Activity" />
+          <EmptyPlaceholder.Title>No matching activities</EmptyPlaceholder.Title>
+        </EmptyPlaceholder>
+      ) : null}
+
+      {filteredLedgerRows.map((row) => (
+        <ActivityDateListItem
+          key={row.activity.id}
+          row={row}
+          appTimezone={appTimezone}
+          currency={currency}
+          showCashLedger={hasCashContext}
+        />
       ))}
     </div>
   );
 }
 
 interface ActivityDateListItemProps {
-  activity: ActivityDetails;
+  row: ActivityCashLedgerRow;
   appTimezone?: string;
+  currency: string;
+  showCashLedger: boolean;
 }
 
-function ActivityDateListItem({ activity, appTimezone }: ActivityDateListItemProps) {
+function ActivityDateListItem({
+  row,
+  appTimezone,
+  currency,
+  showCashLedger,
+}: ActivityDateListItemProps) {
+  const { activity } = row;
   const symbol = activity.assetSymbol;
   const activityType = activity.activityType;
   const isTransferActivity =
@@ -59,7 +166,6 @@ function ActivityDateListItem({ activity, appTimezone }: ActivityDateListItemPro
   const isCash = isTransferActivity
     ? isCashTransfer(activityType, symbol, activity.assetId)
     : isCashActivity(activityType) && !isAssetBackedIncome;
-  const hasAsset = Boolean(activity.assetId?.trim());
   const isOptionActivity = activity.instrumentType === "OPTION";
   const parsedOption = isOptionActivity ? parseOccSymbol(symbol) : null;
   const displaySymbol = isCash ? "Cash" : parsedOption ? parsedOption.underlying : symbol;
@@ -79,50 +185,206 @@ function ActivityDateListItem({ activity, appTimezone }: ActivityDateListItemPro
     activity.quantity
       ? `${activity.quantity} ${isOptionActivity ? "contracts" : "shares"}`
       : null;
+  const activityFilterUrl = buildActivityFilterUrl(activity);
 
   const content = (
-    <div className="flex min-w-0 flex-1 items-center gap-3">
-      <TickerAvatar symbol={avatarSymbol} className="h-10 w-10 flex-shrink-0" />
-      <div className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto] gap-x-3">
-        <p className="truncate text-base font-semibold leading-5">{displaySymbol}</p>
-        {activity.activityType !== ActivityType.SPLIT ? (
-          <p className="text-right text-base font-semibold leading-5">
-            {formatAmount(displayValue, activity.currency)}
-          </p>
-        ) : (
-          <span />
-        )}
-        <div className="flex min-w-0 items-center gap-1.5 whitespace-nowrap text-sm leading-5">
-          <span className={cn("font-semibold", activityTone.text)}>{activityTypeLabel}</span>
-          {activity.accountName ? (
-            <span className="text-muted-foreground min-w-0 truncate">{activity.accountName}</span>
-          ) : null}
-          <span className="text-muted-foreground shrink-0">•</span>
-          <span className="text-muted-foreground shrink-0">{formattedDate.date}</span>
-          {optionSubtitle ? (
-            <>
-              <span className="text-muted-foreground shrink-0">•</span>
-              <span className="text-muted-foreground truncate">{optionSubtitle}</span>
-            </>
+    <>
+      <div className="flex min-w-0 flex-1 items-center gap-3">
+        <TickerAvatar symbol={avatarSymbol} className="h-10 w-10 flex-shrink-0" />
+        <div className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto] gap-x-3">
+          <p className="truncate text-base font-semibold leading-5">{displaySymbol}</p>
+          {activity.activityType !== ActivityType.SPLIT ? (
+            <p className="text-right text-base font-semibold leading-5">
+              {formatAmount(displayValue, activity.currency)}
+            </p>
+          ) : (
+            <span />
+          )}
+          <div className="flex min-w-0 items-center gap-1.5 whitespace-nowrap text-sm leading-5">
+            <span className={cn("font-semibold", activityTone.text)}>{activityTypeLabel}</span>
+            {activity.accountName ? (
+              <span className="text-muted-foreground min-w-0 truncate">{activity.accountName}</span>
+            ) : null}
+            <span className="text-muted-foreground shrink-0">•</span>
+            <span className="text-muted-foreground shrink-0">{formattedDate.date}</span>
+            {optionSubtitle ? (
+              <>
+                <span className="text-muted-foreground shrink-0">•</span>
+                <span className="text-muted-foreground truncate">{optionSubtitle}</span>
+              </>
+            ) : null}
+          </div>
+          {activity.activityType !== ActivityType.SPLIT ? (
+            <p className="text-muted-foreground text-right text-sm leading-5">{quantityLabel}</p>
           ) : null}
         </div>
-        {activity.activityType !== ActivityType.SPLIT ? (
-          <p className="text-muted-foreground text-right text-sm leading-5">{quantityLabel}</p>
-        ) : null}
       </div>
-    </div>
+      {showCashLedger ? <CashLedgerMeta row={row} currency={currency} /> : null}
+    </>
   );
 
   return (
-    <Card key={activity.id} className="p-0">
-      {isCash || !hasAsset ? (
-        <div className="p-4">{content}</div>
-      ) : (
-        <Link to={`/holdings/${encodeURIComponent(activity.assetId)}`} className="block p-4">
-          {content}
-        </Link>
-      )}
+    <Card
+      key={activity.id}
+      className={cn("p-0", row.crossesNegative && "border-destructive/40 bg-destructive/5")}
+    >
+      <Link to={activityFilterUrl} className="block p-4">
+        {content}
+      </Link>
     </Card>
+  );
+}
+
+function CashLedgerMeta({ row, currency }: { row: ActivityCashLedgerRow; currency: string }) {
+  const runningBalanceIsNegative = row.runningBalance !== undefined && row.runningBalance < 0;
+
+  return (
+    <div className="bg-muted/40 mt-3 grid grid-cols-2 gap-2 rounded-md p-2 text-xs sm:grid-cols-[1fr_1fr_auto]">
+      <div>
+        <p className="text-muted-foreground">Cash impact</p>
+        <p
+          className={cn(
+            "font-semibold",
+            row.cashImpact > 0 && "text-success",
+            row.cashImpact < 0 && "text-destructive",
+          )}
+        >
+          {formatSignedAmount(row.cashImpact, currency)}
+        </p>
+      </div>
+      <div>
+        <p className="text-muted-foreground">Running cash</p>
+        <p className={cn("font-semibold", runningBalanceIsNegative && "text-destructive")}>
+          {row.runningBalance === undefined ? "—" : formatAmount(row.runningBalance, currency)}
+        </p>
+      </div>
+      {row.crossesNegative ? (
+        <div className="text-destructive col-span-2 flex items-center gap-1 font-medium sm:col-span-1 sm:justify-end">
+          <Icons.AlertTriangle className="size-3.5" />
+          <span>Cash goes negative here</span>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function CashAuditSummary({
+  startingCashBalance,
+  endingCashBalance,
+  totalCashImpact,
+  currency,
+  crossingRow,
+  accountId,
+  cashAuditTarget,
+}: {
+  startingCashBalance: number | undefined;
+  endingCashBalance: number | undefined;
+  totalCashImpact: number;
+  currency: string;
+  crossingRow?: ActivityCashLedgerRow;
+  accountId?: string;
+  cashAuditTarget?: CashAuditReviewTarget;
+}) {
+  const isEndingNegative = endingCashBalance !== undefined && endingCashBalance < 0;
+  const redirectTo = accountId ? `/accounts/${encodeURIComponent(accountId)}` : undefined;
+
+  return (
+    <Card className={cn("p-3", isEndingNegative && "border-destructive/30 bg-destructive/5")}>
+      <div className="space-y-3">
+        {cashAuditTarget ? <CashAuditCallout cashAuditTarget={cashAuditTarget} /> : null}
+        <div className="grid grid-cols-3 gap-2 text-xs">
+          <CashAuditAmount label="Starting cash" value={startingCashBalance} currency={currency} />
+          <CashAuditAmount label="Net cash impact" value={totalCashImpact} currency={currency} />
+          <CashAuditAmount label="Ending cash" value={endingCashBalance} currency={currency} />
+        </div>
+        {crossingRow ? (
+          <div className="text-destructive flex items-start gap-2 text-xs">
+            <Icons.AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+            <span>
+              Cash first went negative after{" "}
+              {ActivityTypeNames[crossingRow.activity.activityType].toLowerCase()}.
+            </span>
+          </div>
+        ) : isEndingNegative ? (
+          <div className="text-destructive flex items-start gap-2 text-xs">
+            <Icons.AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+            <span>Cash was already negative before the first activity shown.</span>
+          </div>
+        ) : null}
+        {isEndingNegative && accountId ? (
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" variant="outline" asChild>
+              <Link to={buildActivityManagerUrl(accountId, ActivityType.DEPOSIT, redirectTo)}>
+                Add deposit
+              </Link>
+            </Button>
+            <Button size="sm" variant="outline" asChild>
+              <Link to={buildActivityManagerUrl(accountId, ActivityType.TRANSFER_IN, redirectTo)}>
+                Add transfer
+              </Link>
+            </Button>
+          </div>
+        ) : null}
+      </div>
+    </Card>
+  );
+}
+
+function CashAuditCallout({ cashAuditTarget }: { cashAuditTarget: CashAuditReviewTarget }) {
+  const valuationDate = formatAuditDate(cashAuditTarget.valuationDate);
+  const activityDate = formatAuditDate(cashAuditTarget.activityDate);
+
+  return (
+    <div className="border-warning/10 bg-warning/10 rounded-md border p-3">
+      <div className="flex items-start gap-2">
+        <Icons.AlertCircle className="text-warning mt-0.5 size-4 shrink-0" />
+        <div className="min-w-0 space-y-1 text-sm">
+          <p className="font-medium">Cash went negative on {valuationDate}</p>
+          <p className="text-muted-foreground text-xs">
+            {cashAuditTarget.hasExplainingActivity
+              ? cashAuditTarget.isCarryForwardDate
+                ? `The negative balance was carried forward from activity on ${activityDate}. Review the cash impact and running balance below.`
+                : "Review the cash impact and running balance below to identify the activity that pushed cash below zero."
+              : "No cash-impacting activity was found before this date. Cash may have been negative before available history, or a deposit/transfer may be missing."}
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CashAuditAmount({
+  label,
+  value,
+  currency,
+}: {
+  label: string;
+  value?: number;
+  currency: string;
+}) {
+  return (
+    <div>
+      <p className="text-muted-foreground">{label}</p>
+      <p className={cn("font-semibold", value !== undefined && value < 0 && "text-destructive")}>
+        {value === undefined ? "—" : formatAmount(value, currency)}
+      </p>
+    </div>
+  );
+}
+
+function CashAuditFilterButton({
+  label,
+  active,
+  onClick,
+}: {
+  label: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <Button size="sm" variant={active ? "default" : "outline"} onClick={onClick}>
+      {label}
+    </Button>
   );
 }
 
@@ -148,5 +410,86 @@ function getActivityTone(type: ActivityType) {
       return {
         text: "text-muted-foreground",
       };
+  }
+}
+
+function buildCashLedger(
+  activities: ActivityDetails[],
+  endingCashBalance?: number,
+): {
+  rows: ActivityCashLedgerRow[];
+  startingCashBalance?: number;
+  totalCashImpact: number;
+} {
+  const sortedActivities = [...activities].sort(compareActivitiesForCashLedger);
+  const impacts = sortedActivities.map((activity) => calculateActivityCashImpact(activity));
+  const totalCashImpact = impacts.reduce((sum, impact) => sum + impact, 0);
+  const startingCashBalance =
+    endingCashBalance === undefined ? undefined : endingCashBalance - totalCashImpact;
+  let runningBalance = startingCashBalance;
+
+  const rows = sortedActivities.map((activity, index) => {
+    const cashImpact = impacts[index] ?? 0;
+    const previousBalance = runningBalance;
+    runningBalance = runningBalance === undefined ? undefined : runningBalance + cashImpact;
+
+    return {
+      activity,
+      cashImpact,
+      runningBalance,
+      crossesNegative:
+        previousBalance !== undefined &&
+        runningBalance !== undefined &&
+        previousBalance >= 0 &&
+        runningBalance < 0,
+    };
+  });
+
+  return {
+    rows,
+    startingCashBalance,
+    totalCashImpact,
+  };
+}
+
+function compareActivitiesForCashLedger(a: ActivityDetails, b: ActivityDetails) {
+  const dateDiff = toTimestamp(a.date) - toTimestamp(b.date);
+  if (dateDiff !== 0) return dateDiff;
+  const createdDiff = toTimestamp(a.createdAt) - toTimestamp(b.createdAt);
+  if (createdDiff !== 0) return createdDiff;
+  return a.id.localeCompare(b.id);
+}
+
+function toTimestamp(value: Date | string | undefined) {
+  if (!value) return 0;
+  const timestamp = new Date(value).getTime();
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function formatSignedAmount(value: number, currency: string) {
+  if (value > 0) return `+${formatAmount(value, currency)}`;
+  return formatAmount(value, currency);
+}
+
+function buildActivityManagerUrl(
+  accountId: string,
+  activityType: ActivityType,
+  redirectTo?: string,
+) {
+  const params = new URLSearchParams({
+    account: accountId,
+    type: activityType,
+  });
+  if (redirectTo) {
+    params.set("redirect-to", redirectTo);
+  }
+  return `/activities/manage?${params.toString()}`;
+}
+
+function formatAuditDate(date: string) {
+  try {
+    return format(parseLocalDate(date), "MMM d, yyyy");
+  } catch {
+    return date;
   }
 }

@@ -2,16 +2,16 @@
 
 import { calculatePerformanceSummaries, performanceSummaryScopeKey } from "@/adapters";
 import { useAccounts } from "@/hooks/use-accounts";
-import { useLatestValuations } from "@/hooks/use-latest-valuations";
+import { useCurrentAccountValuations } from "@/hooks/use-current-account-valuations";
 import { AccountPurpose } from "@/lib/constants";
 import { performanceHeadlineReturn, performancePeriodPnl } from "@/lib/performance";
 import { QueryKeys } from "@/lib/query-keys";
 import { useSettingsContext } from "@/lib/settings-provider";
 import type {
-  AccountValuation,
+  CurrentAccountValuation,
   DateRange,
-  PerformanceDataQuality,
   PerformanceSummaryScope,
+  TrackingMode,
 } from "@/lib/types";
 import { useQuery } from "@tanstack/react-query";
 import { GainAmount, GainPercent, PrivacyAmount } from "@wealthfolio/ui";
@@ -36,28 +36,12 @@ interface AccountSummaryDisplayData {
   accountId?: string;
   accountType?: string;
   accountGroup?: string | null;
+  trackingMode?: TrackingMode;
   isGroup?: boolean;
   accountCount?: number;
   accounts?: AccountSummaryDisplayData[];
   displayInAccountCurrency?: boolean;
-  dataQualityMessages?: string[];
 }
-
-const dashboardPerformanceMessages = (
-  dataQuality: PerformanceDataQuality | undefined,
-): string[] => {
-  const messages = dataQuality?.warnings ?? [];
-  return messages.filter((message) => {
-    const m = message.toLowerCase();
-    // Hide annualized-volatility noise, the "excluded accounts" note, and the
-    // technical transfer-group warning (the Health Center owns transfer integrity).
-    return (
-      !m.startsWith("volatility is annualized") &&
-      !m.startsWith("transfer group") &&
-      !m.includes("were excluded")
-    );
-  });
-};
 
 const AccountSummarySkeleton = () => (
   <div className="flex w-full items-center justify-between gap-3">
@@ -147,14 +131,14 @@ const AccountSummaryComponent = React.memo(
       gainPercentToDisplay === null &&
       gainAmountToDisplay !== null &&
       gainAmountToDisplay !== 0;
-    const dataQualityMessages = item.dataQualityMessages ?? [];
-    const hasDataQualityWarning = dataQualityMessages.length > 0;
-    const warningMessages = dataQualityMessages.length
-      ? dataQualityMessages
-      : hasBadData
-        ? ["Return % unavailable - activity history may be inconsistent."]
-        : [];
-    const shouldShowWarning = hasBadData || hasDataQualityWarning;
+    const warningMessages = hasBadData
+      ? [
+          item.trackingMode === "HOLDINGS"
+            ? "Return % unavailable - missing cost basis or starting holdings value."
+            : "Return % unavailable - activity history may be inconsistent.",
+        ]
+      : [];
+    const shouldShowWarning = hasBadData;
     const shouldRenderGainMetrics = gainPercentToDisplay !== null && (isNested || !isZeroGain);
     // Nested rows always show a secondary line for visual consistency —
     // fall back to a "-" placeholder when gain metrics aren't available.
@@ -292,7 +276,17 @@ const AccountSummaryComponent = React.memo(
 AccountSummaryComponent.displayName = "AccountSummaryComponent";
 
 export const AccountsSummary = React.memo(
-  ({ dateRange, isAllTime }: { dateRange?: DateRange; isAllTime?: boolean }) => {
+  ({
+    dateRange,
+    isAllTime,
+    currentAccountValuations: currentAccountValuationsProp,
+    isLoadingCurrentValuations: isLoadingCurrentValuationsProp,
+  }: {
+    dateRange?: DateRange;
+    isAllTime?: boolean;
+    currentAccountValuations?: CurrentAccountValuation[];
+    isLoadingCurrentValuations?: boolean;
+  }) => {
     const { accountsGrouped, setAccountsGrouped, settings } = useSettingsContext();
     const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
 
@@ -307,7 +301,17 @@ export const AccountsSummary = React.memo(
 
     const accountIds = useMemo(() => accounts?.map((acc) => acc.id) ?? [], [accounts]);
 
-    const { latestValuations, isLoading: isLoadingValuations } = useLatestValuations(accountIds);
+    const shouldFetchCurrentValuations = currentAccountValuationsProp === undefined;
+    const {
+      currentAccountValuations: fetchedCurrentAccountValuations,
+      isLoading: isLoadingFetchedCurrentValuations,
+    } = useCurrentAccountValuations(accountIds, {
+      enabled: shouldFetchCurrentValuations,
+    });
+    const currentAccountValuations =
+      currentAccountValuationsProp ?? fetchedCurrentAccountValuations;
+    const isLoadingCurrentValuations =
+      isLoadingCurrentValuationsProp ?? isLoadingFetchedCurrentValuations;
 
     const startDate =
       !isAllTime && dateRange?.from ? format(dateRange.from, "yyyy-MM-dd") : undefined;
@@ -359,9 +363,11 @@ export const AccountsSummary = React.memo(
 
     const combinedAccountViews = useMemo((): AccountSummaryDisplayData[] => {
       if (!accounts || accounts.length === 0) return [];
-      const valuationMap = new Map<string, AccountValuation>();
-      if (latestValuations) {
-        latestValuations.forEach((val: AccountValuation) => valuationMap.set(val.accountId, val));
+      const valuationMap = new Map<string, CurrentAccountValuation>();
+      if (currentAccountValuations) {
+        currentAccountValuations.forEach((val: CurrentAccountValuation) =>
+          valuationMap.set(val.accountId, val),
+        );
       }
       return accounts.map((acc): AccountSummaryDisplayData => {
         const valuation = valuationMap.get(acc.id);
@@ -378,6 +384,7 @@ export const AccountsSummary = React.memo(
             accountId: acc.id,
             accountType: acc.accountType,
             accountGroup: acc.group ?? null,
+            trackingMode: acc.trackingMode,
             isGroup: false,
           };
         }
@@ -388,7 +395,6 @@ export const AccountsSummary = React.memo(
 
         const gainLossBaseCurrency = performancePeriodPnl(perf);
         const gainPercent = performanceHeadlineReturn(perf);
-        const dataQualityMessages = dashboardPerformanceMessages(perf?.dataQuality);
 
         return {
           accountName: acc.name,
@@ -403,11 +409,11 @@ export const AccountsSummary = React.memo(
           accountId: acc.id,
           accountType: acc.accountType,
           accountGroup: acc.group ?? null,
+          trackingMode: acc.trackingMode,
           isGroup: false,
-          dataQualityMessages,
         };
       });
-    }, [accounts, latestValuations, performanceSummaries, settings?.baseCurrency]);
+    }, [accounts, currentAccountValuations, performanceSummaries, settings?.baseCurrency]);
 
     const toggleGroup = useCallback((groupName: string) => {
       setExpandedGroups((prev) => ({
@@ -464,7 +470,7 @@ export const AccountsSummary = React.memo(
         );
       }
 
-      const isLoadingPerformance = isLoadingValuations || isLoadingPerformanceQueries;
+      const isLoadingPerformance = isLoadingCurrentValuations || isLoadingPerformanceQueries;
 
       if (accountsGrouped) {
         const groups: Record<string, AccountSummaryDisplayData[]> = {};
@@ -502,7 +508,6 @@ export const AccountsSummary = React.memo(
 
             const totalGainLossAmountBase = performancePeriodPnl(groupPerformance);
             const groupTotalReturnPercentBase = performanceHeadlineReturn(groupPerformance);
-            const dataQualityMessages = dashboardPerformanceMessages(groupPerformance?.dataQuality);
 
             actualGroups.push({
               accountName: groupName,
@@ -516,8 +521,10 @@ export const AccountsSummary = React.memo(
               isGroup: true,
               accountCount: groupAccounts.length,
               accounts: groupAccounts,
+              trackingMode: groupAccounts.every((account) => account.trackingMode === "HOLDINGS")
+                ? "HOLDINGS"
+                : undefined,
               displayInAccountCurrency: false,
-              dataQualityMessages,
             });
           }
         });
@@ -600,7 +607,7 @@ export const AccountsSummary = React.memo(
       expandedGroups,
       toggleGroup,
       isLoadingAccounts,
-      isLoadingValuations,
+      isLoadingCurrentValuations,
       isLoadingPerformanceQueries,
       performanceSummaries,
       isErrorAccounts,

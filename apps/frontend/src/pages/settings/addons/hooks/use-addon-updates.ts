@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useToast } from "@wealthfolio/ui/components/ui/use-toast";
 import { checkAddonUpdate, checkAllAddonUpdates } from "@/adapters";
@@ -17,10 +17,14 @@ export function useAddonUpdates(options: UseAddonUpdatesOptions = {}) {
   const [isCheckingUpdates, setIsCheckingUpdates] = useState(false);
   const [lastUpdateCheck, setLastUpdateCheck] = useState<Date | null>(null);
   const { toast } = useToast();
+  const installedAddonVersions = useMemo(
+    () => installedAddons.map((addon) => `${addon.metadata.id}@${addon.metadata.version}`),
+    [installedAddons],
+  );
 
   // Auto-check query that runs when addons are loaded
-  const { isFetching: isAutoChecking } = useQuery({
-    queryKey: [QueryKeys.ADDON_AUTO_UPDATE_CHECK, installedAddons.map((a) => a.metadata.id)],
+  const { data: autoUpdateResults, isFetching: isAutoChecking } = useQuery({
+    queryKey: [QueryKeys.ADDON_AUTO_UPDATE_CHECK, installedAddonVersions],
     queryFn: async () => {
       const results = await checkAllAddonUpdates();
       setUpdateResults(results);
@@ -53,6 +57,12 @@ export function useAddonUpdates(options: UseAddonUpdatesOptions = {}) {
     refetchOnWindowFocus: false,
     refetchOnMount: true,
   });
+
+  useEffect(() => {
+    if (autoUpdateResults) {
+      setUpdateResults(autoUpdateResults);
+    }
+  }, [autoUpdateResults]);
 
   const checkSingleAddonUpdate = useCallback(
     async (addonId: string) => {

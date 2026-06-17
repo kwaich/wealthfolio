@@ -1,4 +1,4 @@
-use crate::accounts::TrackingMode;
+use crate::accounts::{account_types, TrackingMode};
 use crate::activities::{Activity, ActivityRepositoryTrait, ActivityType, TransferPairResolution};
 use crate::constants::DECIMAL_PRECISION;
 use crate::errors::{self, Result, ValidationError};
@@ -31,6 +31,7 @@ use crate::portfolio::valuation::{
     DailyAccountValuation, ExternalFlowSource as ValuationExternalFlowSource,
 };
 
+#[allow(clippy::too_many_arguments)]
 #[async_trait]
 pub trait PerformanceServiceTrait: Send + Sync {
     async fn calculate_performance_history(
@@ -40,6 +41,7 @@ pub trait PerformanceServiceTrait: Send + Sync {
         start_date: Option<NaiveDate>,
         end_date: Option<NaiveDate>,
         tracking_mode: Option<TrackingMode>,
+        account_type: Option<&str>,
     ) -> Result<PerformanceResult>;
 
     async fn calculate_performance_history_for_accounts(
@@ -48,6 +50,7 @@ pub trait PerformanceServiceTrait: Send + Sync {
         account_ids: &[String],
         base_currency: &str,
         account_tracking_modes: &HashMap<String, TrackingMode>,
+        account_types: &HashMap<String, String>,
         start_date: Option<NaiveDate>,
         end_date: Option<NaiveDate>,
     ) -> Result<PerformanceResult>;
@@ -59,6 +62,7 @@ pub trait PerformanceServiceTrait: Send + Sync {
         start_date: Option<NaiveDate>,
         end_date: Option<NaiveDate>,
         tracking_mode: Option<TrackingMode>,
+        account_type: Option<&str>,
         profile: PerformanceSummaryProfile,
     ) -> Result<PerformanceResult>;
 
@@ -69,6 +73,7 @@ pub trait PerformanceServiceTrait: Send + Sync {
         account_ids: &[String],
         base_currency: &str,
         account_tracking_modes: &HashMap<String, TrackingMode>,
+        account_types: &HashMap<String, String>,
         start_date: Option<NaiveDate>,
         end_date: Option<NaiveDate>,
         profile: PerformanceSummaryProfile,
@@ -94,6 +99,9 @@ pub struct PerformanceService {
 
 const DAYS_PER_YEAR_DECIMAL: Decimal = dec!(365.25);
 const SQRT_DAYS_PER_YEAR_APPROX: Decimal = dec!(19.111514854); // sqrt(365.25)
+const ATTRIBUTION_RESIDUAL_TOLERANCE_RATE: Decimal = dec!(0.002);
+const ATTRIBUTION_RESIDUAL_LEGACY_WARNING_PREFIX: &str = "Attribution residual ";
+const ATTRIBUTION_INCOMPLETE_WARNING_PREFIX: &str = "Performance attribution is incomplete";
 
 fn parse_decimal_lossy(value: &str) -> Decimal {
     value.parse::<Decimal>().unwrap_or(Decimal::ZERO)
@@ -149,6 +157,7 @@ struct ScopedPerformanceRequest<'a> {
     account_ids: &'a [String],
     base_currency: &'a str,
     account_tracking_modes: &'a HashMap<String, TrackingMode>,
+    account_types: &'a HashMap<String, String>,
     start_date: Option<NaiveDate>,
     end_date: Option<NaiveDate>,
     include_returns_series: bool,
@@ -491,6 +500,69 @@ impl PerformanceService {
         }
     }
 
+    fn is_cash_only_history(history: &[DailyAccountValuation]) -> bool {
+        history.iter().all(|point| {
+            point.investment_market_value.is_zero()
+                && point.investment_market_value_base.is_zero()
+                && point.cost_basis.is_zero()
+                && point.cost_basis_base.is_zero()
+        })
+    }
+
+    fn is_cash_account_type(account_type: Option<&str>) -> bool {
+        matches!(account_type, Some(account_types::CASH))
+    }
+
+    fn all_accounts_are_cash(
+        account_ids: &[String],
+        account_types: &HashMap<String, String>,
+    ) -> bool {
+        !account_ids.is_empty()
+            && account_ids.iter().all(|account_id| {
+                account_types
+                    .get(account_id)
+                    .is_some_and(|account_type| account_type == account_types::CASH)
+            })
+    }
+
+    fn cash_fx_effect_for_window(
+        prev_point: &DailyAccountValuation,
+        curr_point: &DailyAccountValuation,
+        flow_basis: ExternalFlowBasis,
+    ) -> Decimal {
+        if !matches!(flow_basis, ExternalFlowBasis::BaseCurrency) {
+            return Decimal::ZERO;
+        }
+
+        let cash_delta_base = curr_point.cash_balance_base - prev_point.cash_balance_base;
+        let cash_delta_at_current_fx =
+            (curr_point.cash_balance - prev_point.cash_balance) * curr_point.fx_rate_to_base;
+        (cash_delta_base - cash_delta_at_current_fx).round_dp(DECIMAL_PRECISION)
+    }
+
+    fn cash_fx_effect_from_history(
+        history: &[DailyAccountValuation],
+        flow_basis: ExternalFlowBasis,
+    ) -> Decimal {
+        history
+            .windows(2)
+            .map(|window| Self::cash_fx_effect_for_window(&window[0], &window[1], flow_basis))
+            .sum::<Decimal>()
+            .round_dp(DECIMAL_PRECISION)
+    }
+
+    fn cash_only_fx_effect_from_history(
+        history: &[DailyAccountValuation],
+        flow_basis: ExternalFlowBasis,
+        cash_fx_attribution_enabled: bool,
+    ) -> Decimal {
+        if cash_fx_attribution_enabled && Self::is_cash_only_history(history) {
+            Self::cash_fx_effect_from_history(history, flow_basis)
+        } else {
+            Decimal::ZERO
+        }
+    }
+
     fn compute_simple_value_return(
         full_history: &[DailyAccountValuation],
         daily_flows: &[DailyExternalFlow],
@@ -559,6 +631,29 @@ impl PerformanceService {
         } else {
             end_value - Self::return_total_value(start_point, flow_basis)
         }
+    }
+
+    fn attribution_residual_threshold(delta_total_value: Decimal, end_value: Decimal) -> Decimal {
+        Decimal::ONE.max(
+            delta_total_value
+                .abs()
+                .max(end_value.abs())
+                .max(Decimal::ONE)
+                * ATTRIBUTION_RESIDUAL_TOLERANCE_RATE,
+        )
+    }
+
+    fn is_attribution_residual_warning(warning: &str) -> bool {
+        warning.starts_with(ATTRIBUTION_RESIDUAL_LEGACY_WARNING_PREFIX)
+            || warning.starts_with(ATTRIBUTION_INCOMPLETE_WARNING_PREFIX)
+    }
+
+    fn attribution_residual_warning(residual: Decimal, threshold: Decimal) -> String {
+        format!(
+            "Performance attribution is incomplete for this period. Difference: {}; tolerance: {}. Review Health Center for possible data issues.",
+            residual.round_dp(DECIMAL_PRECISION),
+            threshold.round_dp(DECIMAL_PRECISION)
+        )
     }
 
     fn calculate_xirr(
@@ -1541,20 +1636,16 @@ impl PerformanceService {
         result
             .data_quality
             .warnings
-            .retain(|warning| !warning.starts_with("Attribution residual "));
-        let residual_threshold = Decimal::ONE.max(
-            (delta_total_value
-                .abs()
-                .max(end_value.abs())
-                .max(Decimal::ONE))
-                * dec!(0.001),
-        );
+            .retain(|warning| !Self::is_attribution_residual_warning(warning));
+        let residual_threshold = Self::attribution_residual_threshold(delta_total_value, end_value);
         if result.attribution.residual.abs() > residual_threshold {
-            result.data_quality.warnings.push(format!(
-                "Attribution residual {} exceeds tolerance {}; result is partially unreliable.",
-                result.attribution.residual.round_dp(DECIMAL_PRECISION),
-                residual_threshold.round_dp(DECIMAL_PRECISION)
-            ));
+            result
+                .data_quality
+                .warnings
+                .push(Self::attribution_residual_warning(
+                    result.attribution.residual.round_dp(DECIMAL_PRECISION),
+                    residual_threshold.round_dp(DECIMAL_PRECISION),
+                ));
         }
         Self::refresh_data_quality_status(&mut result.data_quality);
     }
@@ -1660,21 +1751,21 @@ impl PerformanceService {
                 continue;
             }
 
-            let start_point = if matches!(baseline, AttributionBaseline::Inception) {
+            let start_index = if matches!(baseline, AttributionBaseline::Inception) {
                 None
             } else {
                 history
                     .iter()
-                    .filter(|point| point.valuation_date <= start_date)
-                    .max_by_key(|point| point.valuation_date)
+                    .rposition(|point| point.valuation_date <= start_date)
             };
-            let Some(end_point) = history
+            let start_point = start_index.map(|index| &history[index]);
+            let Some(end_index) = history
                 .iter()
-                .filter(|point| point.valuation_date <= end_date)
-                .max_by_key(|point| point.valuation_date)
+                .rposition(|point| point.valuation_date <= end_date)
             else {
                 continue;
             };
+            let end_point = &history[end_index];
 
             let end_fx_rate = if end_point.account_currency == end_point.base_currency {
                 Decimal::ONE
@@ -1721,6 +1812,7 @@ impl PerformanceService {
         start_date_opt: Option<NaiveDate>,
         end_date_opt: Option<NaiveDate>,
         tracking_mode: Option<TrackingMode>,
+        account_type: Option<&str>,
     ) -> Result<PerformanceResult> {
         if let (Some(start), Some(end)) = (start_date_opt, end_date_opt) {
             if start > end {
@@ -1759,8 +1851,15 @@ impl PerformanceService {
             ));
         }
 
-        let mut metrics =
-            Self::compute_account_performance(&full_history, tracking_mode, start_date_opt, true)?;
+        let mut metrics = Self::compute_account_performance_with_flow_basis(
+            &full_history,
+            tracking_mode,
+            start_date_opt,
+            true,
+            ExternalFlowBasis::BaseCurrency,
+            PerformanceSummaryProfile::Full,
+            Self::is_cash_account_type(account_type),
+        )?;
         metrics.scope.id = account_id.to_string();
         let attribution_baseline = Self::attribution_baseline(
             matches!(tracking_mode, Some(TrackingMode::Holdings)),
@@ -1784,6 +1883,7 @@ impl PerformanceService {
         start_date_opt: Option<NaiveDate>,
         end_date_opt: Option<NaiveDate>,
         tracking_mode: Option<TrackingMode>,
+        account_type: Option<&str>,
         profile: PerformanceSummaryProfile,
     ) -> Result<PerformanceResult> {
         if let (Some(start), Some(end)) = (start_date_opt, end_date_opt) {
@@ -1834,6 +1934,7 @@ impl PerformanceService {
             false,
             ExternalFlowBasis::BaseCurrency,
             profile,
+            Self::is_cash_account_type(account_type),
         )?;
         metrics.scope.id = account_id.to_string();
         let attribution_baseline = Self::attribution_baseline(
@@ -1859,6 +1960,7 @@ impl PerformanceService {
             account_ids,
             base_currency,
             account_tracking_modes,
+            account_types,
             start_date: start_date_opt,
             end_date: end_date_opt,
             include_returns_series,
@@ -1932,21 +2034,29 @@ impl PerformanceService {
 
         let mut metrics = match scoped_tracking_composition {
             ScopedTrackingComposition::TransactionsOnly => {
+                let cash_fx_attribution_enabled =
+                    Self::all_accounts_are_cash(account_ids, account_types);
                 Self::compute_scoped_account_performance(
                     &full_history,
                     Some(TrackingMode::Transactions),
                     start_date_opt,
                     include_returns_series,
                     profile,
+                    cash_fx_attribution_enabled,
                 )?
             }
-            ScopedTrackingComposition::HoldingsOnly => Self::compute_scoped_account_performance(
-                &full_history,
-                Some(TrackingMode::Holdings),
-                start_date_opt,
-                include_returns_series,
-                profile,
-            )?,
+            ScopedTrackingComposition::HoldingsOnly => {
+                let cash_fx_attribution_enabled =
+                    Self::all_accounts_are_cash(account_ids, account_types);
+                Self::compute_scoped_account_performance(
+                    &full_history,
+                    Some(TrackingMode::Holdings),
+                    start_date_opt,
+                    include_returns_series,
+                    profile,
+                    cash_fx_attribution_enabled,
+                )?
+            }
             ScopedTrackingComposition::Mixed => Self::compute_mixed_scope_performance_with_profile(
                 &full_history,
                 include_returns_series,
@@ -2026,6 +2136,7 @@ impl PerformanceService {
     /// # Precondition
     /// `full_history.len() >= 2`. Callers check this first so they can respond
     /// differently to insufficient history (empty response vs. error).
+    #[cfg(test)]
     fn compute_account_performance(
         full_history: &[DailyAccountValuation],
         tracking_mode: Option<TrackingMode>,
@@ -2039,6 +2150,7 @@ impl PerformanceService {
             include_returns_series,
             ExternalFlowBasis::BaseCurrency,
             PerformanceSummaryProfile::Full,
+            false,
         )
     }
 
@@ -2048,6 +2160,7 @@ impl PerformanceService {
         start_date_opt: Option<NaiveDate>,
         include_returns_series: bool,
         profile: PerformanceSummaryProfile,
+        cash_fx_attribution_enabled: bool,
     ) -> Result<PerformanceResult> {
         Self::compute_account_performance_with_flow_basis(
             full_history,
@@ -2056,6 +2169,7 @@ impl PerformanceService {
             include_returns_series,
             ExternalFlowBasis::BaseCurrency,
             profile,
+            cash_fx_attribution_enabled,
         )
     }
 
@@ -2066,6 +2180,7 @@ impl PerformanceService {
         include_returns_series: bool,
         flow_basis: ExternalFlowBasis,
         profile: PerformanceSummaryProfile,
+        cash_fx_attribution_enabled: bool,
     ) -> Result<PerformanceResult> {
         debug_assert!(full_history.len() >= 2);
 
@@ -2219,12 +2334,19 @@ impl PerformanceService {
             flow_basis,
             attribution_baseline,
         );
-        let (unrealized_pnl_change, fx_effect) = Self::unrealized_attribution_components(
+        let (unrealized_pnl_change, investment_fx_effect) = Self::unrealized_attribution_components(
             start_point,
             end_point,
             flow_basis,
             attribution_baseline,
         );
+        let fx_effect = (investment_fx_effect
+            + Self::cash_only_fx_effect_from_history(
+                full_history,
+                flow_basis,
+                cash_fx_attribution_enabled,
+            ))
+        .round_dp(DECIMAL_PRECISION);
         let delta_total_value = Self::attribution_total_value_delta(
             start_point,
             end_point,
@@ -2250,18 +2372,11 @@ impl PerformanceService {
         let mut warnings = Self::external_flow_quality_warnings(&daily_flows);
         warnings.extend(twr.warnings);
         warnings.extend(irr.warnings);
-        let residual_threshold = Decimal::ONE.max(
-            (delta_total_value
-                .abs()
-                .max(end_value.abs())
-                .max(Decimal::ONE))
-                * dec!(0.001),
-        );
+        let residual_threshold = Self::attribution_residual_threshold(delta_total_value, end_value);
         if attribution.residual.abs() > residual_threshold {
-            warnings.push(format!(
-                "Attribution residual {} exceeds tolerance {}; result is partially unreliable.",
+            warnings.push(Self::attribution_residual_warning(
                 attribution.residual.round_dp(DECIMAL_PRECISION),
-                residual_threshold.round_dp(DECIMAL_PRECISION)
+                residual_threshold.round_dp(DECIMAL_PRECISION),
             ));
         }
         let mut not_applicable_reasons = twr.not_applicable_reasons;
@@ -2980,11 +3095,18 @@ impl PerformanceServiceTrait for PerformanceService {
         start_date: Option<NaiveDate>,
         end_date: Option<NaiveDate>,
         tracking_mode: Option<TrackingMode>,
+        account_type: Option<&str>,
     ) -> Result<PerformanceResult> {
         match item_type {
             "account" => {
-                self.calculate_account_performance(item_id, start_date, end_date, tracking_mode)
-                    .await
+                self.calculate_account_performance(
+                    item_id,
+                    start_date,
+                    end_date,
+                    tracking_mode,
+                    account_type,
+                )
+                .await
             }
             "symbol" => {
                 self.calculate_symbol_performance(item_id, start_date, end_date)
@@ -3002,6 +3124,7 @@ impl PerformanceServiceTrait for PerformanceService {
         account_ids: &[String],
         base_currency: &str,
         account_tracking_modes: &HashMap<String, TrackingMode>,
+        account_types: &HashMap<String, String>,
         start_date: Option<NaiveDate>,
         end_date: Option<NaiveDate>,
     ) -> Result<PerformanceResult> {
@@ -3010,6 +3133,7 @@ impl PerformanceServiceTrait for PerformanceService {
             account_ids,
             base_currency,
             account_tracking_modes,
+            account_types,
             start_date,
             end_date,
             include_returns_series: true,
@@ -3027,6 +3151,7 @@ impl PerformanceServiceTrait for PerformanceService {
         start_date: Option<NaiveDate>,
         end_date: Option<NaiveDate>,
         tracking_mode: Option<TrackingMode>,
+        account_type: Option<&str>,
         profile: PerformanceSummaryProfile,
     ) -> Result<PerformanceResult> {
         match item_type {
@@ -3036,6 +3161,7 @@ impl PerformanceServiceTrait for PerformanceService {
                     start_date,
                     end_date,
                     tracking_mode,
+                    account_type,
                     profile,
                 )
                 .await
@@ -3057,6 +3183,7 @@ impl PerformanceServiceTrait for PerformanceService {
         account_ids: &[String],
         base_currency: &str,
         account_tracking_modes: &HashMap<String, TrackingMode>,
+        account_types: &HashMap<String, String>,
         start_date: Option<NaiveDate>,
         end_date: Option<NaiveDate>,
         profile: PerformanceSummaryProfile,
@@ -3066,6 +3193,7 @@ impl PerformanceServiceTrait for PerformanceService {
             account_ids,
             base_currency,
             account_tracking_modes,
+            account_types,
             start_date,
             end_date,
             include_returns_series: false,
@@ -3249,6 +3377,21 @@ mod tests {
             cost_basis_method: "FIFO".to_string(),
             created_at: "2026-05-02T00:00:00.000Z".to_string(),
         }
+    }
+
+    #[test]
+    fn activity_date_window_includes_user_timezone_midnight_edges() {
+        let activity_time = DateTime::parse_from_rfc3339("2026-06-02T02:30:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let tz = parse_user_timezone_or_default("America/Toronto");
+        let local_date = activity_date_in_tz(activity_time, tz);
+        let (start_utc, end_exclusive_utc) =
+            PerformanceService::activity_query_utc_bounds(date("2026-06-01"), date("2026-06-01"));
+
+        assert_eq!(local_date, date("2026-06-01"));
+        assert!(activity_time >= start_utc);
+        assert!(activity_time < end_exclusive_utc);
     }
 
     #[derive(Clone)]
@@ -4593,6 +4736,7 @@ mod tests {
                 &account_ids,
                 "USD",
                 &HashMap::new(),
+                &HashMap::new(),
                 Some(date("2026-05-01")),
                 Some(date("2026-05-03")),
             )
@@ -4702,6 +4846,7 @@ mod tests {
                 &account_ids,
                 "USD",
                 &HashMap::new(),
+                &HashMap::new(),
                 Some(date("2026-05-01")),
                 Some(date("2026-05-04")),
             )
@@ -4726,6 +4871,56 @@ mod tests {
             performance.series.last().unwrap().value.round_dp(4),
             dec!(0.52)
         );
+    }
+
+    #[tokio::test]
+    async fn activity_attribution_uses_configured_timezone_for_period_window() {
+        let mut start = valuation("2026-05-31", dec!(1000), dec!(1000), dec!(1000), dec!(1000));
+        start.account_id = "acct".to_string();
+        start.external_flow_source = ExternalFlowSource::ActivityDerived;
+
+        let mut end = valuation("2026-06-01", dec!(1020), dec!(1000), dec!(1000), dec!(1000));
+        end.account_id = "acct".to_string();
+        end.external_flow_source = ExternalFlowSource::ActivityDerived;
+
+        let activity_time = DateTime::parse_from_rfc3339("2026-06-02T02:30:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let mut dividend = income_activity_on(
+            "dividend-midnight",
+            "acct",
+            "2026-06-02",
+            ActivityType::Dividend,
+            dec!(20),
+        );
+        dividend.activity_date = activity_time;
+        dividend.created_at = activity_time;
+        dividend.updated_at = activity_time;
+        dividend.currency = "CAD".to_string();
+
+        let valuation_service = Arc::new(TestValuationService::new(vec![start, end]));
+        let activity_repo = Arc::new(TestActivityRepository::new(vec![dividend]));
+        let timezone = Arc::new(RwLock::new("America/Toronto".to_string()));
+        let performance_service = PerformanceService::new_with_timezone(
+            valuation_service,
+            Arc::new(TestQuoteService),
+            timezone,
+        )
+        .with_activity_repository(activity_repo, Arc::new(TestFxService));
+
+        let performance = performance_service
+            .calculate_account_performance(
+                "acct",
+                Some(date("2026-05-31")),
+                Some(date("2026-06-01")),
+                Some(TrackingMode::Transactions),
+                Some(account_types::SECURITIES),
+            )
+            .await
+            .expect("performance should include local-date dividend attribution");
+
+        assert_eq!(performance.attribution.income, dec!(20));
+        assert_eq!(performance.attribution.residual, Decimal::ZERO);
     }
 
     fn activity_fixture(activity_type: ActivityType, amount: Decimal, fee: Decimal) -> Activity {
@@ -4865,6 +5060,7 @@ mod tests {
             false,
             ExternalFlowBasis::BaseCurrency,
             PerformanceSummaryProfile::Headline,
+            false,
         )
         .expect("headline should compute");
 
@@ -4958,7 +5154,7 @@ mod tests {
             .data_quality
             .warnings
             .iter()
-            .any(|warning| warning.starts_with("Attribution residual ")));
+            .any(|warning| PerformanceService::is_attribution_residual_warning(warning)));
     }
 
     #[test]
@@ -4987,6 +5183,76 @@ mod tests {
 
         assert_eq!(result.attribution.residual, Decimal::ZERO);
         assert_eq!(attribution_pnl(&result), dec!(40));
+    }
+
+    #[test]
+    fn attribution_residual_tolerance_uses_two_tenths_percent() {
+        let history = vec![
+            valuation(
+                "2026-05-01",
+                dec!(1000),
+                dec!(1000),
+                Decimal::ZERO,
+                Decimal::ZERO,
+            ),
+            valuation(
+                "2026-05-02",
+                dec!(1001.5),
+                dec!(1000),
+                Decimal::ZERO,
+                Decimal::ZERO,
+            ),
+        ];
+
+        let result = PerformanceService::compute_account_performance(
+            &history,
+            Some(TrackingMode::Transactions),
+            None,
+            false,
+        )
+        .expect("performance should compute");
+
+        assert_eq!(result.attribution.residual, dec!(1.5));
+        assert!(!result
+            .data_quality
+            .warnings
+            .iter()
+            .any(|warning| PerformanceService::is_attribution_residual_warning(warning)));
+    }
+
+    #[test]
+    fn attribution_residual_warning_uses_user_facing_message() {
+        let history = vec![
+            valuation(
+                "2026-05-01",
+                dec!(1000),
+                dec!(1000),
+                Decimal::ZERO,
+                Decimal::ZERO,
+            ),
+            valuation(
+                "2026-05-02",
+                dec!(1003),
+                dec!(1000),
+                Decimal::ZERO,
+                Decimal::ZERO,
+            ),
+        ];
+
+        let result = PerformanceService::compute_account_performance(
+            &history,
+            Some(TrackingMode::Transactions),
+            None,
+            false,
+        )
+        .expect("performance should compute");
+
+        assert_eq!(result.attribution.residual, dec!(3));
+        assert!(result.data_quality.warnings.iter().any(|warning| {
+            warning.starts_with("Performance attribution is incomplete for this period")
+                && warning.contains("Difference: 3")
+                && warning.contains("Review Health Center")
+        }));
     }
 
     #[test]
@@ -5498,6 +5764,207 @@ mod tests {
     }
 
     #[test]
+    fn attribution_includes_foreign_cash_fx_effect() {
+        let mut start = valuation(
+            "2026-05-01",
+            dec!(1000),
+            dec!(1000),
+            Decimal::ZERO,
+            Decimal::ZERO,
+        );
+        start.account_currency = "USD".to_string();
+        start.base_currency = "CAD".to_string();
+        start.fx_rate_to_base = dec!(1.3);
+        start.cash_balance_base = dec!(1300);
+        start.total_value_base = dec!(1300);
+        start.net_contribution_base = dec!(1300);
+        start.performance_eligible_value_base = dec!(1300);
+
+        let mut end = valuation(
+            "2026-05-02",
+            dec!(1000),
+            dec!(1000),
+            Decimal::ZERO,
+            Decimal::ZERO,
+        );
+        end.account_currency = "USD".to_string();
+        end.base_currency = "CAD".to_string();
+        end.fx_rate_to_base = dec!(1.4);
+        end.cash_balance_base = dec!(1400);
+        end.total_value_base = dec!(1400);
+        end.net_contribution_base = dec!(1300);
+        end.performance_eligible_value_base = dec!(1400);
+
+        let result = PerformanceService::compute_account_performance_with_flow_basis(
+            &[start, end],
+            Some(TrackingMode::Transactions),
+            None,
+            false,
+            ExternalFlowBasis::BaseCurrency,
+            PerformanceSummaryProfile::Full,
+            true,
+        )
+        .expect("foreign cash performance should compute");
+
+        assert_eq!(result.attribution.contributions, dec!(1300));
+        assert_eq!(result.attribution.fx_effect, dec!(100));
+        assert_eq!(result.attribution.residual, Decimal::ZERO);
+        assert_eq!(attribution_pnl(&result), dec!(100));
+        assert!(!result
+            .data_quality
+            .warnings
+            .iter()
+            .any(|warning| PerformanceService::is_attribution_residual_warning(warning)));
+    }
+
+    #[test]
+    fn cash_shaped_non_cash_account_does_not_apply_cash_fx_reconciliation() {
+        let mut start = valuation(
+            "2026-05-01",
+            dec!(1000),
+            dec!(1000),
+            Decimal::ZERO,
+            Decimal::ZERO,
+        );
+        start.account_currency = "USD".to_string();
+        start.base_currency = "CAD".to_string();
+        start.fx_rate_to_base = dec!(1.3);
+        start.cash_balance_base = dec!(1300);
+        start.total_value_base = dec!(1300);
+        start.net_contribution_base = dec!(1300);
+        start.performance_eligible_value_base = dec!(1300);
+
+        let mut end = valuation(
+            "2026-05-02",
+            dec!(1000),
+            dec!(1000),
+            Decimal::ZERO,
+            Decimal::ZERO,
+        );
+        end.account_currency = "USD".to_string();
+        end.base_currency = "CAD".to_string();
+        end.fx_rate_to_base = dec!(1.4);
+        end.cash_balance_base = dec!(1400);
+        end.total_value_base = dec!(1400);
+        end.net_contribution_base = dec!(1300);
+        end.performance_eligible_value_base = dec!(1400);
+
+        let result = PerformanceService::compute_account_performance(
+            &[start, end],
+            Some(TrackingMode::Transactions),
+            None,
+            false,
+        )
+        .expect("performance should compute");
+
+        assert_eq!(result.attribution.fx_effect, Decimal::ZERO);
+        assert_eq!(result.attribution.residual, dec!(100));
+    }
+
+    #[test]
+    fn attribution_includes_cash_fx_after_period_deposit() {
+        let mut start = valuation(
+            "2026-05-01",
+            Decimal::ZERO,
+            Decimal::ZERO,
+            Decimal::ZERO,
+            Decimal::ZERO,
+        );
+        start.account_currency = "USD".to_string();
+        start.base_currency = "CAD".to_string();
+        start.fx_rate_to_base = dec!(1.3);
+
+        let mut funded = valuation(
+            "2026-05-02",
+            dec!(1000),
+            dec!(1000),
+            Decimal::ZERO,
+            Decimal::ZERO,
+        );
+        funded.account_currency = "USD".to_string();
+        funded.base_currency = "CAD".to_string();
+        funded.fx_rate_to_base = dec!(1.3);
+        funded.cash_balance_base = dec!(1300);
+        funded.total_value_base = dec!(1300);
+        funded.net_contribution_base = dec!(1300);
+        funded.external_inflow_base = dec!(1300);
+        funded.external_flow_source = ExternalFlowSource::ActivityDerived;
+        funded.performance_eligible_value_base = dec!(1300);
+
+        let mut end = valuation(
+            "2026-05-03",
+            dec!(1000),
+            dec!(1000),
+            Decimal::ZERO,
+            Decimal::ZERO,
+        );
+        end.account_currency = "USD".to_string();
+        end.base_currency = "CAD".to_string();
+        end.fx_rate_to_base = dec!(1.4);
+        end.cash_balance_base = dec!(1400);
+        end.total_value_base = dec!(1400);
+        end.net_contribution_base = dec!(1300);
+        end.performance_eligible_value_base = dec!(1400);
+
+        let result = PerformanceService::compute_account_performance_with_flow_basis(
+            &[start, funded, end],
+            Some(TrackingMode::Transactions),
+            Some(date("2026-05-01")),
+            false,
+            ExternalFlowBasis::BaseCurrency,
+            PerformanceSummaryProfile::Full,
+            true,
+        )
+        .expect("foreign cash performance should compute");
+
+        assert_eq!(result.attribution.contributions, dec!(1300));
+        assert_eq!(result.attribution.fx_effect, dec!(100));
+        assert_eq!(result.attribution.residual, Decimal::ZERO);
+        assert_eq!(attribution_pnl(&result), dec!(100));
+    }
+
+    #[test]
+    fn securities_attribution_does_not_apply_cash_only_fx_reconciliation() {
+        let mut start = valuation("2026-05-01", dec!(1500), dec!(1500), dec!(500), dec!(500));
+        start.account_currency = "USD".to_string();
+        start.base_currency = "CAD".to_string();
+        start.fx_rate_to_base = dec!(1.3);
+        start.cash_balance_base = dec!(1300);
+        start.investment_market_value_base = dec!(650);
+        start.cost_basis_base = dec!(650);
+        start.total_value_base = dec!(1950);
+        start.net_contribution_base = dec!(2100);
+        start.performance_eligible_value_base = dec!(1950);
+
+        let mut end = valuation("2026-05-02", dec!(1500), dec!(1500), dec!(500), dec!(500));
+        end.account_currency = "USD".to_string();
+        end.base_currency = "CAD".to_string();
+        end.fx_rate_to_base = dec!(1.4);
+        end.cash_balance_base = dec!(1400);
+        end.investment_market_value_base = dec!(700);
+        end.cost_basis_base = dec!(700);
+        end.total_value_base = dec!(2100);
+        end.net_contribution_base = dec!(2100);
+        end.performance_eligible_value_base = dec!(2100);
+
+        let result = PerformanceService::compute_account_performance(
+            &[start, end],
+            Some(TrackingMode::Transactions),
+            None,
+            false,
+        )
+        .expect("securities performance should compute");
+
+        assert_eq!(result.attribution.fx_effect, Decimal::ZERO);
+        assert_eq!(result.attribution.residual, Decimal::ZERO);
+        assert!(!result
+            .data_quality
+            .warnings
+            .iter()
+            .any(|warning| PerformanceService::is_attribution_residual_warning(warning)));
+    }
+
+    #[test]
     fn scoped_attribution_separates_fx_per_account_before_aggregation() {
         let mut usd_start = valuation("2026-05-01", dec!(100), dec!(100), dec!(100), dec!(100));
         usd_start.account_id = "usd".to_string();
@@ -5534,6 +6001,52 @@ mod tests {
         assert!(attribution.complete);
         assert_eq!(attribution.unrealized_pnl_change, dec!(34));
         assert_eq!(attribution.fx_effect, dec!(10));
+    }
+
+    #[test]
+    fn scoped_attribution_does_not_add_foreign_cash_fx() {
+        let mut start = valuation(
+            "2026-05-01",
+            dec!(1000),
+            dec!(1000),
+            Decimal::ZERO,
+            Decimal::ZERO,
+        );
+        start.account_id = "usd".to_string();
+        start.account_currency = "USD".to_string();
+        start.base_currency = "CAD".to_string();
+        start.fx_rate_to_base = dec!(1.3);
+        start.cash_balance_base = dec!(1300);
+        start.total_value_base = dec!(1300);
+        start.net_contribution_base = dec!(1300);
+        start.performance_eligible_value_base = dec!(1300);
+
+        let mut end = valuation(
+            "2026-05-02",
+            dec!(1000),
+            dec!(1000),
+            Decimal::ZERO,
+            Decimal::ZERO,
+        );
+        end.account_id = "usd".to_string();
+        end.account_currency = "USD".to_string();
+        end.base_currency = "CAD".to_string();
+        end.fx_rate_to_base = dec!(1.4);
+        end.cash_balance_base = dec!(1400);
+        end.total_value_base = dec!(1400);
+        end.net_contribution_base = dec!(1300);
+        end.performance_eligible_value_base = dec!(1400);
+
+        let attribution = PerformanceService::scoped_unrealized_attribution_components(
+            &[vec![start, end]],
+            date("2026-05-01"),
+            date("2026-05-02"),
+            AttributionBaseline::PeriodStart,
+        );
+
+        assert!(attribution.complete);
+        assert_eq!(attribution.unrealized_pnl_change, Decimal::ZERO);
+        assert_eq!(attribution.fx_effect, Decimal::ZERO);
     }
 
     #[test]

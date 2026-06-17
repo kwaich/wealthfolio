@@ -15,6 +15,7 @@ use crate::provider_model::{
     SetDefaultProviderRequest, UpdateProviderSettingsRequest, AI_PROVIDER_SETTINGS_KEY,
     AI_PROVIDER_SETTINGS_SCHEMA_VERSION,
 };
+use crate::provider_urls::openai_compatible_models_url;
 use crate::types::normalize_tools_allowlist;
 
 /// Service trait for AI provider operations.
@@ -545,8 +546,8 @@ impl AiProviderServiceTrait for AiProviderService {
         let models_url = match provider_id {
             "ollama" => format!("{}/api/tags", base_url.trim_end_matches('/')),
             "google" => format!("{}/v1beta/models", base_url.trim_end_matches('/')),
-            // OpenAI-compatible: OpenAI, Groq, OpenRouter
-            _ => format!("{}/v1/models", base_url.trim_end_matches('/')),
+            // OpenAI-compatible: OpenAI, Groq, OpenRouter.
+            _ => openai_compatible_models_url(base_url),
         };
 
         // Build HTTP client and request

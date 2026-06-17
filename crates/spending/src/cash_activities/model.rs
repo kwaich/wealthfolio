@@ -99,6 +99,14 @@ pub enum CashFlowBucket {
     Neutral,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TransferLinkStatus {
+    Linked,
+    Unlinked,
+    Invalid,
+}
+
 /// Canonical cash-activity row, returned by every spending read path
 /// (`list()` and `search()`). Flattens the portfolio-wide `Activity` and
 /// adds the spending-domain enrichments — single-select category assignment
@@ -124,6 +132,11 @@ pub struct CashActivity {
     #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub event_id: Option<String>,
+    /// Transfer link state for TRANSFER_IN / TRANSFER_OUT rows. Distinguishes
+    /// valid pairs from orphaned or malformed source groups.
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transfer_link_status: Option<TransferLinkStatus>,
 }
 
 /// Paginated response for cash-activity search.

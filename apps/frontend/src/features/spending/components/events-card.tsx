@@ -1,25 +1,22 @@
 import { useMemo } from "react";
-import { useQueries } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 
-import { QueryKeys } from "@/lib/query-keys";
 import type { Activity } from "@/lib/types";
 import { cn, formatDateISO } from "@/lib/utils";
 import { Icons, PrivacyAmount, Skeleton } from "@wealthfolio/ui";
 
-import { getActivityAssignments } from "../adapters/cash-activities";
 import { getActivitySpendingAmount } from "../lib/constants";
-import { useSpendingEvents } from "../hooks/use-spending-events";
+import { useEventSpendingSummaries } from "../hooks/use-spending-events";
 import { themeBg, type Palette } from "../lib/theme";
 import { CategoryIcon, type CategoryMetaMap } from "./category-chips";
 import { useEventDialog } from "./event-dialog-provider";
-
-const SPENDING_TAXONOMY = "spending_categories";
 
 export function EventsCard({
   activities,
   accountTypeById,
   categoriesMeta,
+  eventSummaryEndDate,
+  eventSummaryStartDate,
   periodEndDate,
   periodStartDate,
   theme,
@@ -27,23 +24,29 @@ export function EventsCard({
   activities: Activity[];
   accountTypeById?: Map<string, string>;
   categoriesMeta: CategoryMetaMap;
+  eventSummaryEndDate: string;
+  eventSummaryStartDate: string;
   periodEndDate: string;
   periodStartDate: string;
   theme: Palette;
 }) {
+  const eventSummaryRequest = useMemo(
+    () => ({ startDate: eventSummaryStartDate, endDate: eventSummaryEndDate }),
+    [eventSummaryEndDate, eventSummaryStartDate],
+  );
   const {
-    data: events = [],
-    isLoading: eventsLoading,
-    isError: eventsErrored,
-    refetch: refetchEvents,
-  } = useSpendingEvents();
+    data: eventSummaries = [],
+    isLoading: eventSummariesLoading,
+    isError: eventSummariesErrored,
+    refetch: refetchEventSummaries,
+  } = useEventSpendingSummaries(eventSummaryRequest);
   const { openEventDialog } = useEventDialog();
 
   const pick = useMemo(() => {
     const todayKey = formatDateISO(new Date());
     const periodStartKey = periodStartDate.slice(0, 10);
     const periodEndKey = periodEndDate.slice(0, 10);
-    const periodEvents = events.filter(
+    const periodEvents = eventSummaries.filter(
       (e) => e.startDate.slice(0, 10) <= periodEndKey && e.endDate.slice(0, 10) >= periodStartKey,
     );
 
@@ -69,65 +72,37 @@ export function EventsCard({
       return { mode: "period" as const, event: recent[0] };
     }
     return null;
-  }, [events, periodEndDate, periodStartDate]);
+  }, [eventSummaries, periodEndDate, periodStartDate]);
 
   const ev = pick?.event;
   const start = ev ? new Date(ev.startDate.slice(0, 10) + "T00:00:00") : new Date();
   const end = ev ? new Date(ev.endDate.slice(0, 10) + "T00:00:00") : new Date();
   const totalDays = Math.floor((end.getTime() - start.getTime()) / (24 * 3600 * 1000)) + 1;
 
-  const eventActivities = useMemo(
-    () =>
-      ev
-        ? activities.filter(
-            (a) =>
-              (a as { eventId?: string | null }).eventId === ev.id &&
-              getActivitySpendingAmount(a, accountTypeById?.get(a.accountId)) !== 0,
-          )
-        : [],
-    [accountTypeById, activities, ev],
-  );
-  const eventSpent = Math.max(
-    0,
-    eventActivities.reduce(
-      (s, a) => s + getActivitySpendingAmount(a, accountTypeById?.get(a.accountId)),
-      0,
-    ),
-  );
-  const currency = eventActivities[0]?.currency ?? "USD";
-
-  const assignmentQueries = useQueries({
-    queries: eventActivities.map((a) => ({
-      queryKey: [QueryKeys.SPENDING_TRANSACTIONS, "assignments", a.id],
-      queryFn: () => getActivityAssignments(a.id),
-      staleTime: 30_000,
-    })),
-  });
+  const eventSpent = Math.max(0, ev?.totalSpending ?? 0);
+  const currency = ev?.currency ?? "USD";
 
   const topCategories = useMemo(() => {
     const totals = new Map<
       string,
       { name: string; color: string | null; icon: string | null; amount: number }
     >();
-    eventActivities.forEach((a, i) => {
-      const assignments = assignmentQueries[i]?.data ?? [];
-      const spending = assignments.find((x) => x.taxonomyId === SPENDING_TAXONOMY);
-      const amount = getActivitySpendingAmount(a, accountTypeById?.get(a.accountId));
-      const meta = spending ? categoriesMeta.get(spending.categoryId) : undefined;
-      const topId = meta?.parentId ?? spending?.categoryId ?? "__unc__";
+    Object.values(ev?.byCategory ?? {}).forEach((category) => {
+      const meta = category.categoryId ? categoriesMeta.get(category.categoryId) : undefined;
+      const topId = meta?.parentId ?? category.categoryId ?? "__unc__";
       const top = categoriesMeta.get(topId) ?? meta;
-      const name = top?.name ?? "Uncategorized";
-      const color = top?.color ?? null;
+      const name = top?.name ?? category.categoryName ?? "Uncategorized";
+      const color = top?.color ?? category.color ?? null;
       const icon = meta?.icon ?? top?.icon ?? null;
       const e = totals.get(topId) ?? { name, color, icon, amount: 0 };
-      e.amount += amount;
+      e.amount += category.amount;
       totals.set(topId, e);
     });
     return Array.from(totals.values())
       .filter((row) => row.amount > 0)
       .sort((a, b) => b.amount - a.amount)
       .slice(0, 2);
-  }, [accountTypeById, eventActivities, assignmentQueries, categoriesMeta]);
+  }, [categoriesMeta, ev]);
 
   const baselineDailyAvg = useMemo(() => {
     if (!ev) return 0;
@@ -153,13 +128,13 @@ export function EventsCard({
   // Surface query errors instead of silently rendering nothing — mirrors the
   // pattern in spending-insights-page after commit de0d4d89. Without this,
   // a server outage looks identical to "user has no events".
-  if (eventsErrored) {
+  if (eventSummariesErrored) {
     return (
       <div className="border-border/40 bg-card/70 rounded-xl border p-4 text-center text-xs backdrop-blur-xl md:p-5">
         <div className="text-muted-foreground">Couldn't load events.</div>
         <button
           type="button"
-          onClick={() => void refetchEvents()}
+          onClick={() => void refetchEventSummaries()}
           className="text-foreground mt-2 inline-flex items-center gap-1 text-xs underline-offset-4 hover:underline"
         >
           Retry
@@ -168,7 +143,7 @@ export function EventsCard({
     );
   }
 
-  if (eventsLoading) {
+  if (eventSummariesLoading) {
     return (
       <div className="border-border/40 bg-card/70 rounded-xl border p-4 backdrop-blur-xl md:p-5">
         <div className="flex items-center gap-2">
@@ -187,24 +162,18 @@ export function EventsCard({
   }
 
   if (!pick) {
-    const hasEvents = events.length > 0;
-
     return (
       <div className="border-border/40 bg-card/70 rounded-xl border p-4 backdrop-blur-xl md:p-5">
         <div className="flex items-center gap-2">
           <Icons.Calendar className="h-4 w-4 shrink-0" style={{ color: theme.deep }} />
           <div className="min-w-0 flex-1">
             <div className="text-foreground text-sm font-semibold">Events</div>
-            <div className="text-muted-foreground/70 text-[11px]">
-              {hasEvents ? "No events in this period" : "No events yet"}
-            </div>
+            <div className="text-muted-foreground/70 text-[11px]">No events in this period</div>
           </div>
         </div>
 
         <div className="text-muted-foreground/80 mt-3 text-xs leading-snug">
-          {hasEvents
-            ? "Create an event for the next trip, move, or spending period."
-            : "Create an event to track spending around trips, moves, or one-off periods."}
+          Create an event to track spending around trips, moves, or one-off periods.
         </div>
 
         <button
@@ -259,6 +228,8 @@ export function EventsCard({
     subLine = `Day ${dayInto} of ${totalDays} · ${daysLeft} ${daysLeft === 1 ? "day" : "days"} left`;
   } else if (pick.mode === "recent") {
     subLine = `Wrapped ${pick.days} ${pick.days === 1 ? "day" : "days"} ago`;
+  } else if (pick.mode === "upcoming") {
+    subLine = `${pick.days} ${pick.days === 1 ? "day" : "days"} until start`;
   } else if (pick.mode === "period") {
     subLine = `${totalDays} ${totalDays === 1 ? "day" : "days"} in selected period`;
   }
@@ -268,7 +239,7 @@ export function EventsCard({
       <div className="flex items-center gap-2">
         <HeaderIcon className="h-4 w-4 shrink-0" style={{ color: theme.deep }} />
         <div className="min-w-0 flex-1">
-          <div className="text-foreground truncate text-sm font-semibold">{ev!.name}</div>
+          <div className="text-foreground truncate text-sm font-semibold">{ev!.eventName}</div>
           <div className="text-muted-foreground/70 text-[11px]">{dateRangeLabel}</div>
         </div>
         <span
@@ -279,13 +250,13 @@ export function EventsCard({
         </span>
       </div>
 
-      {pick.mode === "upcoming" ? (
+      {pick.mode === "upcoming" && eventSpent <= 0 ? (
         <div className="mt-3">
           <div className="text-foreground text-2xl font-bold tabular-nums tracking-tight">
             {pick.days} {pick.days === 1 ? "day" : "days"}
           </div>
           <div className="text-muted-foreground/80 text-xs">
-            until {ev!.name} · {totalDays} {totalDays === 1 ? "day" : "days"} planned
+            until {ev!.eventName} · {totalDays} {totalDays === 1 ? "day" : "days"} planned
           </div>
         </div>
       ) : eventSpent > 0 ? (
@@ -295,8 +266,8 @@ export function EventsCard({
               <PrivacyAmount value={eventSpent} currency={currency} />
             </div>
             <div className="text-muted-foreground/80 text-xs">
-              {pick.mode === "recent" ? "total" : "spent so far"} · {eventActivities.length}{" "}
-              {eventActivities.length === 1 ? "transaction" : "transactions"}
+              {pick.mode === "recent" ? "total" : "spent so far"} · {ev!.transactionCount}{" "}
+              {ev!.transactionCount === 1 ? "transaction" : "transactions"}
               {subLine && (
                 <>
                   {" · "}
@@ -339,7 +310,7 @@ export function EventsCard({
         </div>
       )}
 
-      {pick.mode !== "upcoming" && topCategories.length > 0 && (
+      {eventSpent > 0 && topCategories.length > 0 && (
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <span className="text-muted-foreground/60 text-[10px] font-semibold uppercase tracking-wide">
             Top
@@ -366,7 +337,7 @@ export function EventsCard({
         </div>
       )}
 
-      {pick.mode === "upcoming" ? (
+      {pick.mode === "upcoming" && eventSpent <= 0 ? (
         <button
           type="button"
           onClick={() => {

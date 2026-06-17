@@ -605,6 +605,7 @@ impl AssetService {
 
         let context = QuoteContext {
             instrument,
+            identifiers: Default::default(),
             overrides: None,
             currency_hint: constraints.quote_ccy.map(|ccy| Cow::Owned(ccy.to_string())),
             preferred_provider: Some(Cow::Owned(provider.to_string())),
@@ -863,6 +864,7 @@ impl AssetService {
 
         let context = QuoteContext {
             instrument,
+            identifiers: Default::default(),
             overrides: None,
             currency_hint: quote_ccy.map(|ccy| Cow::Owned(ccy.to_string())),
             preferred_provider: Some(Cow::Owned(provider.to_string())),

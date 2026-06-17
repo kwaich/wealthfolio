@@ -19,6 +19,7 @@ export interface ActivityTaxonomyAssignment {
 }
 
 export type CashFlowBucket = "spending" | "income" | "saving" | "neutral";
+export type TransferLinkStatus = "linked" | "unlinked" | "invalid";
 
 export type CashActivityStatusFilter = "all" | "needs_review" | "uncategorized" | "categorized";
 
@@ -57,6 +58,8 @@ export interface CashActivity extends Activity {
   assignments: ActivityTaxonomyAssignment[];
   /** Spending event tag from the `activity_events` join. `undefined` when untagged. */
   eventId?: string | null;
+  /** Transfer pair validity for effective TRANSFER_IN / TRANSFER_OUT rows. */
+  transferLinkStatus?: TransferLinkStatus | null;
 }
 
 export interface CashActivitySearchResponse {

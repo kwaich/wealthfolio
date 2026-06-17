@@ -2,8 +2,7 @@
  * Period model for the Reports page.
  *
  * Distinct from the portfolio-wide `TimePeriod` because spending reports use
- * cashflow language: current month, trailing 30 days, and longer comparison
- * windows.
+ * cashflow language: current month, last month, and longer comparison windows.
  */
 
 import type { DateRange } from "@/lib/types";
@@ -19,9 +18,9 @@ import {
   type ZonedCalendarDate,
 } from "./timezone";
 
-export type ReportsPeriod = "MTD" | "30D" | "3M" | "6M" | "YTD" | "1Y";
+export type ReportsPeriod = "MTD" | "LAST_MONTH" | "3M" | "6M" | "YTD" | "1Y";
 
-export const REPORTS_PERIODS: ReportsPeriod[] = ["MTD", "30D", "3M", "6M", "YTD", "1Y"];
+export const REPORTS_PERIODS: ReportsPeriod[] = ["MTD", "LAST_MONTH", "3M", "6M", "YTD", "1Y"];
 
 export const DEFAULT_REPORTS_PERIOD: ReportsPeriod = "MTD";
 
@@ -47,8 +46,9 @@ export function periodToReportsRange(
   const today = getZonedDateParts(now, timezone);
 
   // For MTD/This month we span the full calendar month so "X days left in May"
-  // reads correctly and forecasts can project past today. Other periods stay
-  // "through today" since the current month is naturally the trailing edge.
+  // reads correctly and forecasts can project past today. Last month also uses
+  // a full calendar month. Longer periods stay "through today" since the
+  // current month is naturally the trailing edge.
   const { start, end } = (() => {
     switch (period) {
       case "MTD": {
@@ -61,11 +61,17 @@ export function periodToReportsRange(
           },
         };
       }
-      case "30D":
+      case "LAST_MONTH": {
+        const lastMonth = addCalendarMonths({ year: today.year, month: today.month, day: 1 }, -1);
         return {
-          start: addCalendarDays(today, -29),
-          end: today,
+          start: { year: lastMonth.year, month: lastMonth.month, day: 1 },
+          end: {
+            year: lastMonth.year,
+            month: lastMonth.month,
+            day: daysInCalendarMonth(lastMonth.year, lastMonth.month),
+          },
         };
+      }
       case "3M":
         return {
           start: addCalendarMonths({ year: today.year, month: today.month, day: 1 }, -2),
@@ -133,8 +139,8 @@ export function periodLabel(period: ReportsPeriod): string {
   switch (period) {
     case "MTD":
       return "This month";
-    case "30D":
-      return "Past 30 days";
+    case "LAST_MONTH":
+      return "Last month";
     case "3M":
       return "Past 3 months";
     case "6M":

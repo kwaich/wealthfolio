@@ -45,6 +45,7 @@ interface MobileActivityFormProps {
   activity?: Partial<ActivityDetails>;
   open?: boolean;
   onClose?: () => void;
+  startOnDetails?: boolean;
 }
 
 export interface TransferValidationInput {
@@ -254,8 +255,11 @@ export function MobileActivityForm({
   activity,
   open,
   onClose,
+  startOnDetails,
 }: MobileActivityFormProps) {
-  const [currentStep, setCurrentStep] = useState(activity?.id ? 2 : 1);
+  const shouldStartOnDetails = Boolean(activity?.id || startOnDetails);
+  const initialStep = shouldStartOnDetails ? 2 : 1;
+  const [currentStep, setCurrentStep] = useState(initialStep);
   const {
     addActivityMutation,
     updateActivityMutation,
@@ -387,8 +391,8 @@ export function MobileActivityForm({
       : { ...defaultValues, activityDate: new Date() };
 
     reset(nextDefaultValues);
-    setCurrentStep(activity?.id ? 2 : 1);
-  }, [activity?.date, activity?.id, defaultValues, open, reset]);
+    setCurrentStep(shouldStartOnDetails ? 2 : 1);
+  }, [activity?.date, defaultValues, open, reset, shouldStartOnDetails]);
 
   // Transfers may target any account (incl. spending/saving accounts the Spending
   // split hides from `accounts`), so widen the list once the type is a transfer.
@@ -401,10 +405,7 @@ export function MobileActivityForm({
   // Handle sheet close - reset form and step
   const handleOpenChange = (isOpen: boolean) => {
     if (!isOpen) {
-      // Reset step when closing (unless editing)
-      if (!activity?.id) {
-        setCurrentStep(1);
-      }
+      setCurrentStep(shouldStartOnDetails ? 2 : 1);
       form.reset(defaultValues);
     }
     onClose?.();
@@ -537,6 +538,12 @@ export function MobileActivityForm({
               ? activity.id
               : activity?.counterpartActivityId);
 
+          if (id && (!transferOutId || !transferInId)) {
+            throw new Error(
+              "Use Link transfer... to pair this existing transfer before saving it as internal.",
+            );
+          }
+
           await saveInternalTransferPairMutation.mutateAsync({
             transferOutId: id ? transferOutId : undefined,
             transferInId: id ? transferInId : undefined,
@@ -554,7 +561,7 @@ export function MobileActivityForm({
           });
 
           form.reset(defaultValues);
-          setCurrentStep(1);
+          setCurrentStep(initialStep);
           return;
         }
 
@@ -636,7 +643,7 @@ export function MobileActivityForm({
           });
 
           form.reset(defaultValues);
-          setCurrentStep(1);
+          setCurrentStep(initialStep);
           return;
         }
 
@@ -666,7 +673,7 @@ export function MobileActivityForm({
         });
 
         form.reset(defaultValues);
-        setCurrentStep(1);
+        setCurrentStep(initialStep);
         return;
       }
 
@@ -714,7 +721,7 @@ export function MobileActivityForm({
 
       // Reset form and step after successful submission
       form.reset(defaultValues);
-      setCurrentStep(1);
+      setCurrentStep(initialStep);
     } catch (error) {
       toast.error("Failed to save activity", { description: extractErrorMessage(error) });
       logger.error(
@@ -795,7 +802,7 @@ export function MobileActivityForm({
         <SheetHeader className="border-b px-6 py-4">
           <div className="flex flex-col items-center space-y-2">
             <SheetTitle>{activity?.id ? "Update Activity" : "Add Activity"}</SheetTitle>
-            {!activity?.id && (
+            {!activity?.id && !startOnDetails && (
               <div className="flex gap-1.5">
                 {[1, 2].map((step) => (
                   <div
@@ -831,7 +838,7 @@ export function MobileActivityForm({
 
         <SheetFooter className="mt-auto border-t px-6 py-4 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
           <div className="flex w-full gap-3">
-            {currentStep > 1 && !activity?.id && (
+            {currentStep > 1 && !activity?.id && !startOnDetails && (
               <Button
                 type="button"
                 variant="outline"

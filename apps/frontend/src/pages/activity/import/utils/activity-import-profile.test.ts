@@ -5,6 +5,7 @@ import {
   activityTypeAllowedForImportProfile,
   getActivityImportProfileForImportContext,
   getActivityImportProfileForAccountType,
+  getActivityTypeLabelForImportProfile,
   getDefaultActivityMappingsForImportProfile,
   mergeActivityMappingsForImportProfile,
   sanitizeImportMappingForProfile,
@@ -44,13 +45,31 @@ describe("activity import profiles", () => {
     expect(activityTypeAllowedForImportProfile(ActivityType.TRANSFER_OUT, profile)).toBe(false);
   });
 
+  it("uses credit-card labels for credit card transaction imports", () => {
+    const creditCard = getActivityImportProfileForAccountType(AccountType.CREDIT_CARD);
+    const cash = getActivityImportProfileForAccountType(AccountType.CASH);
+
+    expect(getActivityTypeLabelForImportProfile(ActivityType.WITHDRAWAL, creditCard)).toBe(
+      "Charge",
+    );
+    expect(getActivityTypeLabelForImportProfile(ActivityType.TRANSFER_IN, creditCard)).toBe(
+      "Payment",
+    );
+    expect(getActivityTypeLabelForImportProfile(ActivityType.WITHDRAWAL, cash)).toBe("Withdrawal");
+  });
+
   it("includes transaction-specific default aliases", () => {
     const profile = getActivityImportProfileForAccountType(AccountType.CREDIT_CARD);
     const mappings = getDefaultActivityMappingsForImportProfile(profile);
+    const cashMappings = getDefaultActivityMappingsForImportProfile(
+      getActivityImportProfileForAccountType(AccountType.CASH),
+    );
 
     expect(mappings[ActivityType.WITHDRAWAL]).toContain("PURCHASE");
     expect(mappings[ActivityType.TRANSFER_IN]).toContain("PAYMENT");
     expect(mappings[ActivityType.CREDIT]).toContain("REFUND");
+    expect(mappings[ActivityType.CREDIT]).toContain("CASHBACK");
+    expect(cashMappings[ActivityType.CREDIT]).toContain("CASHBACK");
     expect(mappings[ActivityType.BUY]).toBeUndefined();
   });
 

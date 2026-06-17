@@ -356,6 +356,21 @@ export interface InternalTransferPairResponse {
   transferOut: Activity;
   transferIn: Activity;
 }
+
+export interface TransferMatchCandidateRequest {
+  activityId: string;
+  windowDays?: number;
+  limit?: number;
+}
+
+export interface TransferMatchCandidate {
+  activity: Activity;
+  matchKind: "cash" | "security";
+  confidence: "high" | "medium" | "low";
+  score: number;
+  reasons: string[];
+  warnings: string[];
+}
 export type ActivityImport = z.infer<typeof importActivitySchema>;
 export type ImportMappingData = z.infer<typeof importMappingSchema>;
 export type ParseConfig = z.infer<typeof parseConfigSchema>;
@@ -976,6 +991,55 @@ export interface AccountValuation {
     | "MIXED";
   performanceEligibleValueBase: number;
   calculatedAt: string;
+}
+
+export interface CurrentAccountValuation {
+  accountId: string;
+  accountCurrency: string;
+  baseCurrency: string;
+  cashBalance: number;
+  investmentMarketValue: number;
+  totalValue: number;
+  cashBalanceBase: number;
+  investmentMarketValueBase: number;
+  totalValueBase: number;
+  sourceDataAsOf: string | null;
+  calculatedAt: string;
+  warnings: string[];
+}
+
+export interface CurrentValuationSplit {
+  currency: string;
+  valueBase: number;
+  valueLocal?: number | null;
+  percentage: number;
+}
+
+export interface CurrentValuationSummary {
+  scopeId: string;
+  baseCurrency: string;
+  cashBalanceBase: number;
+  investmentMarketValueBase: number;
+  totalValueBase: number;
+  holdingsCount: number;
+  accountCount: number;
+  currencySplit: CurrentValuationSplit[];
+  cashCurrencySplit: CurrentValuationSplit[];
+  sourceDataAsOf: string | null;
+  calculatedAt: string;
+  warnings: string[];
+}
+
+export interface CurrentValuationResponse {
+  summary: CurrentValuationSummary;
+  accounts: CurrentAccountValuation[];
+}
+
+export interface AccountValueSource {
+  accountId: string;
+  totalValue?: number | null;
+  totalValueBase?: number | null;
+  fxRateToBase?: number | null;
 }
 
 export interface AccountSummaryView {

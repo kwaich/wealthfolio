@@ -6,16 +6,26 @@
   <h3 align="center">Wealthfolio</h3>
 
   <p align="center">
-    A Beautiful Personal Finance Tracker — investments, net worth, spending, and simulations
+    The open-source, private portfolio tracker — investments, net worth, spending, and simulations.
+    <br />
+    Local-first: your data lives on your device.
     <br />
     <br />
-    <a href="https://wealthfolio.app">Website</a>
+    <a href="https://wealthfolio.app?utm_source=github&utm_medium=readme">Website</a>
     ·
     <a href="https://discord.gg/WDMCY6aPWK">Discord</a>
     ·
     <a href="https://x.com/intent/follow?screen_name=WealthfolioApp">Twitter</a>
     ·
     <a href="https://github.com/wealthfolio/wealthfolio/releases">Releases</a>
+  </p>
+
+  <p align="center">
+    <a href="https://wealthfolio.app/download?utm_source=github&utm_medium=readme&utm_campaign=cta"><strong>⬇️&nbsp;&nbsp;Download for macOS · Windows · Linux</strong></a>
+    &nbsp;·&nbsp;
+    <a href="https://apps.apple.com/us/app/wealthfolio-private-finance/id6732888445">📱&nbsp;iOS&nbsp;App</a>
+    &nbsp;·&nbsp;
+    <a href="https://wealthfolio.app/docs/guide/self-hosting/docker?utm_source=github&utm_medium=readme">🐳&nbsp;Docker</a>
   </p>
 </div>
 <div align="center">
@@ -41,11 +51,19 @@
 
 ## Introduction
 
-**Wealthfolio App** is a Beautiful Personal Finance Tracker — investments, net
-worth, spending, and simulations — with local data storage. No subscriptions, no
-cloud.
+**Wealthfolio** is an open-source, private portfolio tracker — investments, net
+worth, spending, and simulations. All your data is stored locally on your
+device: no cloud database, no account required, free forever.
 
-Visit the app website at [Wealthfolio App](https://wealthfolio.app/).
+For automatic brokerage syncing (30+ institutions, read-only) and encrypted
+multi-device sync, there's
+**[Wealthfolio Connect](https://wealthfolio.app/connect?utm_source=github&utm_medium=readme)**
+— an optional subscription that covers the real cost of the brokerage data
+connections. The app never requires it: manual tracking and CSV import are free,
+forever.
+
+Visit the website at
+[wealthfolio.app](https://wealthfolio.app/?utm_source=github&utm_medium=readme).
 
 ![Screenshot](apps/frontend/public/screenshot.webp)
 
@@ -53,16 +71,20 @@ Visit the app website at [Wealthfolio App](https://wealthfolio.app/).
 
 - **📊 Portfolio Tracking** - Track your investments across multiple accounts
   and asset types
-- **📈 Performance Analytics** - Detailed performance metrics and historical
-  analysis
+- **📈 Performance Analytics** - True time-weighted and money-weighted returns,
+  benchmark comparison, and historical analysis
 - **💰 Activity Management** - Import and manage all your trading activities
 - **🎯 Goal Planning** - Set and track financial goals with allocation
   management
 - **🔒 Local Data** - All data stored locally with no cloud dependencies
+- **🔄 Optional Broker Sync** - Auto-sync 30+ brokerages with
+  [Wealthfolio Connect](https://wealthfolio.app/connect?utm_source=github&utm_medium=readme)
+  (read-only, entirely optional)
 - **🧩 Extensible** - Powerful addon system for custom functionality
 - **🌍 Multi-Currency** - Support for multiple currencies with exchange rate
   management
-- **📱 Cross-Platform** - Available on Windows, macOS, and Linux
+- **📱 Cross-Platform** - Desktop (Windows, macOS, Linux), iOS, and self-hosted
+  Docker/web
 
 ### 🧩 Addon System
 

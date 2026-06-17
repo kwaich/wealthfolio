@@ -18,8 +18,13 @@ import { cn, formatDate } from "@/lib/utils";
 
 import { QuickCategorizePopover } from "./quick-categorize-popover";
 import { QuickEventPopover } from "./quick-event-popover";
-import { getCashActivityLabel } from "../lib/constants";
-import { getTransactionDisplay, type TransactionRowVM } from "../lib/transactions-helpers";
+import { getCashActivityLabel, getEffectiveCashActivityType } from "../lib/constants";
+import {
+  getTransactionDisplay,
+  getTransferLinkStatus,
+  isTransferCashActivity,
+  type TransactionRowVM,
+} from "../lib/transactions-helpers";
 
 interface TransactionRowProps {
   row: TransactionRowVM;
@@ -34,6 +39,8 @@ interface TransactionRowProps {
   onEdit: (row: TransactionRowVM) => void;
   onDuplicate: (row: TransactionRowVM) => void;
   onDelete: (row: TransactionRowVM) => void;
+  onLinkTransfer?: (row: TransactionRowVM) => void;
+  onUnlinkTransfer?: (row: TransactionRowVM) => void;
 }
 
 function TransactionRowImpl({
@@ -49,6 +56,8 @@ function TransactionRowImpl({
   onEdit,
   onDuplicate,
   onDelete,
+  onLinkTransfer,
+  onUnlinkTransfer,
 }: TransactionRowProps) {
   const a = row.activity;
   const { isOutflow, isIncome, isSaving, isNeutral, sign, safeAmount } = getTransactionDisplay(
@@ -57,6 +66,9 @@ function TransactionRowImpl({
   );
   const accountName = account?.name ?? a.accountId;
   const rowAriaLabel = isSelected ? "Deselect transaction" : "Select transaction";
+  const activityType = getEffectiveCashActivityType(a);
+  const isTransfer = isTransferCashActivity(a);
+  const transferLinkStatus = getTransferLinkStatus(a);
 
   return (
     <TableRow
@@ -75,7 +87,7 @@ function TransactionRowImpl({
       </TableCell>
       <TableCell className="hidden md:table-cell">
         <Badge variant="outline" className="text-xs">
-          {getCashActivityLabel(a.activityType, account?.accountType)}
+          {getCashActivityLabel(activityType, account?.accountType)}
         </Badge>
       </TableCell>
       <TableCell className="hidden text-sm lg:table-cell">
@@ -199,6 +211,21 @@ function TransactionRowImpl({
               <Icons.Copy className="mr-2 h-4 w-4" aria-hidden="true" />
               Duplicate
             </DropdownMenuItem>
+            {isTransfer && (onLinkTransfer || onUnlinkTransfer) ? (
+              transferLinkStatus === "linked" ? (
+                onUnlinkTransfer ? (
+                  <DropdownMenuItem onClick={() => onUnlinkTransfer(row)}>
+                    <Icons.Unlink className="mr-2 h-4 w-4" aria-hidden="true" />
+                    Unlink transfer
+                  </DropdownMenuItem>
+                ) : null
+              ) : onLinkTransfer ? (
+                <DropdownMenuItem onClick={() => onLinkTransfer(row)}>
+                  <Icons.Link className="mr-2 h-4 w-4" aria-hidden="true" />
+                  Link transfer...
+                </DropdownMenuItem>
+              ) : null
+            ) : null}
             <DropdownMenuItem className="text-destructive" onClick={() => onDelete(row)}>
               <Icons.Trash className="mr-2 h-4 w-4" aria-hidden="true" />
               Delete

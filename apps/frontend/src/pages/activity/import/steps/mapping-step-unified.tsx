@@ -39,13 +39,14 @@ import { mergeDetectedParseConfig } from "../utils/import-flow-utils";
 import {
   activityTypeAllowedForImportProfile,
   getActivityImportProfileForImportContext,
+  getActivityTypeLabelForImportProfile,
   isTransactionImportProfile,
   mergeActivityMappingsForImportProfile,
   sanitizeImportMappingForProfile,
 } from "../utils/activity-import-profile";
 
 import { isCashSymbol, needsImportAssetResolution } from "@/lib/activity-utils";
-import { ImportFormat } from "@/lib/constants";
+import { ImportFormat, type ActivityType } from "@/lib/constants";
 import { QueryKeys } from "@/lib/query-keys";
 import type { Account, CsvRowData, ImportTemplateData } from "@/lib/types";
 import { ImportType } from "@/lib/types";
@@ -121,6 +122,11 @@ export function MappingStepUnified() {
       localMapping.fieldMappings,
       parsedRows,
     ],
+  );
+  const getActivityTypeLabel = useCallback(
+    (activityType: ActivityType) =>
+      getActivityTypeLabelForImportProfile(activityType, importProfile),
+    [importProfile],
   );
 
   const effectiveActivityMappings = useMemo(
@@ -874,6 +880,7 @@ export function MappingStepUnified() {
                 visibleFields={importProfile.visibleMappingFields}
                 requiredFields={importProfile.requiredMappingFields}
                 allowedActivityTypes={importProfile.allowedActivityTypes}
+                getActivityTypeLabel={getActivityTypeLabel}
                 className="max-h-[50vh]"
               />
             </TabsContent>

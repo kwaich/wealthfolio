@@ -7,6 +7,11 @@ use super::super::traits::BrokerApiClient;
 use super::{AccountSyncJob, HoldingsPhaseContext, SyncOrchestrator};
 use crate::broker_ingest::{ImportRunMode, ImportRunStatus, ImportRunSummary};
 
+const HOLDINGS_SYNCED_ACTIVITY_ATTENTION_MESSAGE: &str =
+    "Holdings synced, but activity sync needs attention. Please retry sync or manage your broker connection.";
+const HOLDINGS_DEFERRED_ACTIVITY_ATTENTION_MESSAGE: &str =
+    "Holdings sync needs attention. Please retry sync or manage your broker connection.";
+
 impl<P: SyncProgressReporter> SyncOrchestrator<P> {
     pub(super) async fn sync_holdings_phase(
         &self,
@@ -21,10 +26,11 @@ impl<P: SyncProgressReporter> SyncOrchestrator<P> {
             Ok(ProviderReadiness::Ready(_)) => {}
             Ok(ProviderReadiness::NotReady(reason)) => {
                 let warning = if let Some(activity_warning) = context.activity_warning.as_ref() {
-                    format!(
-                        "Holdings sync deferred: {}; activity reference sync needs review: {}",
-                        reason, activity_warning
-                    )
+                    warn!(
+                        "Holdings sync deferred for '{}' because activity reference sync needs review: {}; provider holdings status: {}",
+                        job.account_name, activity_warning, reason
+                    );
+                    HOLDINGS_DEFERRED_ACTIVITY_ATTENTION_MESSAGE.to_string()
                 } else {
                     format!("Holdings sync deferred: {}", reason)
                 };
@@ -143,10 +149,11 @@ impl<P: SyncProgressReporter> SyncOrchestrator<P> {
                 summary.new_asset_ids.extend(new_asset_ids);
 
                 if let Some(warning) = context.activity_warning {
-                    let warning_message = format!(
-                        "Holdings synced, but activity reference sync needs review: {}",
-                        warning
+                    warn!(
+                        "Holdings synced for '{}' but activity reference sync needs review: {}",
+                        job.account_name, warning
                     );
+                    let warning_message = HOLDINGS_SYNCED_ACTIVITY_ATTENTION_MESSAGE.to_string();
                     if let Err(e) = self
                         .sync_service
                         .finalize_activity_sync_needs_review(

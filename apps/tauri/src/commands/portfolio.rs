@@ -30,7 +30,8 @@ use wealthfolio_core::{
     },
     portfolios::{AccountScope, ResolvedAccountScope},
     quotes::MarketSyncMode,
-    valuation::DailyAccountValuation,
+    utils::time_utils::{parse_user_timezone_or_default, user_today},
+    valuation::{CurrentAccountValuationService, CurrentValuationResponse, DailyAccountValuation},
 };
 
 // ============================================================================
@@ -166,6 +167,20 @@ fn account_tracking_modes_from_map(
         .collect()
 }
 
+fn account_types_from_map(
+    accounts_by_id: &HashMap<String, Account>,
+    account_ids: &[String],
+) -> HashMap<String, String> {
+    account_ids
+        .iter()
+        .filter_map(|account_id| {
+            accounts_by_id
+                .get(account_id)
+                .map(|account| (account.id.clone(), account.account_type.clone()))
+        })
+        .collect()
+}
+
 fn income_account_ids(
     state: &ServiceContext,
     account_ids: &[String],
@@ -235,6 +250,35 @@ async fn resolve_scope(
         .portfolio_service()
         .resolve_account_scope(filter, &base_currency)
         .map_err(|e| e.to_string())
+}
+
+async fn resolve_current_valuation_scope(
+    filter: &AccountScope,
+    state: &ServiceContext,
+) -> Result<ResolvedAccountScope, String> {
+    let base_currency = state.get_base_currency();
+    let resolved = state
+        .portfolio_service()
+        .resolve_account_scope(filter, &base_currency)
+        .map_err(|e| e.to_string())?;
+
+    let account_ids = match filter {
+        AccountScope::Account { account_id } => vec![account_id.clone()],
+        AccountScope::Accounts { account_ids } => unique_account_ids(account_ids.clone()),
+        AccountScope::Portfolio { portfolio_id } => {
+            state
+                .portfolio_service()
+                .get_portfolio(portfolio_id)
+                .map_err(|e| e.to_string())?
+                .account_ids
+        }
+        AccountScope::All => resolved.account_ids.clone(),
+    };
+
+    Ok(ResolvedAccountScope {
+        account_ids,
+        ..resolved
+    })
 }
 
 #[tauri::command]
@@ -504,6 +548,44 @@ pub async fn get_latest_valuations(
 }
 
 #[tauri::command]
+pub async fn get_current_valuation(
+    state: State<'_, Arc<ServiceContext>>,
+    filter: AccountScopeInput,
+    include_accounts: Option<bool>,
+) -> Result<CurrentValuationResponse, String> {
+    debug!("Get scoped current valuation...");
+
+    let base_currency = state.get_base_currency();
+    let timezone = state.get_timezone();
+    let latest_snapshot_cutoff = user_today(parse_user_timezone_or_default(&timezone));
+    let account_filter = filter.into_account_filter()?;
+    let resolved = resolve_current_valuation_scope(&account_filter, &state).await?;
+    let account_service = state.account_service();
+    let snapshot_repository = state.snapshot_repository();
+    let asset_service = state.asset_service();
+    let quote_service = state.quote_service();
+    let fx_service = state.fx_service();
+    let service = CurrentAccountValuationService::new(
+        account_service.as_ref(),
+        snapshot_repository.as_ref(),
+        asset_service.as_ref(),
+        quote_service.as_ref(),
+        fx_service.as_ref(),
+    );
+
+    service
+        .get_current_valuation_for_scope(
+            &resolved.scope_id,
+            &resolved.account_ids,
+            &base_currency,
+            latest_snapshot_cutoff,
+            include_accounts.unwrap_or(false),
+        )
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub async fn get_income_summary(
     state: State<'_, Arc<ServiceContext>>,
     filter: Option<AccountScopeInput>,
@@ -637,6 +719,7 @@ pub async fn calculate_performance_history(
             return Ok(result);
         }
         let tracking_modes = account_tracking_modes_from_map(&accounts_by_id, &account_ids);
+        let account_types = account_types_from_map(&accounts_by_id, &account_ids);
         let mut result = state
             .performance_service()
             .calculate_performance_history_for_accounts(
@@ -644,6 +727,7 @@ pub async fn calculate_performance_history(
                 &account_ids,
                 &resolved.base_currency,
                 &tracking_modes,
+                &account_types,
                 start_date_opt,
                 end_date_opt,
             )
@@ -658,7 +742,7 @@ pub async fn calculate_performance_history(
         }
         Ok(result)
     } else {
-        let authoritative_tracking_mode = if item_type == "account" {
+        let (authoritative_tracking_mode, authoritative_account_type) = if item_type == "account" {
             let account = state
                 .account_service()
                 .get_account(&item_id)
@@ -674,9 +758,9 @@ pub async fn calculate_performance_history(
                     end_date_opt,
                 ));
             }
-            Some(account.tracking_mode)
+            (Some(account.tracking_mode), Some(account.account_type))
         } else {
-            tracking_mode_opt
+            (tracking_mode_opt, None)
         };
 
         state
@@ -687,6 +771,7 @@ pub async fn calculate_performance_history(
                 start_date_opt,
                 end_date_opt,
                 authoritative_tracking_mode,
+                authoritative_account_type.as_deref(),
             )
             .await
             .map_err(|e| format!("Failed to calculate performance: {}", e))
@@ -808,6 +893,7 @@ pub async fn calculate_performance_summary(
             return Ok(result);
         }
         let tracking_modes = account_tracking_modes_from_map(&accounts_by_id, &account_ids);
+        let account_types = account_types_from_map(&accounts_by_id, &account_ids);
         let mut result = state
             .performance_service()
             .calculate_performance_summary_for_accounts(
@@ -815,6 +901,7 @@ pub async fn calculate_performance_summary(
                 &account_ids,
                 &resolved.base_currency,
                 &tracking_modes,
+                &account_types,
                 start_date_opt,
                 end_date_opt,
                 profile,
@@ -830,7 +917,7 @@ pub async fn calculate_performance_summary(
         }
         Ok(result)
     } else {
-        let authoritative_tracking_mode = if item_type == "account" {
+        let (authoritative_tracking_mode, authoritative_account_type) = if item_type == "account" {
             let account = state
                 .account_service()
                 .get_account(&item_id)
@@ -846,9 +933,9 @@ pub async fn calculate_performance_summary(
                     end_date_opt,
                 ));
             }
-            Some(account.tracking_mode)
+            (Some(account.tracking_mode), Some(account.account_type))
         } else {
-            tracking_mode_opt
+            (tracking_mode_opt, None)
         };
 
         state
@@ -859,6 +946,7 @@ pub async fn calculate_performance_summary(
                 start_date_opt,
                 end_date_opt,
                 authoritative_tracking_mode,
+                authoritative_account_type.as_deref(),
                 profile,
             )
             .await
@@ -927,6 +1015,7 @@ pub async fn get_performance_summaries(
                 &account_ids,
                 &base_currency,
                 &account_tracking_modes_from_map(&accounts_by_id, &account_ids),
+                &account_types_from_map(&accounts_by_id, &account_ids),
                 start_date_opt,
                 end_date_opt,
                 profile,

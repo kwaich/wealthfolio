@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   clearActivityUrlDateFilters,
   clearActivityUrlFilters,
+  clearActivityUrlSearchFilter,
   clearActivityUrlTypeFilters,
   resolveActivityTabFromUrlFilters,
   resolveActivityUrlFilters,
@@ -31,6 +32,12 @@ describe("resolveActivityUrlFilters", () => {
       activityTypes: ["TRANSFER_IN", "TRANSFER_OUT"],
       dateFrom: "2026-06-01",
       dateTo: "2026-06-04",
+    });
+  });
+
+  it("maps activity deep links to search query filters", () => {
+    expect(resolveActivityUrlFilters(new URLSearchParams("q=AAPL"))).toEqual({
+      searchQuery: "AAPL",
     });
   });
 
@@ -66,7 +73,7 @@ describe("resolveActivityUrlFilters", () => {
 
   it("clears transfer-integrity deeplink params", () => {
     const cleared = clearActivityUrlFilters(
-      new URLSearchParams("tab=investments&types=TRANSFER_IN&from=2026-06-01&to=2026-06-04"),
+      new URLSearchParams("tab=investments&types=TRANSFER_IN&from=2026-06-01&to=2026-06-04&q=AAPL"),
     );
 
     expect(cleared.toString()).toBe("tab=investments");
@@ -94,5 +101,13 @@ describe("resolveActivityUrlFilters", () => {
     expect(cleared.toString()).toBe(
       "tab=investments&account=acct-1&needsReview=true&from=2026-06-01&to=2026-06-04",
     );
+  });
+
+  it("clears only search params when replacing investment search filter", () => {
+    const cleared = clearActivityUrlSearchFilter(
+      new URLSearchParams("tab=investments&account=acct-1&from=2026-06-01&q=AAPL"),
+    );
+
+    expect(cleared.toString()).toBe("tab=investments&account=acct-1&from=2026-06-01");
   });
 });

@@ -37,6 +37,7 @@ export function ActivityMobileControls({
   const [isFilterSheetOpen, setIsFilterSheetOpen] = useState(false);
 
   const hasActiveFilters =
+    searchQuery.trim().length > 0 ||
     accountScope.type !== "all" ||
     selectedActivityTypes.length > 0 ||
     !!dateRange?.from ||

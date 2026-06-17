@@ -27,6 +27,8 @@ pub enum ConsistencyIssueType {
     NegativeAccountBalance,
     /// Cash account had a negative balance at some point (may be a bank overdraft)
     NegativeCashBalance,
+    /// A sell activity has no matching lot disposal row for realized P&L attribution
+    MissingLotDisposalForSell,
 }
 
 /// Data about a consistency issue.
@@ -50,6 +52,16 @@ pub struct ConsistencyIssueInfo {
     pub total_value_at_date: Option<Decimal>,
     /// Account currency (NegativeAccountBalance only)
     pub account_currency: Option<String>,
+    /// Activity date for activity-specific issues
+    pub activity_date: Option<NaiveDate>,
+    /// Asset display symbol for activity-specific issues
+    pub asset_symbol: Option<String>,
+    /// Asset display name for activity-specific issues
+    pub asset_name: Option<String>,
+    /// Activity quantity for activity-specific issues
+    pub quantity: Option<Decimal>,
+    /// Activity proceeds for activity-specific issues
+    pub proceeds: Option<Decimal>,
 }
 
 /// Health check that detects data consistency problems.
@@ -326,6 +338,100 @@ impl DataConsistencyCheck {
             health_issues.push(builder.build());
         }
 
+        if let Some(missing_disposal_issues) =
+            by_type.get(&ConsistencyIssueType::MissingLotDisposalForSell)
+        {
+            let count = missing_disposal_issues.len();
+            let data_keys: Vec<String> = missing_disposal_issues
+                .iter()
+                .map(|i| {
+                    format!(
+                        "{}:{}:{}:{}",
+                        i.record_id,
+                        i.activity_date
+                            .map(|d| d.format("%Y-%m-%d").to_string())
+                            .unwrap_or_default(),
+                        i.quantity.unwrap_or_default(),
+                        i.proceeds.unwrap_or_default()
+                    )
+                })
+                .collect();
+            let data_hash = compute_data_hash(&data_keys);
+
+            let mut seen_accounts = std::collections::HashSet::new();
+            let affected_items: Vec<AffectedItem> = missing_disposal_issues
+                .iter()
+                .filter_map(|i| {
+                    let account_id = i.account_id.as_ref()?;
+                    if !seen_accounts.insert(account_id.clone()) {
+                        return None;
+                    }
+                    Some(AffectedItem::account(
+                        account_id.clone(),
+                        i.description.clone(),
+                    ))
+                })
+                .collect();
+
+            let details = missing_disposal_issues
+                .iter()
+                .map(|i| {
+                    let asset = i
+                        .asset_symbol
+                        .as_deref()
+                        .or(i.asset_name.as_deref())
+                        .unwrap_or("asset");
+                    let date = i
+                        .activity_date
+                        .map(|d| d.format("%Y-%m-%d").to_string())
+                        .unwrap_or_else(|| "unknown date".to_string());
+                    let quantity = i
+                        .quantity
+                        .map(|q| format!("Quantity: {}", q.round_dp(6)))
+                        .unwrap_or_else(|| "Quantity: unavailable".to_string());
+                    let proceeds = match (i.proceeds, i.account_currency.as_deref()) {
+                        (Some(amount), Some(currency)) => {
+                            format!("Proceeds: {} {}", amount.round_dp(2), currency)
+                        }
+                        (Some(amount), None) => format!("Proceeds: {}", amount.round_dp(2)),
+                        _ => "Proceeds: unavailable".to_string(),
+                    };
+                    format!(
+                        "{}\nSell: {} on {}\n{} | {}\nReview the sell activity or rebuild account history so cost-basis lots are available.",
+                        i.description, asset, date, quantity, proceeds
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n\n");
+
+            let mut builder = HealthIssue::builder()
+                .id(format!("missing_lot_disposal_for_sell:{}", data_hash))
+                .severity(Severity::Warning)
+                .category(HealthCategory::DataConsistency)
+                .title(if count == 1 {
+                    "Sale missing cost-basis match".to_string()
+                } else {
+                    format!("{} sales missing cost-basis matches", count)
+                })
+                .message(
+                    "A sale could not be matched to a lot, so realized gain/loss and performance attribution may be incomplete.",
+                )
+                .affected_count(count as u32)
+                .navigate_action(NavigateAction {
+                    route: "/activities".to_string(),
+                    query: Some(serde_json::json!({ "types": "SELL" })),
+                    label: "View Activities".to_string(),
+                })
+                .data_hash(data_hash);
+            if !affected_items.is_empty() {
+                builder = builder.affected_items(affected_items);
+            }
+            if !details.is_empty() {
+                builder = builder.details(details);
+            }
+            health_issues.push(builder.build());
+        }
+
         health_issues
     }
 }
@@ -387,6 +493,11 @@ mod tests {
             cash_balance: None,
             total_value_at_date: None,
             account_currency: None,
+            activity_date: None,
+            asset_symbol: None,
+            asset_name: None,
+            quantity: None,
+            proceeds: None,
         }];
 
         let issues = check.analyze(&issues_data, &ctx);
@@ -410,6 +521,11 @@ mod tests {
             cash_balance: None,
             total_value_at_date: None,
             account_currency: None,
+            activity_date: None,
+            asset_symbol: None,
+            asset_name: None,
+            quantity: None,
+            proceeds: None,
         }];
 
         let issues = check.analyze(&issues_data, &ctx);
@@ -432,6 +548,11 @@ mod tests {
             cash_balance: None,
             total_value_at_date: None,
             account_currency: None,
+            activity_date: None,
+            asset_symbol: None,
+            asset_name: None,
+            quantity: None,
+            proceeds: None,
         }];
 
         let issues = check.analyze(&issues_data, &ctx);
@@ -456,6 +577,11 @@ mod tests {
                 cash_balance: None,
                 total_value_at_date: None,
                 account_currency: None,
+                activity_date: None,
+                asset_symbol: None,
+                asset_name: None,
+                quantity: None,
+                proceeds: None,
             },
             ConsistencyIssueInfo {
                 issue_type: ConsistencyIssueType::OrphanActivityAccount,
@@ -467,6 +593,11 @@ mod tests {
                 cash_balance: None,
                 total_value_at_date: None,
                 account_currency: None,
+                activity_date: None,
+                asset_symbol: None,
+                asset_name: None,
+                quantity: None,
+                proceeds: None,
             },
             ConsistencyIssueInfo {
                 issue_type: ConsistencyIssueType::NegativePosition,
@@ -478,6 +609,11 @@ mod tests {
                 cash_balance: None,
                 total_value_at_date: None,
                 account_currency: None,
+                activity_date: None,
+                asset_symbol: None,
+                asset_name: None,
+                quantity: None,
+                proceeds: None,
             },
         ];
 
@@ -501,6 +637,11 @@ mod tests {
             cash_balance: Some(rust_decimal_macros::dec!(-50.20)),
             total_value_at_date: Some(rust_decimal_macros::dec!(-50.20)),
             account_currency: Some("EUR".to_string()),
+            activity_date: None,
+            asset_symbol: None,
+            asset_name: None,
+            quantity: None,
+            proceeds: None,
         }];
 
         let issues = check.analyze(&issues_data, &ctx);
@@ -508,6 +649,52 @@ mod tests {
         assert_eq!(issues[0].severity, Severity::Warning);
         assert_eq!(issues[0].category, HealthCategory::DataConsistency);
         assert!(issues[0].navigate_action.is_some());
+    }
+
+    #[test]
+    fn test_missing_lot_disposal_for_sell() {
+        let check = DataConsistencyCheck::new();
+        let ctx = HealthContext::new(HealthConfig::default(), "USD", 100_000.0);
+
+        let issues_data = vec![ConsistencyIssueInfo {
+            issue_type: ConsistencyIssueType::MissingLotDisposalForSell,
+            record_id: "sell-aapl".to_string(),
+            description: "Business Investment".to_string(),
+            account_id: Some("business".to_string()),
+            asset_id: Some("aapl".to_string()),
+            first_negative_date: None,
+            cash_balance: None,
+            total_value_at_date: None,
+            account_currency: Some("USD".to_string()),
+            activity_date: Some(chrono::NaiveDate::from_ymd_opt(2026, 6, 1).unwrap()),
+            asset_symbol: Some("AAPL".to_string()),
+            asset_name: Some("Apple Inc.".to_string()),
+            quantity: Some(rust_decimal_macros::dec!(1)),
+            proceeds: Some(rust_decimal_macros::dec!(291.10598755)),
+        }];
+
+        let issues = check.analyze(&issues_data, &ctx);
+
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].severity, Severity::Warning);
+        assert_eq!(issues[0].category, HealthCategory::DataConsistency);
+        assert_eq!(issues[0].title, "Sale missing cost-basis match");
+        assert!(issues[0]
+            .message
+            .contains("realized gain/loss and performance attribution"));
+        assert!(issues[0]
+            .details
+            .as_deref()
+            .is_some_and(|details| details.contains("AAPL on 2026-06-01")));
+        let navigate_action = issues[0].navigate_action.as_ref().unwrap();
+        assert_eq!(navigate_action.route, "/activities");
+        assert_eq!(
+            navigate_action
+                .query
+                .as_ref()
+                .and_then(|query| query.get("types")),
+            Some(&serde_json::json!("SELL"))
+        );
     }
 
     #[test]

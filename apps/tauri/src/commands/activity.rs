@@ -9,6 +9,11 @@ use wealthfolio_core::activities::{
     ActivitySearchResponse, ActivityUpdate, ImportActivitiesResult, ImportAssetCandidate,
     ImportAssetPreviewItem, ImportMappingData, ImportTemplateData, InternalTransferPairRequest,
     InternalTransferPairResponse, NewActivity, ParseConfig, ParsedCsvResult, Sort,
+    TransferMatchCandidate, TransferMatchCandidateRequest,
+};
+use wealthfolio_core::health::HealthServiceTrait;
+use wealthfolio_core::utils::time_utils::{
+    local_date_range_utc_bounds, parse_user_timezone_or_default,
 };
 
 #[allow(clippy::too_many_arguments)]
@@ -37,8 +42,13 @@ pub async fn search_activities(
         .map(|s| chrono::NaiveDate::parse_from_str(&s, "%Y-%m-%d"))
         .transpose()
         .map_err(|e| format!("Invalid date_to format: {}", e))?;
+    let timezone = state.get_timezone();
+    let tz = parse_user_timezone_or_default(&timezone);
+    let (date_from_utc, date_to_utc_exclusive) =
+        local_date_range_utc_bounds(date_from_parsed, date_to_parsed, tz)
+            .map_err(|e| e.to_string())?;
 
-    Ok(state.activity_service().search_activities(
+    Ok(state.activity_service().search_activities_in_utc_range(
         page,
         page_size,
         account_id_filter,
@@ -46,8 +56,8 @@ pub async fn search_activities(
         asset_id_keyword,
         sort,
         needs_review_filter,
-        date_from_parsed,
-        date_to_parsed,
+        date_from_utc,
+        date_to_utc_exclusive,
         instrument_type_filter,
     )?)
 }
@@ -59,11 +69,13 @@ pub async fn create_activity(
 ) -> Result<Activity, String> {
     debug!("Creating activity...");
     // Domain events handle recalculation and asset enrichment automatically
-    state
+    let created = state
         .activity_service()
         .create_activity(activity)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    state.health_service().clear_cache().await;
+    Ok(created)
 }
 
 #[tauri::command]
@@ -73,11 +85,13 @@ pub async fn update_activity(
 ) -> Result<Activity, String> {
     debug!("Updating activity...");
     // Domain events handle recalculation and asset enrichment automatically
-    state
+    let updated = state
         .activity_service()
         .update_activity(activity)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    state.health_service().clear_cache().await;
+    Ok(updated)
 }
 
 #[tauri::command]
@@ -87,11 +101,13 @@ pub async fn delete_activity(
 ) -> Result<Activity, String> {
     debug!("Deleting activity...");
     // Domain events handle recalculation automatically
-    state
+    let deleted = state
         .activity_service()
         .delete_activity(activity_id)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    state.health_service().clear_cache().await;
+    Ok(deleted)
 }
 
 #[tauri::command]
@@ -107,16 +123,30 @@ pub async fn get_transfer_pair_for_activity(
 }
 
 #[tauri::command]
+pub async fn find_transfer_match_candidates(
+    request: TransferMatchCandidateRequest,
+    state: State<'_, Arc<ServiceContext>>,
+) -> Result<Vec<TransferMatchCandidate>, String> {
+    debug!("Finding transfer match candidates...");
+    state
+        .activity_service()
+        .find_transfer_match_candidates(request)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub async fn save_internal_transfer_pair(
     request: InternalTransferPairRequest,
     state: State<'_, Arc<ServiceContext>>,
 ) -> Result<InternalTransferPairResponse, String> {
     debug!("Saving internal transfer pair...");
-    state
+    let pair = state
         .activity_service()
         .save_internal_transfer_pair(request)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    state.health_service().clear_cache().await;
+    Ok(pair)
 }
 
 #[tauri::command]
@@ -127,11 +157,13 @@ pub async fn link_transfer_activities(
 ) -> Result<(Activity, Activity), String> {
     debug!("Linking transfer activities...");
     // Domain events handle recalculation automatically
-    state
+    let pair = state
         .activity_service()
         .link_transfer_activities(activity_a_id, activity_b_id)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    state.health_service().clear_cache().await;
+    Ok(pair)
 }
 
 #[tauri::command]
@@ -142,11 +174,13 @@ pub async fn unlink_transfer_activities(
 ) -> Result<(Activity, Activity), String> {
     debug!("Unlinking transfer activities...");
     // Domain events handle recalculation automatically
-    state
+    let pair = state
         .activity_service()
         .unlink_transfer_activities(activity_a_id, activity_b_id)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    state.health_service().clear_cache().await;
+    Ok(pair)
 }
 
 #[tauri::command]
@@ -163,11 +197,13 @@ pub async fn save_activities(
     );
 
     // Domain events handle recalculation and asset enrichment automatically
-    state
+    let result = state
         .activity_service()
         .bulk_mutate_activities(request)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    state.health_service().clear_cache().await;
+    Ok(result)
 }
 
 #[tauri::command]
@@ -281,11 +317,13 @@ pub async fn import_activities(
 ) -> Result<ImportActivitiesResult, String> {
     debug!("Importing {} activities", activities.len());
     // Domain events handle recalculation and asset enrichment automatically
-    state
+    let result = state
         .activity_service()
         .import_activities(activities)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    state.health_service().clear_cache().await;
+    Ok(result)
 }
 
 #[tauri::command]

@@ -90,6 +90,12 @@ interface AccountMetricsProps {
   balanceLabel?: string;
   /** If true, shows holdings-mode return cards instead of transaction return cards. */
   isHoldingsMode?: boolean;
+  balanceWarning?: {
+    label: string;
+    onClick: () => void;
+    disabled?: boolean;
+    isLoading?: boolean;
+  };
 }
 
 const AccountMetrics: React.FC<AccountMetricsProps> = ({
@@ -102,6 +108,7 @@ const AccountMetrics: React.FC<AccountMetricsProps> = ({
   hideBalanceEdit = false,
   balanceLabel = "Cash Balance",
   isHoldingsMode = false,
+  balanceWarning,
 }) => {
   // Full skeleton only when valuation data itself is loading
   if (isLoading || !valuation)
@@ -203,17 +210,45 @@ const AccountMetrics: React.FC<AccountMetricsProps> = ({
     <Card className={cn("flex flex-col", className)}>
       <CardHeader className="flex flex-row items-center justify-between">
         <CardTitle className="text-lg font-bold">{balanceLabel}</CardTitle>
-        {valuation && !hideBalanceEdit ? (
-          <EditableBalance
-            account={valuation}
-            initialBalance={valuation?.cashBalance || 0}
-            currency={displayCurrency}
-          />
-        ) : (
-          <span className="text-lg font-extrabold">
-            <PrivacyAmount value={valuation?.cashBalance || 0} currency={displayCurrency} />
-          </span>
-        )}
+        <div className="flex items-center gap-2">
+          {balanceWarning ? (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    size="icon"
+                    variant="ghost"
+                    className="bg-warning/10 text-warning hover:bg-warning/15 size-8 rounded-full"
+                    onClick={balanceWarning.onClick}
+                    disabled={balanceWarning.disabled || balanceWarning.isLoading}
+                    aria-label={balanceWarning.label}
+                  >
+                    {balanceWarning.isLoading ? (
+                      <Icons.Spinner className="size-4 animate-spin" />
+                    ) : (
+                      <Icons.AlertCircle className="size-4" />
+                    )}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>{balanceWarning.label}</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          ) : null}
+          {valuation && !hideBalanceEdit ? (
+            <EditableBalance
+              account={valuation}
+              initialBalance={valuation?.cashBalance || 0}
+              currency={displayCurrency}
+            />
+          ) : (
+            <span className="text-lg font-extrabold">
+              <PrivacyAmount value={valuation?.cashBalance || 0} currency={displayCurrency} />
+            </span>
+          )}
+        </div>
       </CardHeader>
       <CardContent className="space-y-6">
         <Separator className="mb-4" />

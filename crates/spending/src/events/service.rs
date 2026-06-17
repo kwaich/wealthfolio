@@ -110,10 +110,9 @@ impl EventsService {
         validate_event_range(&new_event.start_date, &new_event.end_date)?;
         self.events_repo.create(new_event).await
     }
-    /// Update an event. Validates the new (possibly partial) window. If the
-    /// window narrowed on either side, untags any activities that fell out of
-    /// range. On expansion, logs the count of newly in-range untagged
-    /// activities (we don't auto-tag — that's a UX decision).
+    /// Update an event. Validates the new (possibly partial) window. Existing
+    /// activity tags are preserved because event date ranges describe reporting
+    /// periods, not assignment validity.
     pub async fn update_event(&self, id: &str, patch: UpdateEvent) -> Result<Event> {
         let existing = self
             .events_repo
@@ -139,33 +138,12 @@ impl EventsService {
         let new_start_dt = parse_event_start_bound(&new_start)?;
         let new_end_dt = parse_event_end_bound(&new_end)?;
 
-        let narrowed_start = new_start_dt > old_start_dt;
-        let narrowed_end = new_end_dt < old_end_dt;
         let expanded_start = new_start_dt < old_start_dt;
         let expanded_end = new_end_dt > old_end_dt;
 
         let updated = self.events_repo.update(id, patch).await?;
 
-        // Untag activities that fell out of the new window on either narrowed
-        // side. Indexed lookup on activity_events gives us just the ids
-        // tagged to this event (typically small), and we fetch each by id
-        // instead of scanning the whole activities table.
-        if narrowed_start || narrowed_end {
-            let tagged_ids = self.activity_events.list_for_event(id).await?;
-            for activity_id in &tagged_ids {
-                let a = self
-                    .activity_repo
-                    .get_activity(activity_id)
-                    .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-                if a.activity_date < new_start_dt || a.activity_date > new_end_dt {
-                    self.activity_events
-                        .set_activity_event_tag(&a.id, None)
-                        .await?;
-                }
-            }
-        }
-
-        // On expansion, surface count of newly-eligible (untagged) activities so
+        // On expansion, surface count of newly in-range untagged activities so
         // the frontend can offer a "tag these N activities" CTA. We do not
         // auto-tag.
         //
@@ -194,7 +172,7 @@ impl EventsService {
                 .count();
             if newly_eligible > 0 {
                 log::info!(
-                    "Event {} expanded — {} previously untagged in-range activities are now eligible for tagging",
+                    "Event {} expanded — {} previously untagged activities are now in the event date range",
                     id,
                     newly_eligible
                 );
@@ -257,7 +235,8 @@ fn parse_event_start_bound(s: &str) -> Result<DateTime<Utc>> {
 }
 
 /// Parse an event end boundary. Date-only end dates are inclusive for the full
-/// day so narrowing an event to `YYYY-MM-DD` does not untag same-day activity.
+/// day when checking whether an activity falls within an event's reporting
+/// window.
 fn parse_event_end_bound(s: &str) -> Result<DateTime<Utc>> {
     if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
         return Ok(dt.with_timezone(&Utc));
@@ -817,7 +796,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn shrinking_window_untags_out_of_range_activities() {
+    async fn shrinking_window_preserves_existing_activity_tags() {
         let in1 = Utc.with_ymd_and_hms(2024, 6, 5, 12, 0, 0).unwrap();
         let in2 = Utc.with_ymd_and_hms(2024, 6, 7, 12, 0, 0).unwrap();
         let out = Utc.with_ymd_and_hms(2024, 6, 9, 12, 0, 0).unwrap();
@@ -839,11 +818,11 @@ mod tests {
         let tags = tags.lock().unwrap();
         assert_eq!(tags.get("a1"), Some(&"ev1".to_string()));
         assert_eq!(tags.get("a2"), Some(&"ev1".to_string()));
-        assert_eq!(tags.get("a3"), None);
+        assert_eq!(tags.get("a3"), Some(&"ev1".to_string()));
     }
 
     #[tokio::test]
-    async fn date_only_end_date_keeps_same_day_activities() {
+    async fn date_only_end_date_update_preserves_existing_activity_tags() {
         let same_day = Utc.with_ymd_and_hms(2024, 6, 8, 14, 0, 0).unwrap();
         let next_day = Utc.with_ymd_and_hms(2024, 6, 9, 1, 0, 0).unwrap();
         let (svc, _, _, _, tags) = make_service(
@@ -859,7 +838,7 @@ mod tests {
 
         let tags = tags.lock().unwrap();
         assert_eq!(tags.get("a1"), Some(&"ev1".to_string()));
-        assert_eq!(tags.get("a2"), None);
+        assert_eq!(tags.get("a2"), Some(&"ev1".to_string()));
     }
 
     #[tokio::test]

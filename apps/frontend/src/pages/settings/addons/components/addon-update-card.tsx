@@ -1,18 +1,9 @@
 import { reloadAllAddons } from "@/addons/addons-core";
 import { updateAddon } from "@/adapters";
+import { ExternalLink } from "@/components/external-link";
 import { Badge } from "@wealthfolio/ui/components/ui/badge";
 import { Button } from "@wealthfolio/ui/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@wealthfolio/ui/components/ui/dialog";
 import { Icons } from "@wealthfolio/ui/components/ui/icons";
-import { ScrollArea } from "@wealthfolio/ui/components/ui/scroll-area";
-import { Separator } from "@wealthfolio/ui/components/ui/separator";
 import { useToast } from "@wealthfolio/ui/components/ui/use-toast";
 import type { AddonUpdateInfo } from "@wealthfolio/addon-sdk";
 import { useState } from "react";
@@ -33,8 +24,8 @@ export function AddonUpdateCard({
   disabled = false,
 }: AddonUpdateCardProps) {
   const [isUpdating, setIsUpdating] = useState(false);
-  const [showReleaseNotes, setShowReleaseNotes] = useState(false);
   const { toast } = useToast();
+  const addonDetailUrl = `https://wealthfolio.app/addons/${encodeURIComponent(addonId)}`;
 
   const handleUpdate = async () => {
     if (!updateInfo.downloadUrl) {
@@ -123,91 +114,14 @@ export function AddonUpdateCard({
 
         <div className="ml-4 flex items-center gap-2">
           {(updateInfo.releaseNotes || updateInfo.changelogUrl) && (
-            <Dialog open={showReleaseNotes} onOpenChange={setShowReleaseNotes}>
-              <DialogTrigger asChild>
-                <Button variant="ghost" size="sm">
+            <Button variant="ghost" size="sm" asChild>
+              <ExternalLink href={addonDetailUrl}>
+                <span className="inline-flex items-center">
                   <Icons.FileText className="mr-1 h-3 w-3" />
                   Release Notes
-                </Button>
-              </DialogTrigger>
-              <DialogContent className="max-w-2xl">
-                <DialogHeader>
-                  <DialogTitle>
-                    Release Notes - {addonName} v{updateInfo.latestVersion}
-                  </DialogTitle>
-                  <DialogDescription>What&apos;s new in this version</DialogDescription>
-                </DialogHeader>
-                <ScrollArea className="max-h-96">
-                  <div className="space-y-4">
-                    {updateInfo.releaseNotes && (
-                      <div className="space-y-2">
-                        <h4 className="font-medium">Release Notes</h4>
-                        <div className="text-muted-foreground whitespace-pre-wrap text-sm">
-                          {updateInfo.releaseNotes}
-                        </div>
-                      </div>
-                    )}
-
-                    {updateInfo.changelogUrl && (
-                      <>
-                        <Separator />
-                        <div className="space-y-2">
-                          <h4 className="font-medium">Full Changelog</h4>
-                          <a
-                            href={updateInfo.changelogUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center text-sm text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
-                          >
-                            View detailed changelog
-                            <Icons.Globe className="ml-1 h-3 w-3" />
-                          </a>
-                        </div>
-                      </>
-                    )}
-
-                    {updateInfo.hasBreakingChanges && (
-                      <>
-                        <Separator />
-                        <div className="border-destructive/50 bg-destructive/10 rounded-lg border p-3">
-                          <div className="flex items-start gap-2">
-                            <Icons.AlertTriangle className="text-destructive mt-0.5 h-4 w-4 shrink-0" />
-                            <div>
-                              <h5 className="text-destructive font-medium">Breaking Changes</h5>
-                              <p className="text-destructive/80 text-sm">
-                                This update includes breaking changes that may affect addon
-                                functionality. Please review the release notes carefully before
-                                updating.
-                              </p>
-                            </div>
-                          </div>
-                        </div>
-                      </>
-                    )}
-
-                    {updateInfo.isCritical && (
-                      <>
-                        <Separator />
-                        <div className="rounded-lg border border-red-500/50 bg-red-50 p-3 dark:bg-red-950/20">
-                          <div className="flex items-start gap-2">
-                            <Icons.AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-600 dark:text-red-400" />
-                            <div>
-                              <h5 className="font-medium text-red-800 dark:text-red-200">
-                                Critical Security Update
-                              </h5>
-                              <p className="text-sm text-red-700 dark:text-red-300">
-                                This is a critical security update. We strongly recommend updating
-                                as soon as possible.
-                              </p>
-                            </div>
-                          </div>
-                        </div>
-                      </>
-                    )}
-                  </div>
-                </ScrollArea>
-              </DialogContent>
-            </Dialog>
+                </span>
+              </ExternalLink>
+            </Button>
           )}
 
           <Button onClick={handleUpdate} disabled={isUpdating || disabled} size="sm">

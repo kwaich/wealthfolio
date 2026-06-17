@@ -48,6 +48,7 @@ export function useEventSpendingSummaries(request: { startDate: string; endDate:
   return useQuery<EventSpendingSummary[], Error>({
     queryKey: [QueryKeys.SPENDING_EVENTS, "summaries", request],
     queryFn: () => getEventSpendingSummaries(request),
+    staleTime: STALE_TIME,
   });
 }
 

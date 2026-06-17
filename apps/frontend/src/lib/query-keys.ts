@@ -96,6 +96,7 @@ export const QueryKeys = {
 
   transactions: "transactions",
   latestValuations: "latest-valuations",
+  CURRENT_VALUATION: "current-valuation",
 
   // Market Data
   symbolSearch: "symbol-search",
