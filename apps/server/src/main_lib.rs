@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use std::sync::{Arc, RwLock};
+use std::sync::{atomic::AtomicBool, Arc, RwLock};
 
 use crate::{
     ai_environment::ServerAiEnvironment, auth::AuthManager, config::Config,
@@ -107,6 +107,7 @@ pub struct AppState {
     pub device_enroll_service: Arc<DeviceEnrollService>,
     pub app_sync_repository: Arc<AppSyncRepository>,
     pub device_sync_runtime: Arc<DeviceSyncRuntimeState>,
+    pub broker_sync_running: Arc<AtomicBool>,
     pub health_service: Arc<dyn HealthServiceTrait + Send + Sync>,
     pub token_lifecycle: Arc<TokenLifecycleState>,
     pub custom_provider_service: Arc<wealthfolio_core::custom_provider::CustomProviderService>,
@@ -732,6 +733,7 @@ pub async fn build_state(config: &Config) -> anyhow::Result<Arc<AppState>> {
 
     let event_bus = EventBus::new(256);
     let device_sync_runtime = Arc::new(DeviceSyncRuntimeState::new());
+    let broker_sync_running = Arc::new(AtomicBool::new(false));
     let token_lifecycle = Arc::new(TokenLifecycleState::new());
     let now = chrono::Utc::now();
     if let Err(err) = app_sync_repository
@@ -749,6 +751,7 @@ pub async fn build_state(config: &Config) -> anyhow::Result<Arc<AppState>> {
         asset_service.clone(),
         connect_sync_service.clone(),
         event_bus.clone(),
+        broker_sync_running.clone(),
         health_service.clone(),
         snapshot_service.clone(),
         snapshot_repository.clone(),
@@ -813,6 +816,7 @@ pub async fn build_state(config: &Config) -> anyhow::Result<Arc<AppState>> {
         device_enroll_service,
         app_sync_repository,
         device_sync_runtime,
+        broker_sync_running,
         health_service,
         token_lifecycle,
         custom_provider_service,

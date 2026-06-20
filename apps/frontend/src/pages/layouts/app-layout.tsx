@@ -5,6 +5,7 @@ import { StartupError } from "@/components/startup-error";
 import { UpdateDialog } from "@/components/update-dialog";
 import { PortfolioSyncProvider } from "@/context/portfolio-sync-context";
 import { useActiveAppSyncTrigger } from "@/features/devices-sync/hooks/use-active-app-sync-trigger";
+import { usePostLoginConnectSync } from "@/features/wealthfolio-connect/hooks";
 import useNavigationEventListener from "@/hooks/use-navigation-event-listener";
 import { useIsMobileViewport, usePlatform } from "@/hooks/use-platform";
 import { useSettings } from "@/hooks/use-settings";
@@ -42,10 +43,12 @@ const AppLayoutContent = () => {
   const isDesktopFocusMode = !shouldUseMobileNavigation && isFocusMode;
   const launchBarHeight =
     !shouldUseMobileNavigation && isLaunchBar && !isFocusMode ? "56px" : undefined;
+  const isAppShellReady = isSettingsReady && !!settings?.onboardingCompleted;
 
-  useGlobalEventListener();
+  const areGlobalEventsReady = useGlobalEventListener();
   useNavigationEventListener();
   useActiveAppSyncTrigger({ enabled: isTauri, requireWindowFocusForInterval: !isMobile });
+  usePostLoginConnectSync({ enabled: areGlobalEventsReady && isAppShellReady });
 
   if (isSettingsError) {
     return (

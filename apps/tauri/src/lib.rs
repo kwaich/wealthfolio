@@ -639,6 +639,8 @@ pub fn run() {
             #[cfg(any(feature = "connect-sync", feature = "device-sync"))]
             commands::wealthfolio_connect::store_sync_session,
             #[cfg(any(feature = "connect-sync", feature = "device-sync"))]
+            commands::wealthfolio_connect::post_login_bootstrap,
+            #[cfg(any(feature = "connect-sync", feature = "device-sync"))]
             commands::wealthfolio_connect::clear_sync_session,
             #[cfg(any(feature = "connect-sync", feature = "device-sync"))]
             commands::wealthfolio_connect::restore_sync_session,

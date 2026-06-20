@@ -56,6 +56,18 @@ const HOSTED_OAUTH_CALLBACK_URL =
 const parseConfiguredAuthCallbackUrl = (url: string) =>
   parseAuthCallbackUrl(url, { hostedCallbackUrl: HOSTED_OAUTH_CALLBACK_URL });
 
+const PROCESSED_AUTH_CODE_TTL_MS = 10 * 60 * 1000;
+const MAX_PROCESSED_AUTH_CODES = 20;
+
+type PostLoginSyncSource = "auth-callback" | "email-sign-in" | "email-sign-up" | "otp";
+
+interface PostLoginSyncRequest {
+  id: string;
+  userId: string;
+  createdAt: number;
+  source: PostLoginSyncSource;
+}
+
 interface WealthfolioConnectContextValue {
   isEnabled: boolean;
   isConnected: boolean;
@@ -66,6 +78,7 @@ interface WealthfolioConnectContextValue {
   session: Session | null;
   teamId: string | null;
   userInfo: UserInfo | null;
+  postLoginSyncRequest: PostLoginSyncRequest | null;
   error: string | null;
   signInWithEmail: (email: string, password: string) => Promise<void>;
   signUpWithEmail: (email: string, password: string) => Promise<void>;
@@ -75,6 +88,7 @@ interface WealthfolioConnectContextValue {
   signOut: () => Promise<void>;
   clearError: () => void;
   refetchUserInfo: () => Promise<void>;
+  consumePostLoginSyncRequest: (requestId: string) => void;
 }
 
 const WealthfolioConnectContext = createContext<WealthfolioConnectContextValue | undefined>(
@@ -93,6 +107,7 @@ const disabledContextValue: WealthfolioConnectContextValue = {
   session: null,
   teamId: null,
   userInfo: null,
+  postLoginSyncRequest: null,
   error: null,
   signInWithEmail: async () => {},
   signUpWithEmail: async () => {},
@@ -102,6 +117,7 @@ const disabledContextValue: WealthfolioConnectContextValue = {
   signOut: async () => {},
   clearError: () => {},
   refetchUserInfo: async () => {},
+  consumePostLoginSyncRequest: () => {},
 };
 
 function getAuthStorageKey(supabaseUrl: string): string {
@@ -191,10 +207,14 @@ function EnabledWealthfolioConnectProvider({ children }: { children: ReactNode }
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [userInfo, setUserInfo] = useState<UserInfo | null>(null);
+  const [postLoginSyncRequest, setPostLoginSyncRequest] = useState<PostLoginSyncRequest | null>(
+    null,
+  );
   const [error, setError] = useState<string | null>(null);
 
   const supabaseRef = useRef<SupabaseClient | null>(null);
-  const processedAuthCodesRef = useRef<Set<string>>(new Set());
+  const processedAuthCodesRef = useRef<Map<string, number>>(new Map());
+  const postLoginSyncRequestSequenceRef = useRef(0);
 
   // Initialize Supabase client
   supabaseRef.current ??= createSupabaseClient();
@@ -203,6 +223,47 @@ function EnabledWealthfolioConnectProvider({ children }: { children: ReactNode }
 
   const clearProcessedAuthCodes = useCallback(() => {
     processedAuthCodesRef.current.clear();
+  }, []);
+
+  const rememberAuthCodeIfNew = useCallback((code: string) => {
+    const now = Date.now();
+    const processedAuthCodes = processedAuthCodesRef.current;
+
+    for (const [processedCode, processedAt] of processedAuthCodes) {
+      if (now - processedAt > PROCESSED_AUTH_CODE_TTL_MS) {
+        processedAuthCodes.delete(processedCode);
+      }
+    }
+
+    if (processedAuthCodes.has(code)) {
+      return false;
+    }
+
+    processedAuthCodes.set(code, now);
+    while (processedAuthCodes.size > MAX_PROCESSED_AUTH_CODES) {
+      const oldestCode = processedAuthCodes.keys().next().value;
+      if (!oldestCode) break;
+      processedAuthCodes.delete(oldestCode);
+    }
+
+    return true;
+  }, []);
+
+  const requestPostLoginSync = useCallback((source: PostLoginSyncSource, session: Session) => {
+    const now = Date.now();
+    const sequence = postLoginSyncRequestSequenceRef.current + 1;
+    postLoginSyncRequestSequenceRef.current = sequence;
+
+    setPostLoginSyncRequest({
+      id: `${session.user.id}:${now}:${sequence}`,
+      userId: session.user.id,
+      createdAt: now,
+      source,
+    });
+  }, []);
+
+  const consumePostLoginSyncRequest = useCallback((requestId: string) => {
+    setPostLoginSyncRequest((current) => (current?.id === requestId ? null : current));
   }, []);
 
   // Store tokens: refresh token goes to backend (for cloud API calls) and locally (for session restoration)
@@ -260,11 +321,12 @@ function EnabledWealthfolioConnectProvider({ children }: { children: ReactNode }
         return;
       }
 
-      if (processedAuthCodesRef.current.has(payload.code)) {
+      if (!rememberAuthCodeIfNew(payload.code)) {
         logger.debug("Skipping duplicate auth callback code");
         return;
       }
-      processedAuthCodesRef.current.add(payload.code);
+
+      let didExchangeSession = false;
 
       try {
         const { data, error: exchangeError } = await supabase.auth.exchangeCodeForSession(
@@ -272,29 +334,35 @@ function EnabledWealthfolioConnectProvider({ children }: { children: ReactNode }
         );
 
         if (exchangeError) {
+          processedAuthCodesRef.current.delete(payload.code);
           logger.error(`Failed to exchange auth code: ${exchangeError.message}`);
           setError(exchangeError.message);
           return;
         }
 
         if (!data.session) {
+          processedAuthCodesRef.current.delete(payload.code);
           logger.error("No session returned after code exchange");
           setError("No session returned after completing sign-in.");
           return;
         }
 
+        didExchangeSession = true;
         // Store tokens BEFORE setting session to avoid race condition
         await storeTokens(data.session);
         setSession(data.session);
         setUser(data.session.user);
-        clearProcessedAuthCodes();
+        requestPostLoginSync("auth-callback", data.session);
         logger.info("Auth callback completed successfully");
       } catch (err) {
+        if (!didExchangeSession) {
+          processedAuthCodesRef.current.delete(payload.code);
+        }
         logger.error(`Error in handleAuthCallback: ${err instanceof Error ? err.message : err}`);
         setError(err instanceof Error ? err.message : "Failed to complete sign in");
       }
     },
-    [supabase, storeTokens, clearProcessedAuthCodes],
+    [supabase, storeTokens, rememberAuthCodeIfNew, requestPostLoginSync],
   );
 
   // Restore session from stored tokens on mount
@@ -350,6 +418,8 @@ function EnabledWealthfolioConnectProvider({ children }: { children: ReactNode }
       } else if (event === "SIGNED_OUT") {
         setSession(null);
         setUser(null);
+        setPostLoginSyncRequest(null);
+        clearProcessedAuthCodes();
         await storeTokens(null);
       }
     });
@@ -435,6 +505,7 @@ function EnabledWealthfolioConnectProvider({ children }: { children: ReactNode }
           await storeTokens(data.session);
           setSession(data.session);
           setUser(data.session.user);
+          requestPostLoginSync("email-sign-in", data.session);
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : "Sign in failed";
@@ -444,7 +515,7 @@ function EnabledWealthfolioConnectProvider({ children }: { children: ReactNode }
         setIsLoading(false);
       }
     },
-    [supabase, storeTokens],
+    [supabase, storeTokens, requestPostLoginSync],
   );
 
   const signUpWithEmail = useCallback(
@@ -468,6 +539,7 @@ function EnabledWealthfolioConnectProvider({ children }: { children: ReactNode }
           await storeTokens(data.session);
           setSession(data.session);
           setUser(data.session.user);
+          requestPostLoginSync("email-sign-up", data.session);
         } else if (data.user && !data.session) {
           // Email confirmation required
           setError("Please check your email to confirm your account.");
@@ -480,14 +552,13 @@ function EnabledWealthfolioConnectProvider({ children }: { children: ReactNode }
         setIsLoading(false);
       }
     },
-    [supabase, storeTokens],
+    [supabase, storeTokens, requestPostLoginSync],
   );
 
   const signInWithOAuth = useCallback(
     async (provider: "google" | "apple" | "github") => {
       setIsLoading(true);
       setError(null);
-      clearProcessedAuthCodes();
 
       try {
         const isTauri = isDesktop;
@@ -574,14 +645,13 @@ function EnabledWealthfolioConnectProvider({ children }: { children: ReactNode }
         setIsLoading(false);
       }
     },
-    [supabase, handleAuthCallback, clearProcessedAuthCodes],
+    [supabase, handleAuthCallback],
   );
 
   const signInWithMagicLink = useCallback(
     async (email: string) => {
       setIsLoading(true);
       setError(null);
-      clearProcessedAuthCodes();
 
       try {
         const isTauri = isDesktop;
@@ -617,7 +687,7 @@ function EnabledWealthfolioConnectProvider({ children }: { children: ReactNode }
         setIsLoading(false);
       }
     },
-    [supabase, clearProcessedAuthCodes],
+    [supabase],
   );
 
   const verifyOtp = useCallback(
@@ -641,6 +711,7 @@ function EnabledWealthfolioConnectProvider({ children }: { children: ReactNode }
           await storeTokens(data.session);
           setSession(data.session);
           setUser(data.session.user);
+          requestPostLoginSync("otp", data.session);
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : "Invalid verification code";
@@ -650,7 +721,7 @@ function EnabledWealthfolioConnectProvider({ children }: { children: ReactNode }
         setIsLoading(false);
       }
     },
-    [supabase, storeTokens],
+    [supabase, storeTokens, requestPostLoginSync],
   );
 
   const signOut = useCallback(async () => {
@@ -668,11 +739,15 @@ function EnabledWealthfolioConnectProvider({ children }: { children: ReactNode }
 
       setSession(null);
       setUser(null);
+      setPostLoginSyncRequest(null);
+      clearProcessedAuthCodes();
       await storeTokens(null);
     } catch (err) {
       // Still clear local state even on unexpected errors
       setSession(null);
       setUser(null);
+      setPostLoginSyncRequest(null);
+      clearProcessedAuthCodes();
       await storeTokens(null).catch(() => {});
       const message = err instanceof Error ? err.message : "Sign out failed";
       setError(message);
@@ -680,7 +755,7 @@ function EnabledWealthfolioConnectProvider({ children }: { children: ReactNode }
     } finally {
       setIsLoading(false);
     }
-  }, [supabase, storeTokens]);
+  }, [supabase, storeTokens, clearProcessedAuthCodes]);
 
   const clearError = useCallback(() => setError(null), []);
 
@@ -733,6 +808,7 @@ function EnabledWealthfolioConnectProvider({ children }: { children: ReactNode }
       session,
       teamId,
       userInfo,
+      postLoginSyncRequest,
       error,
       signInWithEmail,
       signUpWithEmail,
@@ -742,6 +818,7 @@ function EnabledWealthfolioConnectProvider({ children }: { children: ReactNode }
       signOut,
       clearError,
       refetchUserInfo,
+      consumePostLoginSyncRequest,
     }),
     [
       session,
@@ -751,6 +828,7 @@ function EnabledWealthfolioConnectProvider({ children }: { children: ReactNode }
       user,
       teamId,
       userInfo,
+      postLoginSyncRequest,
       error,
       signInWithEmail,
       signUpWithEmail,
@@ -760,6 +838,7 @@ function EnabledWealthfolioConnectProvider({ children }: { children: ReactNode }
       signOut,
       clearError,
       refetchUserInfo,
+      consumePostLoginSyncRequest,
     ],
   );
 

@@ -10,7 +10,8 @@ use std::time::Duration;
 
 use tokio::sync::mpsc;
 use wealthfolio_connect::{
-    ensure_valid_access_token, BrokerSyncServiceTrait, TokenLifecycleConfig, TokenLifecycleState,
+    acquire_broker_sync_guard, ensure_valid_access_token, BrokerSyncServiceTrait,
+    TokenLifecycleConfig, TokenLifecycleState,
 };
 use wealthfolio_core::{
     assets::AssetServiceTrait,
@@ -34,6 +35,7 @@ pub struct QueueWorkerDeps {
     pub asset_service: Arc<dyn AssetServiceTrait + Send + Sync>,
     pub connect_sync_service: Arc<dyn BrokerSyncServiceTrait + Send + Sync>,
     pub event_bus: EventBus,
+    pub broker_sync_running: Arc<AtomicBool>,
     pub health_service: Arc<dyn wealthfolio_core::health::HealthServiceTrait + Send + Sync>,
     // We need a way to enqueue portfolio jobs. Since AppState is not easily cloneable,
     // we pass what we need for enqueue_portfolio_job (which spawns its own async task).
@@ -246,8 +248,16 @@ async fn process_event_batch(events: &[DomainEvent], deps: Arc<QueueWorkerDeps>)
         let event_bus = deps.event_bus.clone();
         let secret_store = deps.secret_store.clone();
         let token_lifecycle = deps.token_lifecycle.clone();
+        let broker_sync_running = deps.broker_sync_running.clone();
 
         tokio::spawn(async move {
+            let Some(_guard) = acquire_broker_sync_guard(&broker_sync_running) else {
+                tracing::info!(
+                    "Broker sync skipped after tracking mode change: sync already running"
+                );
+                return;
+            };
+
             match perform_broker_sync(
                 connect_sync_service,
                 event_bus,

@@ -39,6 +39,27 @@ export interface DataExportResult {
   filename?: string;
 }
 
+export type PostLoginBootstrapStatus = "started" | "skipped";
+
+export type PostLoginBootstrapReason =
+  | "feature_disabled"
+  | "not_entitled"
+  | "no_connections"
+  | "already_running"
+  | "error"
+  | "not_enrolled"
+  | "not_ready";
+
+export interface PostLoginBootstrapSyncResult {
+  status: PostLoginBootstrapStatus;
+  reason?: PostLoginBootstrapReason;
+}
+
+export interface PostLoginBootstrapResult {
+  brokerSync: PostLoginBootstrapSyncResult;
+  deviceSync: PostLoginBootstrapSyncResult;
+}
+
 // Addon types from SDK, re-exported with Tauri serialization adjustments
 import type {
   AddonInstallResult,

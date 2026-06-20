@@ -3,7 +3,7 @@
 //! Receives domain events and sends them to a background queue worker
 //! for debounced processing.
 
-use std::sync::{Arc, RwLock};
+use std::sync::{atomic::AtomicBool, Arc, RwLock};
 
 use tokio::sync::mpsc;
 use wealthfolio_connect::{BrokerSyncServiceTrait, TokenLifecycleState};
@@ -60,6 +60,7 @@ impl WebDomainEventSink {
         asset_service: Arc<dyn AssetServiceTrait + Send + Sync>,
         connect_sync_service: Arc<dyn BrokerSyncServiceTrait + Send + Sync>,
         event_bus: EventBus,
+        broker_sync_running: Arc<AtomicBool>,
         health_service: Arc<dyn wealthfolio_core::health::HealthServiceTrait + Send + Sync>,
         snapshot_service: Arc<
             dyn wealthfolio_core::portfolio::snapshot::SnapshotServiceTrait + Send + Sync,
@@ -94,6 +95,7 @@ impl WebDomainEventSink {
             asset_service,
             connect_sync_service,
             event_bus,
+            broker_sync_running,
             health_service,
             snapshot_service,
             snapshot_repository,

@@ -547,6 +547,7 @@ pub async fn initialize_context(
         app_version,
     ));
     let device_sync_runtime = Arc::new(DeviceSyncRuntimeState::new());
+    let broker_sync_running = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let now = chrono::Utc::now();
     if let Err(err) = app_sync_repository
         .prune_sync_outbox(
@@ -593,6 +594,7 @@ pub async fn initialize_context(
             ai_chat_service,
             device_enroll_service,
             device_sync_runtime,
+            broker_sync_running,
             health_service,
             custom_provider_service,
             portfolio_service,

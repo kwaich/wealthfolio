@@ -31,6 +31,7 @@ interface ActivityViewControlsProps {
   onStatusFilterChange: (status: ActivityStatusFilter) => void;
   dateRange: DateRange | undefined;
   onDateRangeChange: (range: DateRange | undefined) => void;
+  onResetFilters: () => void;
   viewMode: ActivityViewMode;
   onViewModeChange: (mode: ActivityViewMode) => void;
   /** Shown only in table view - number of activities fetched so far */
@@ -70,6 +71,7 @@ export function ActivityViewControls({
   onStatusFilterChange,
   dateRange,
   onDateRangeChange,
+  onResetFilters,
   viewMode,
   onViewModeChange,
   totalFetched,
@@ -210,13 +212,9 @@ export function ActivityViewControls({
             size="sm"
             className="h-8 px-2 text-xs"
             onClick={() => {
+              debouncedSearch.cancel();
               setLocalSearch("");
-              onSearchQueryChange("");
-              onAccountScopeChange({ type: "all" });
-              onActivityTypesChange([]);
-              onInstrumentTypesChange([]);
-              onStatusFilterChange("all");
-              onDateRangeChange(undefined);
+              onResetFilters();
             }}
           >
             Reset

@@ -1,4 +1,4 @@
-use std::sync::{Arc, RwLock};
+use std::sync::{atomic::AtomicBool, Arc, RwLock};
 use wealthfolio_ai::{AiProviderServiceTrait, ChatService};
 use wealthfolio_connect::BrokerSyncServiceTrait;
 use wealthfolio_core::{
@@ -68,6 +68,7 @@ pub struct ServiceContext {
     pub ai_chat_service: Arc<ChatService<TauriAiEnvironment>>,
     pub device_enroll_service: Arc<DeviceEnrollService>,
     pub device_sync_runtime: Arc<DeviceSyncRuntimeState>,
+    pub broker_sync_running: Arc<AtomicBool>,
     pub health_service: Arc<health::HealthService>,
     pub custom_provider_service: Arc<wealthfolio_core::custom_provider::CustomProviderService>,
     pub portfolio_service: Arc<dyn portfolios::PortfolioServiceTrait>,
@@ -243,6 +244,10 @@ impl ServiceContext {
 
     pub fn device_sync_runtime(&self) -> Arc<DeviceSyncRuntimeState> {
         Arc::clone(&self.device_sync_runtime)
+    }
+
+    pub fn broker_sync_running(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.broker_sync_running)
     }
 
     pub fn health_service(&self) -> Arc<health::HealthService> {

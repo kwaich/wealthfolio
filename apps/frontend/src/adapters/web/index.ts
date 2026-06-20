@@ -283,6 +283,7 @@ export {
   getUserInfo,
   listBrokerAccounts,
   listBrokerConnections,
+  postLoginBootstrap,
   listDevices,
   reinitializeDeviceSync,
   resetTeamSync,

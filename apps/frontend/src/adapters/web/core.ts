@@ -290,6 +290,7 @@ export const COMMANDS: CommandMap = {
   cancel_pairing_flow: { method: "POST", path: "/sync/pairing/flow/cancel" },
   // Wealthfolio Connect (Broker Sync)
   store_sync_session: { method: "POST", path: "/connect/session" },
+  post_login_bootstrap: { method: "POST", path: "/connect/post-login-bootstrap" },
   clear_sync_session: { method: "DELETE", path: "/connect/session" },
   get_sync_session_status: { method: "GET", path: "/connect/session/status" },
   restore_sync_session: { method: "GET", path: "/connect/session/restore" },
@@ -1703,6 +1704,7 @@ export const invoke = async <T>(command: string, payload?: Record<string, unknow
     case "list_devices":
     case "initialize_team_keys":
     case "rotate_team_keys":
+    case "post_login_bootstrap":
     case "clear_sync_session":
     case "get_sync_session_status":
     case "restore_sync_session":

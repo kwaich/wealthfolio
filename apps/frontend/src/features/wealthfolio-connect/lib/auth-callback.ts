@@ -67,7 +67,7 @@ export function parseAuthCallbackUrl(
     }
 
     const hasAccessToken =
-      hashParams.has("access_token") || urlObj.searchParams.has("access_token") || false;
+      hashParams.has("access_token") || urlObj.searchParams.has("access_token");
     if (hasAccessToken) {
       return {
         type: "error",

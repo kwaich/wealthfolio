@@ -8,11 +8,13 @@ import {
 import { ActionPalette, type ActionPaletteGroup } from "@/components/action-palette";
 import { TickerAvatar } from "@/components/ticker-avatar";
 import { useHapticFeedback } from "@/hooks";
+import { useAccounts } from "@/hooks/use-accounts";
 import { useAlternativeAssetHolding, useAlternativeHoldings } from "@/hooks/use-alternative-assets";
 import { useIsMobileViewport } from "@/hooks/use-platform";
 import { useQuoteHistory } from "@/hooks/use-quote-history";
 import { useSyncMarketDataMutation } from "@/hooks/use-sync-market-data";
 import { useAssetTaxonomyAssignments, useTaxonomy } from "@/hooks/use-taxonomies";
+import { getActivityRestrictionLevel } from "@/lib/activity-restrictions";
 import { ActivityStatus, ActivityType } from "@/lib/constants";
 import { generateId } from "@/lib/id";
 import { QueryKeys } from "@/lib/query-keys";
@@ -44,8 +46,12 @@ import { AssetEditSheet } from "./asset-edit-sheet";
 import AssetHistoryCard from "./asset-history-card";
 import { AssetSnapshotHistory, useHasManualSnapshots } from "./asset-account-holdings";
 import AssetLotsTable from "./asset-lots-table";
+import { ActivityDeleteModal } from "@/pages/activity/components/activity-delete-modal";
+import { ActivityForm, type AccountSelectOption } from "@/pages/activity/components/activity-form";
 import ActivityTable from "@/pages/activity/components/activity-table/activity-table";
 import ActivityTableMobile from "@/pages/activity/components/activity-table/activity-table-mobile";
+import { MobileActivityForm } from "@/pages/activity/components/mobile-forms/mobile-activity-form";
+import { useActivityActionDialogs } from "@/pages/activity/hooks/use-activity-action-dialogs";
 import { useAssetProfile } from "./hooks/use-asset-profile";
 import { useAssetProfileMutations } from "./hooks/use-asset-profile-mutations";
 import { RefreshQuotesConfirmDialog } from "./refresh-quotes-confirm-dialog";
@@ -164,6 +170,18 @@ export const AssetProfilePage = () => {
   >("general");
   const { triggerHaptic } = useHapticFeedback();
   const isMobile = useIsMobileViewport();
+  const {
+    selectedActivity,
+    formOpen: activityFormOpen,
+    deleteDialogOpen: showActivityDeleteAlert,
+    isDeleting: isActivityDeleting,
+    openForm: handleActivityEdit,
+    closeForm: handleActivityFormClose,
+    requestDelete: handleActivityDelete,
+    cancelDelete: handleActivityDeleteCancel,
+    confirmDelete: handleActivityDeleteConfirm,
+    duplicateActivity: handleActivityDuplicate,
+  } = useActivityActionDialogs();
 
   const fxTabs = useMemo(() => {
     const items: { value: "overview" | "quotes"; label: string }[] = [
@@ -460,6 +478,22 @@ export const AssetProfilePage = () => {
     },
     enabled: !!assetId && !isAssetProfileLoading,
   });
+
+  const { accounts } = useAccounts({ filterActive: false });
+
+  const activityFormAccounts = useMemo<AccountSelectOption[]>(
+    () =>
+      accounts
+        .filter((account) => !account.isArchived)
+        .map((account) => ({
+          value: account.id,
+          label: account.name,
+          currency: account.currency,
+          accountType: account.accountType,
+          restrictionLevel: getActivityRestrictionLevel(account),
+        })),
+    [accounts],
+  );
 
   const overviewSubTabs = useMemo(() => {
     const items: { value: OverviewSubTab; label: string }[] = [{ value: "about", label: "About" }];
@@ -820,17 +854,13 @@ export const AssetProfilePage = () => {
       />
     );
 
-    const noopEdit = () => undefined;
-    const noopDelete = () => undefined;
-    const noopDuplicate = () => Promise.resolve();
-
     const activitiesContent = isMobile ? (
       <ActivityTableMobile
         activities={assetActivities}
         isCompactView={true}
-        handleEdit={noopEdit}
-        handleDelete={noopDelete}
-        onDuplicate={noopDuplicate}
+        handleEdit={handleActivityEdit}
+        handleDelete={handleActivityDelete}
+        onDuplicate={handleActivityDuplicate}
       />
     ) : (
       <ActivityTable
@@ -838,8 +868,8 @@ export const AssetProfilePage = () => {
         isLoading={isActivitiesLoading}
         sorting={[{ id: "date", desc: true }]}
         onSortingChange={() => undefined}
-        handleEdit={noopEdit}
-        handleDelete={noopDelete}
+        handleEdit={handleActivityEdit}
+        handleDelete={handleActivityDelete}
       />
     );
 
@@ -869,6 +899,9 @@ export const AssetProfilePage = () => {
     assetActivities,
     isActivitiesLoading,
     isMobile,
+    handleActivityEdit,
+    handleActivityDelete,
+    handleActivityDuplicate,
   ]);
 
   // Build swipable tabs for mobile from sub-tabs.
@@ -1403,6 +1436,32 @@ export const AssetProfilePage = () => {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {isMobile ? (
+        <MobileActivityForm
+          key={selectedActivity?.id ?? "new"}
+          accounts={activityFormAccounts}
+          transferAccounts={activityFormAccounts}
+          activity={selectedActivity}
+          open={activityFormOpen}
+          onClose={handleActivityFormClose}
+        />
+      ) : (
+        <ActivityForm
+          accounts={activityFormAccounts}
+          transferAccounts={activityFormAccounts}
+          activity={selectedActivity}
+          open={activityFormOpen}
+          onClose={handleActivityFormClose}
+        />
+      )}
+      <ActivityDeleteModal
+        isOpen={showActivityDeleteAlert}
+        isDeleting={isActivityDeleting}
+        linkedTransfer={!!selectedActivity?.sourceGroupId}
+        onConfirm={handleActivityDeleteConfirm}
+        onCancel={handleActivityDeleteCancel}
+      />
 
       {/* Edit Sheet (for regular assets) */}
       <AssetEditSheet
