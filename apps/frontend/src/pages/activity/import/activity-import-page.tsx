@@ -50,8 +50,9 @@ import { HoldingsReviewStep } from "./steps/holdings-review-step";
 import { ImportFormat } from "@/lib/constants";
 import { computeFieldMappings } from "./hooks/use-import-mapping";
 import {
-  buildImportAssetCandidateFromDraft,
   buildSyntheticDraftsFromHoldings,
+  canProceedFromAssetReviewStep,
+  holdingsImportHasAssets,
 } from "./utils/asset-review-utils";
 import { ACTIVITY_SKIP, isFieldMapped, primaryHeader } from "./utils/draft-utils";
 import { findMappedActivityType, validateTickerSymbol } from "./utils/validation-utils";
@@ -106,6 +107,15 @@ const HOLDINGS_STEPS: WizardStep[] = [
   { id: "upload", label: "Upload" },
   { id: "mapping", label: "Mapping" },
   { id: "assets", label: "Review Assets" },
+  { id: "review", label: "Review Holdings" },
+  { id: "confirm", label: "Import" },
+];
+
+// Cash-only holdings imports have no securities to resolve, so the asset review
+// step is omitted entirely (see holdingsImportHasAssets).
+const HOLDINGS_STEPS_CASH_ONLY: WizardStep[] = [
+  { id: "upload", label: "Upload" },
+  { id: "mapping", label: "Mapping" },
   { id: "review", label: "Review Holdings" },
   { id: "confirm", label: "Import" },
 ];
@@ -290,22 +300,15 @@ function useStepValidation(
         return true;
       }
 
-      case "assets": {
-        const assetCandidateCount = new Set(
-          draftActivities
-            .map((draft) => buildImportAssetCandidateFromDraft(draft)?.key)
-            .filter((key): key is string => Boolean(key)),
-        ).size;
-
-        return (
-          draftActivities.length > 0 &&
-          !state.isPreviewingAssets &&
-          !state.assetPreviewError &&
-          (assetCandidateCount === 0 ||
-            (state.assetPreviewItems.length > 0 &&
-              state.assetPreviewItems.every((item) => item.status !== "NEEDS_FIXING")))
-        );
-      }
+      case "assets":
+        return canProceedFromAssetReviewStep({
+          isHoldingsMode,
+          parsedRowCount: parsedRows.length,
+          draftActivities,
+          isPreviewingAssets: state.isPreviewingAssets,
+          assetPreviewError: state.assetPreviewError,
+          assetPreviewItems: state.assetPreviewItems,
+        });
 
       case "review":
         if (isHoldingsMode) {
@@ -380,8 +383,34 @@ function ImportWizardContent() {
 
   const canProceed = useStepValidation(isHoldingsMode, importProfile, accounts);
 
+  // Cash-only holdings imports have no securities to resolve, so the asset review
+  // step is dropped from the wizard for them (mapping → review directly).
+  const holdingsHasAssets = useMemo(() => {
+    if (!isHoldingsMode || !state.mapping) return false;
+    return holdingsImportHasAssets(
+      state.headers,
+      state.parsedRows,
+      state.mapping,
+      state.accountId,
+      state.parseConfig.defaultCurrency,
+    );
+  }, [
+    isHoldingsMode,
+    state.mapping,
+    state.headers,
+    state.parsedRows,
+    state.accountId,
+    state.parseConfig.defaultCurrency,
+  ]);
+
   // Select the appropriate steps and components based on mode
-  const steps = isHoldingsMode ? HOLDINGS_STEPS : isTransactionImport ? TRANSACTION_STEPS : STEPS;
+  const steps = isHoldingsMode
+    ? holdingsHasAssets
+      ? HOLDINGS_STEPS
+      : HOLDINGS_STEPS_CASH_ONLY
+    : isTransactionImport
+      ? TRANSACTION_STEPS
+      : STEPS;
   const stepComponents = isHoldingsMode ? HOLDINGS_STEP_COMPONENTS : STEP_COMPONENTS;
 
   useEffect(() => {
@@ -570,7 +599,9 @@ function ImportWizardContent() {
       case "upload":
         return "Configure Mapping";
       case "mapping":
-        return isTransactionImport ? "Review Transactions" : "Review Assets";
+        if (isTransactionImport) return "Review Transactions";
+        if (isHoldingsMode && !holdingsHasAssets) return "Review Holdings";
+        return "Review Assets";
       case "assets":
         return isHoldingsMode ? "Review Holdings" : "Review Activities";
       case "review":
@@ -583,6 +614,7 @@ function ImportWizardContent() {
   }, [
     state.step,
     isHoldingsMode,
+    holdingsHasAssets,
     isTransactionImport,
     state.lastValidatedRevision,
     state.draftRevision,

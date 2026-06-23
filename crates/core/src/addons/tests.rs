@@ -93,10 +93,6 @@ export default function enable(ctx: AddonContext) {
         ui_functions.contains(&"router.add"),
         "router.add should be detected in hello world"
     );
-    assert!(
-        ui_functions.contains(&"onDisable"),
-        "onDisable should be detected in hello world"
-    );
 
     // Should NOT detect portfolio or market-data functions
     let portfolio_permission = detected_permissions
@@ -166,10 +162,6 @@ fn test_detect_addon_permissions() {
         ui_functions.contains(&"router.add"),
         "router.add should be detected"
     );
-    assert!(
-        ui_functions.contains(&"onDisable"),
-        "onDisable should be detected"
-    );
 
     // Should detect portfolio functions
     let portfolio_permission = detected_permissions
@@ -213,6 +205,55 @@ fn test_detect_addon_permissions() {
     assert!(
         market_functions.contains(&"searchTicker"),
         "searchTicker should be detected"
+    );
+}
+
+#[test]
+fn test_detect_addon_permissions_assets_and_market_data_sdk_categories() {
+    let addon_files = vec![AddonFile {
+        name: "addon.js".to_string(),
+        content: r#"
+            export default function enable(ctx) {
+                ctx.api.assets.getProfile('asset-1');
+                ctx.api.market.fetchDividends('AAPL');
+            }
+        "#
+        .to_string(),
+        is_main: true,
+    }];
+
+    let detected_permissions = detect_addon_permissions(&addon_files);
+
+    let assets_permission = detected_permissions
+        .iter()
+        .find(|p| p.category == "assets")
+        .expect("assets permissions should be detected");
+    let assets_functions: Vec<&str> = assets_permission
+        .functions
+        .iter()
+        .map(|f| f.name.as_str())
+        .collect();
+    assert!(
+        assets_functions.contains(&"getProfile"),
+        "getProfile should be detected under assets"
+    );
+
+    let market_permission = detected_permissions
+        .iter()
+        .find(|p| p.category == "market-data")
+        .expect("market-data permissions should be detected");
+    let market_functions: Vec<&str> = market_permission
+        .functions
+        .iter()
+        .map(|f| f.name.as_str())
+        .collect();
+    assert!(
+        market_functions.contains(&"fetchDividends"),
+        "fetchDividends should be detected under market-data"
+    );
+    assert!(
+        !market_functions.contains(&"getProfile"),
+        "getProfile should not be detected under market-data"
     );
 }
 
@@ -383,7 +424,7 @@ fn test_permission_merging_during_installation() {
                 ctx.sidebar.addItem({ id: 'test' });
                 ctx.api.portfolio.getHoldings();
 
-                // Use undeclared functions
+                // Use undeclared function
                 ctx.router.add({ path: '/test' });
                 ctx.onDisable(() => {});
             "#
@@ -507,25 +548,6 @@ fn test_permission_merging_during_installation() {
     assert!(
         router_func.detected_at.is_some(),
         "router.add should have detected_at timestamp"
-    );
-
-    // Check onDisable function
-    let ondisable_func = ui_permission
-        .functions
-        .iter()
-        .find(|f| f.name == "onDisable");
-    assert!(
-        ondisable_func.is_some(),
-        "onDisable should be present as detected function"
-    );
-    let ondisable_func = ondisable_func.unwrap();
-    assert!(
-        !ondisable_func.is_declared,
-        "onDisable should NOT be marked as declared"
-    );
-    assert!(
-        ondisable_func.is_detected,
-        "onDisable should be marked as detected"
     );
 
     // Check portfolio permission

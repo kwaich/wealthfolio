@@ -153,6 +153,7 @@ pub fn detect_addon_permissions(addon_files: &[AddonFile]) -> Vec<AddonPermissio
     let permission_patterns = vec![
         (
             "portfolio",
+            "portfolio",
             vec![
                 "getHoldings",
                 "getHolding",
@@ -165,6 +166,7 @@ pub fn detect_addon_permissions(addon_files: &[AddonFile]) -> Vec<AddonPermissio
             "Access to portfolio holdings, valuations, and performance",
         ),
         (
+            "activities",
             "activities",
             vec![
                 "getAll",
@@ -181,28 +183,36 @@ pub fn detect_addon_permissions(addon_files: &[AddonFile]) -> Vec<AddonPermissio
         ),
         (
             "accounts",
+            "accounts",
             vec!["getAll", "create"],
             "Access to account information and management",
         ),
         (
             "market-data",
+            "market",
             vec![
                 "searchTicker",
                 "syncHistory",
                 "sync",
                 "getProviders",
-                "getProfile",
-                "updateProfile",
-                "updateDataSource",
+                "fetchDividends",
             ],
             "Access to quotes and market data",
         ),
         (
+            "assets",
+            "assets",
+            vec!["getProfile", "updateProfile", "updateQuoteMode"],
+            "Access to asset profiles and data sources",
+        ),
+        (
+            "quotes",
             "quotes",
             vec!["update", "getHistory"],
             "Access to quote management",
         ),
         (
+            "performance",
             "performance",
             vec![
                 "calculateHistory",
@@ -213,32 +223,63 @@ pub fn detect_addon_permissions(addon_files: &[AddonFile]) -> Vec<AddonPermissio
         ),
         (
             "financial-planning",
+            "goals",
             vec![
                 "getAll",
                 "create",
                 "update",
+                "getFunding",
+                "saveFunding",
                 "updateAllocations",
                 "getAllocations",
-                "calculateDeposits",
             ],
             "Access to goals and contribution limits",
         ),
         (
+            "contribution-limits",
+            "contributionLimits",
+            vec!["getAll", "create", "update", "calculateDeposits"],
+            "Access to contribution limits and deposit calculations",
+        ),
+        (
             "currency",
+            "exchangeRates",
             vec!["getAll", "update", "add"],
             "Access to exchange rates and currency data",
         ),
         (
+            "settings",
             "settings",
             vec!["get", "update", "backupDatabase"],
             "Access to application settings",
         ),
         (
             "files",
+            "files",
             vec!["openCsvDialog", "openSaveDialog"],
             "Access to file dialogs",
         ),
         (
+            "secrets",
+            "secrets",
+            vec!["set", "get", "delete"],
+            "Access to secure storage for addon secrets",
+        ),
+        (
+            "snapshots",
+            "snapshots",
+            vec![
+                "getAll",
+                "getByDate",
+                "save",
+                "checkImport",
+                "importSnapshots",
+                "delete",
+            ],
+            "Access to holdings snapshots",
+        ),
+        (
+            "events",
             "events",
             vec![
                 // Import events
@@ -257,7 +298,8 @@ pub fn detect_addon_permissions(addon_files: &[AddonFile]) -> Vec<AddonPermissio
         ),
         (
             "ui",
-            vec!["sidebar.addItem", "router.add", "onDisable"],
+            "ui",
+            vec!["sidebar.addItem", "router.add"],
             "User interface and navigation",
         ),
     ];
@@ -277,7 +319,7 @@ pub fn detect_addon_permissions(addon_files: &[AddonFile]) -> Vec<AddonPermissio
             file.content.len()
         );
 
-        for (category, functions, _purpose) in &permission_patterns {
+        for (category, api_category, functions, _purpose) in &permission_patterns {
             for function in functions {
                 let mut function_detected = false;
 
@@ -313,29 +355,6 @@ pub fn detect_addon_permissions(addon_files: &[AddonFile]) -> Vec<AddonPermissio
                 // For simple function names or if dotted pattern wasn't found
                 if !function_detected {
                     // Create API-specific patterns to prevent false positives
-                    let api_category = if category == &"currency" {
-                        "exchangeRates"
-                    } else if category == &"financial-planning" {
-                        // Handle both goals and contributionLimits APIs
-                        if *function == "calculateDeposits" {
-                            "contributionLimits"
-                        } else {
-                            "goals" // Default to goals for getAll, create, update, etc.
-                        }
-                    } else if category == &"market-data" {
-                        // Handle both market and assets APIs
-                        if *function == "getProfile"
-                            || *function == "updateProfile"
-                            || *function == "updateDataSource"
-                        {
-                            "assets"
-                        } else {
-                            "market" // Default to market for searchTicker, sync, etc.
-                        }
-                    } else {
-                        category // Use category as-is for portfolio, activities, accounts, etc.
-                    };
-
                     let api_patterns = vec![
                         format!("api.{}.{}(", api_category, function), // api.portfolio.getHoldings(
                         format!(".api.{}.{}(", api_category, function), // ctx.api.portfolio.getHoldings(
@@ -437,8 +456,8 @@ pub fn detect_addon_permissions(addon_files: &[AddonFile]) -> Vec<AddonPermissio
         // Find the purpose for this category
         let purpose = permission_patterns
             .iter()
-            .find(|(cat, _, _)| cat == &category)
-            .map(|(_, _, purpose)| purpose.to_string())
+            .find(|(cat, _, _, _)| cat == &category)
+            .map(|(_, _, _, purpose)| purpose.to_string())
             .unwrap_or_else(|| format!("Access to {} functions", category));
 
         // Create FunctionPermission objects for detected functions

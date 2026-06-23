@@ -3,6 +3,7 @@ import { quoteModeFromSearchResult } from "@/lib/asset-utils";
 import { ActivityType } from "@/lib/constants";
 import type {
   ImportAssetCandidate,
+  ImportAssetPreviewItem,
   ImportMappingData,
   NewAsset,
   SymbolSearchResult,
@@ -279,4 +280,70 @@ export function buildSyntheticDraftsFromHoldings(
   }
 
   return drafts;
+}
+
+/**
+ * Whether a holdings import contains any non-cash securities that need asset
+ * resolution. Cash-only imports (every row `$CASH`) produce no synthetic drafts,
+ * so the "Review Assets" step has nothing to review and can be skipped.
+ */
+export function holdingsImportHasAssets(
+  headers: string[],
+  parsedRows: string[][],
+  mapping: ImportMappingData,
+  accountId: string,
+  defaultCurrency: string,
+): boolean {
+  return (
+    buildSyntheticDraftsFromHoldings(headers, parsedRows, mapping, accountId, defaultCurrency)
+      .length > 0
+  );
+}
+
+export interface AssetReviewProceedInput {
+  isHoldingsMode: boolean;
+  parsedRowCount: number;
+  draftActivities: DraftActivity[];
+  isPreviewingAssets: boolean;
+  assetPreviewError: string | null;
+  assetPreviewItems: ImportAssetPreviewItem[];
+}
+
+/**
+ * Whether the Review Assets step can advance.
+ *
+ * Holdings imports gate on parsed rows rather than synthetic drafts: a cash-only
+ * holdings CSV yields zero drafts (cash needs no asset resolution) yet is still a
+ * valid import, so blocking on `draftActivities.length` would strand the user.
+ * When there are no asset candidates to resolve the step passes through;
+ * otherwise every previewed asset must be resolved (none left NEEDS_FIXING).
+ */
+export function canProceedFromAssetReviewStep({
+  isHoldingsMode,
+  parsedRowCount,
+  draftActivities,
+  isPreviewingAssets,
+  assetPreviewError,
+  assetPreviewItems,
+}: AssetReviewProceedInput): boolean {
+  const hasImportableRows = isHoldingsMode ? parsedRowCount > 0 : draftActivities.length > 0;
+
+  if (!hasImportableRows || isPreviewingAssets || assetPreviewError) {
+    return false;
+  }
+
+  const assetCandidateCount = new Set(
+    draftActivities
+      .map((draft) => buildImportAssetCandidateFromDraft(draft)?.key)
+      .filter((key): key is string => Boolean(key)),
+  ).size;
+
+  if (assetCandidateCount === 0) {
+    return true;
+  }
+
+  return (
+    assetPreviewItems.length > 0 &&
+    assetPreviewItems.every((item) => item.status !== "NEEDS_FIXING")
+  );
 }
