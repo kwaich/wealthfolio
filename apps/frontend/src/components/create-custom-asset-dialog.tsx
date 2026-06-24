@@ -44,7 +44,7 @@ const customAssetSchema = z.object({
   symbol: z
     .string()
     .min(1, "Symbol is required")
-    .max(20, "Symbol must be 20 characters or less")
+    .max(100, "Symbol must be 100 characters or less")
     .transform((val) => val.toUpperCase().trim()),
   name: z.string().min(1, "Name is required").max(100, "Name must be 100 characters or less"),
   assetType: z.enum(["EQUITY", "CRYPTO", "BOND", "OPTION", "METAL", "OTHER"]),

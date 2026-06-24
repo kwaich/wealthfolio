@@ -123,6 +123,24 @@ pub fn trigger_full_portfolio_recalc(state: Arc<AppState>) {
     );
 }
 
+/// Trigger a full portfolio recalculation that also syncs the given assets'
+/// market data. Used when a provider-backed FX pair is added so its real rate
+/// is fetched immediately instead of waiting for the periodic sync (#1143).
+pub fn trigger_portfolio_recalc_with_asset_sync(state: Arc<AppState>, asset_ids: Vec<String>) {
+    enqueue_portfolio_job(
+        state,
+        PortfolioJobConfig {
+            account_ids: None,
+            market_sync_mode: MarketSyncMode::Incremental {
+                asset_ids: Some(asset_ids),
+            },
+            snapshot_mode: SnapshotRecalcMode::Full,
+            valuation_mode: ValuationRecalcMode::Full,
+            since_date: None,
+        },
+    );
+}
+
 pub async fn process_portfolio_job(
     state: Arc<AppState>,
     config: PortfolioJobConfig,

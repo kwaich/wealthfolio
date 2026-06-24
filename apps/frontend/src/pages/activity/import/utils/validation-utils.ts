@@ -15,8 +15,8 @@ import { looksLikeIsin } from "@/lib/isin";
 import { findMappedActivityType } from "./activity-type-mapping";
 import { normalizeInstrumentType, splitInstrumentPrefixedSymbol } from "./instrument-type";
 
-// Ticker symbol validation regex
-const tickerRegex = /^(CASH:[A-Z]{3}|[A-Z0-9]{1,21}([.-][A-Z0-9]+){0,2})$/;
+// Ticker symbol validation regex (full symbol bounded to 100 chars via the leading lookahead)
+const tickerRegex = /^(?=.{1,100}$)(CASH:[A-Z]{3}|[A-Z0-9_]+([.-][A-Z0-9_]+){0,2})$/;
 
 // CUSIP: 9 alphanumeric chars ending in a digit
 const cusipRegex = /^[A-Z0-9]{8}\d$/;

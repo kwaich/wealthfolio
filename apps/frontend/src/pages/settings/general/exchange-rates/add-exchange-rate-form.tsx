@@ -98,8 +98,10 @@ export function AddExchangeRateForm({ onSubmit, onCancel }: AddExchangeRateFormP
       fromCurrency: data.fromCurrency,
       toCurrency: data.toCurrency,
       source: data.source,
-      // Only include rate for manual sources
-      rate: isManualSource ? data.rate! : 1,
+      // Only manual sources carry a user-entered rate. Provider-backed sources
+      // are fetched by the market-data sync; the backend ignores this value for
+      // them, so send a neutral 0 rather than a fake rate (#1143).
+      rate: isManualSource ? data.rate! : 0,
       timestamp: new Date().toISOString(),
     });
   };
