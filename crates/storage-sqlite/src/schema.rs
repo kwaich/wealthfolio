@@ -727,6 +727,8 @@ diesel::table! {
         taxonomy_id -> Text,
         trigger_type -> Text,
         drift_band_bps -> Integer,
+        band_type -> Text,
+        relative_factor_bps -> Integer,
         rebalance_goal -> Text,
         min_trade_amount -> Text,
         whole_shares_only -> Integer,

@@ -84,6 +84,7 @@ interface AccountMetricsProps {
   performance?: PerformanceResult | null;
   cashCurrencySplit?: CurrentValuationSplit[];
   className?: string;
+  compact?: boolean;
   isLoading?: boolean;
   isPerformanceLoading?: boolean;
   performanceError?: string;
@@ -140,6 +141,7 @@ const AccountMetrics: React.FC<AccountMetricsProps> = ({
   performance,
   cashCurrencySplit,
   className,
+  compact = false,
   isLoading,
   isPerformanceLoading,
   performanceError,
@@ -310,19 +312,21 @@ const AccountMetrics: React.FC<AccountMetricsProps> = ({
           )}
         </div>
       </CardHeader>
-      <CardContent className="space-y-4 pb-2">
-        <CashCurrencyBreakdown
-          cashCurrencySplit={cashCurrencySplit}
-          displayCurrency={displayCurrency}
-        />
-        <Separator />
-        <div className="space-y-2.5 text-sm">
-          {rows.map(({ label, value }, idx) => (
-            <div key={idx} className="flex justify-between">
-              <span className="text-muted-foreground">{label}</span>
-              <span className={`font-medium`}>{value}</span>
-            </div>
-          ))}
+      <CardContent className={cn(compact ? "space-y-4 pb-2" : "space-y-6 pb-4")}>
+        <div className="space-y-4">
+          <CashCurrencyBreakdown
+            cashCurrencySplit={cashCurrencySplit}
+            displayCurrency={displayCurrency}
+          />
+          <Separator />
+          <div className={cn(compact ? "space-y-2.5" : "space-y-4", "text-sm")}>
+            {rows.map(({ label, value }, idx) => (
+              <div key={idx} className="flex justify-between">
+                <span className="text-muted-foreground">{label}</span>
+                <span className={`font-medium`}>{value}</span>
+              </div>
+            ))}
+          </div>
         </div>
 
         <PerformanceGrid

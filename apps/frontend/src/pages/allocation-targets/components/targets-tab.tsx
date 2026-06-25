@@ -25,6 +25,7 @@ import {
   useSaveAllocationTargetWithWeights,
 } from "../hooks/use-allocation-target-mutations";
 import type {
+  BandType,
   CategoryAllocation,
   PortfolioAllocations,
   AllocationTarget,
@@ -271,7 +272,13 @@ function TargetEditor({
   const [startId, setStartId] = useState<string>(target ? "saved" : "current");
   const [targetName, setTargetName] = useState(target?.name ?? "");
   const [nameTouched, setNameTouched] = useState(!!target);
-  const [driftBandPct, setDriftBandPct] = useState(target ? target.driftBandBps / 100 : 5);
+  const [driftBandPct, setDriftBandPct] = useState(target ? target.driftBandBps / 100 : 1);
+  const [bandType, setBandType] = useState<BandType>(
+    target ? (target.bandType ?? "absolute") : "hybrid",
+  );
+  const [relativeFactorPct, setRelativeFactorPct] = useState(
+    target ? target.relativeFactorBps / 100 : 20,
+  );
   const [allowSells, setAllowSells] = useState(target?.allowSells ?? true);
   const [rebalanceGoal, setRebalanceGoal] = useState<RebalanceGoal>(
     target?.rebalanceGoal ?? "nearest_band",
@@ -286,7 +293,9 @@ function TargetEditor({
   const resetTargetId = target?.id ?? null;
   const resetTargetTaxonomyId = target?.taxonomyId ?? "asset_classes";
   const resetTargetName = target?.name ?? "";
-  const resetTargetDriftBandBps = target?.driftBandBps ?? 500;
+  const resetTargetDriftBandBps = target?.driftBandBps ?? 100;
+  const resetTargetBandType = target?.bandType ?? "absolute";
+  const resetTargetRelativeFactorBps = target?.relativeFactorBps ?? 2000;
 
   const { data: taxonomy, isLoading: taxonomyLoading } = useTaxonomy(taxonomyId);
   const targetCategories = React.useMemo(
@@ -350,6 +359,8 @@ function TargetEditor({
       setTargetName(resetTargetName);
       setNameTouched(true);
       setDriftBandPct(resetTargetDriftBandBps / 100);
+      setBandType(resetTargetBandType);
+      setRelativeFactorPct(resetTargetRelativeFactorBps / 100);
       setAllowSells(target?.allowSells ?? false);
       setRebalanceGoal(target?.rebalanceGoal ?? "nearest_band");
       setMinTradeAmount(target?.minTradeAmount ?? "0");
@@ -359,7 +370,9 @@ function TargetEditor({
       setStartId("current");
       setTargetName("");
       setNameTouched(false);
-      setDriftBandPct(5);
+      setDriftBandPct(1);
+      setBandType("hybrid");
+      setRelativeFactorPct(20);
       setAllowSells(true);
       setRebalanceGoal("nearest_band");
       setMinTradeAmount("0");
@@ -373,6 +386,8 @@ function TargetEditor({
     onUnsavedChange?.(false);
   }, [
     resetTargetDriftBandBps,
+    resetTargetBandType,
+    resetTargetRelativeFactorBps,
     resetTargetId,
     resetTargetName,
     resetTargetTaxonomyId,
@@ -450,6 +465,8 @@ function TargetEditor({
         taxonomyId,
         triggerType: "threshold",
         driftBandBps: Math.round(driftBandPct * 100),
+        bandType,
+        relativeFactorBps: Math.round(relativeFactorPct * 100),
         allowSells,
         rebalanceGoal,
         minTradeAmount: minTradeAmount === "" ? "0" : minTradeAmount,
@@ -484,6 +501,8 @@ function TargetEditor({
       setTargetName(target.name);
       setNameTouched(true);
       setDriftBandPct(target.driftBandBps / 100);
+      setBandType(target.bandType ?? "absolute");
+      setRelativeFactorPct((target.relativeFactorBps ?? 2000) / 100);
       setAllowSells(target.allowSells ?? false);
       setRebalanceGoal(target.rebalanceGoal ?? "nearest_band");
       setMinTradeAmount(target.minTradeAmount ?? "0");
@@ -494,7 +513,9 @@ function TargetEditor({
       setStartId("current");
       setTargetName("");
       setNameTouched(false);
-      setDriftBandPct(5);
+      setDriftBandPct(1);
+      setBandType("hybrid");
+      setRelativeFactorPct(20);
       setRebalanceGoal("nearest_band");
       setMinTradeAmount("0");
       setWholeSharesOnly(false);
@@ -648,6 +669,29 @@ function TargetEditor({
           </section>
 
           <section className="bg-card/80 rounded-lg border p-5 shadow-sm">
+            <StepHeader number={3} className="mb-3">
+              Drift tolerance
+            </StepHeader>
+            <DriftBandSlider
+              driftBandPct={driftBandPct}
+              onDriftBandChange={(value) => {
+                setDriftBandPct(value);
+                markDirty();
+              }}
+              bandType={bandType}
+              onBandTypeChange={(value) => {
+                setBandType(value);
+                markDirty();
+              }}
+              relativeFactorPct={relativeFactorPct}
+              onRelativeFactorChange={(value) => {
+                setRelativeFactorPct(value);
+                markDirty();
+              }}
+            />
+          </section>
+
+          <section className="bg-card/80 rounded-lg border p-5 shadow-sm">
             <div className="text-muted-foreground mb-4 text-[11px] font-medium uppercase tracking-wider">
               Rebalance settings
             </div>
@@ -748,7 +792,7 @@ function TargetEditor({
         <div className="space-y-4">
           <section className="bg-card/80 rounded-lg border p-5 shadow-sm">
             <div className="mb-3">
-              <StepHeader number={3}>Starting point</StepHeader>
+              <StepHeader number={4}>Starting point</StepHeader>
             </div>
 
             <ModelPresetPicker
@@ -766,35 +810,23 @@ function TargetEditor({
           </section>
 
           <section className="bg-card/80 rounded-lg border p-5 shadow-sm">
-            <div className="mb-7 flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
-              <div className="min-w-0">
-                <h3 className="text-foreground text-[15px] font-semibold">
-                  Target weights · {selectedStartName}
-                </h3>
-                <p className="text-muted-foreground mt-1 text-[12px]">
-                  Set the intended mix. The total must equal 100%.
+            <div className="mb-7">
+              <h3 className="text-foreground text-[15px] font-semibold">
+                Target weights · {selectedStartName}
+              </h3>
+              <p className="text-muted-foreground mt-1 text-[12px]">
+                Set the intended mix. The total must equal 100%.
+              </p>
+              {cannotTargetScope && (
+                <p className="text-destructive mt-2 text-[11px] leading-relaxed">
+                  Select all accounts, one portfolio, or one account before saving.
                 </p>
-                {cannotTargetScope && (
-                  <p className="text-destructive mt-2 text-[11px] leading-relaxed">
-                    Select all accounts, one portfolio, or one account before saving.
-                  </p>
-                )}
-                {targetName.trim().length === 0 && (
-                  <p className="text-destructive mt-2 text-[11px] leading-relaxed">
-                    Add a target name before saving.
-                  </p>
-                )}
-              </div>
-              <DriftBandSlider
-                value={driftBandPct}
-                label="Drift tolerance"
-                compact
-                className="w-full xl:w-[300px]"
-                onChange={(value) => {
-                  setDriftBandPct(value);
-                  markDirty();
-                }}
-              />
+              )}
+              {targetName.trim().length === 0 && (
+                <p className="text-destructive mt-2 text-[11px] leading-relaxed">
+                  Add a target name before saving.
+                </p>
+              )}
             </div>
 
             {showEditorSkeleton ? (
@@ -805,6 +837,9 @@ function TargetEditor({
                 weights={weights}
                 currentAllocation={currentAllocation}
                 categoryLabel={categoryLabelForTaxonomy(selectedTaxonomy?.name)}
+                bandType={bandType}
+                driftBandBps={Math.round(driftBandPct * 100)}
+                relativeFactorBps={Math.round(relativeFactorPct * 100)}
                 onChange={(nextWeights) => {
                   setWeights(nextWeights);
                   markDirty();

@@ -659,7 +659,7 @@ impl SnapshotService {
                 }
             }
             None => {
-                for acc in self.account_repository.list(Some(true), None, None)? {
+                for acc in self.account_repository.list(None, Some(false), None)? {
                     // Skip HOLDINGS mode accounts - they don't participate in transaction-based recalculation
                     if acc.tracking_mode == TrackingMode::Holdings {
                         debug!(

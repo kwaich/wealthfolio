@@ -12,7 +12,7 @@ use anyhow::anyhow;
 use chrono::NaiveDate;
 use serde_json::json;
 use wealthfolio_core::{
-    accounts::{account_supports_purpose, AccountPurpose, AccountServiceTrait},
+    accounts::{account_supports_portfolio_scope, AccountPurpose, AccountServiceTrait},
     portfolio::{
         snapshot::{reconcile_quote_sync_from_latest_account_snapshots, SnapshotRecalcMode},
         valuation::ValuationRecalcMode,
@@ -43,7 +43,7 @@ pub fn holdings_account_ids(state: &AppState, account_ids: &[String]) -> ApiResu
         .account_service
         .get_accounts_by_ids(account_ids)?
         .into_iter()
-        .filter(|account| account_supports_purpose(&account.account_type, AccountPurpose::Holdings))
+        .filter(|account| account_supports_portfolio_scope(account, AccountPurpose::Holdings))
         .map(|account| account.id)
         .collect())
 }

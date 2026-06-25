@@ -4,7 +4,7 @@ use rust_decimal::Decimal;
 use std::collections::{HashMap, HashSet};
 
 use crate::{
-    accounts::{account_supports_purpose, Account, AccountPurpose, AccountServiceTrait},
+    accounts::{account_supports_portfolio_scope, Account, AccountPurpose, AccountServiceTrait},
     assets::{Asset, AssetServiceTrait, InstrumentType},
     errors::Result,
     fx::{currency::normalize_amount, FxServiceTrait},
@@ -309,10 +309,8 @@ pub fn filter_current_valuation_accounts(
         None => accounts
             .into_iter()
             .filter(|account| {
-                account.is_active
-                    && !account.is_archived
-                    && account_supports_purpose(&account.account_type, AccountPurpose::Performance)
-                    && account_supports_purpose(&account.account_type, AccountPurpose::Holdings)
+                account_supports_portfolio_scope(account, AccountPurpose::Performance)
+                    && account_supports_portfolio_scope(account, AccountPurpose::Holdings)
             })
             .collect(),
         Some(ids) => {
@@ -324,13 +322,8 @@ pub fn filter_current_valuation_accounts(
             ids.iter()
                 .filter_map(|account_id| accounts_by_id.get(account_id).cloned())
                 .filter(|account| {
-                    account.is_active
-                        && !account.is_archived
-                        && account_supports_purpose(
-                            &account.account_type,
-                            AccountPurpose::Performance,
-                        )
-                        && account_supports_purpose(&account.account_type, AccountPurpose::Holdings)
+                    account_supports_portfolio_scope(account, AccountPurpose::Performance)
+                        && account_supports_portfolio_scope(account, AccountPurpose::Holdings)
                 })
                 .collect()
         }

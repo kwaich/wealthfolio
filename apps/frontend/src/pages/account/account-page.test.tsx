@@ -1,10 +1,11 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useQuery } from "@tanstack/react-query";
 import { getHoldings } from "@/adapters";
 import { useAccounts } from "@/hooks/use-accounts";
 import { useRecalculatePortfolioMutation } from "@/hooks/use-calculate-portfolio";
 import { useCurrentValuation } from "@/hooks/use-current-account-valuations";
+import { useIsMobileViewport } from "@/hooks/use-platform";
 import { useValuationHistory } from "@/hooks/use-valuation-history";
 import { useSettingsContext } from "@/lib/settings-provider";
 import type {
@@ -16,10 +17,12 @@ import type {
   Settings,
 } from "@/lib/types";
 import { AccountType } from "@/lib/types";
+import { useActivitySearch } from "@/pages/activity/hooks/use-activity-search";
 import { useCalculatePerformanceHistory } from "@/pages/performance/hooks/use-performance-data";
 import AccountPage from "./account-page";
 
 vi.mock("@/adapters", () => ({
+  getContributionLimit: vi.fn(),
   getHoldings: vi.fn(),
   getSnapshots: vi.fn(),
   searchActivities: vi.fn(),
@@ -49,6 +52,10 @@ vi.mock("@/hooks/use-current-account-valuations", () => ({
   useCurrentValuation: vi.fn(),
 }));
 
+vi.mock("@/hooks/use-platform", () => ({
+  useIsMobileViewport: vi.fn(),
+}));
+
 vi.mock("@/hooks/use-valuation-history", () => ({
   useValuationHistory: vi.fn(),
 }));
@@ -61,8 +68,61 @@ vi.mock("@/pages/activity/components/activity-date-sheet", () => ({
   ActivityDateSheet: () => <div>activity-date-sheet</div>,
 }));
 
+vi.mock("@/pages/activity/components/activity-delete-modal", () => ({
+  ActivityDeleteModal: () => <div>activity-delete-modal</div>,
+}));
+
+vi.mock("@/pages/activity/components/activity-form", () => ({
+  ActivityForm: () => <div>activity-form</div>,
+}));
+
+vi.mock("@/pages/activity/components/activity-pagination", () => ({
+  ActivityPagination: () => <div>activity-pagination</div>,
+}));
+
+vi.mock("@/pages/activity/components/activity-table/activity-table", () => ({
+  default: () => <div>activity-table</div>,
+}));
+
+vi.mock("@/pages/activity/components/activity-table/activity-table-mobile", () => ({
+  default: () => <div>activity-table-mobile</div>,
+}));
+
 vi.mock("@/pages/activity/components/forms/bulk-holdings-modal", () => ({
   BulkHoldingsModal: () => <div>bulk-holdings-modal</div>,
+}));
+
+vi.mock("@/pages/activity/components/mobile-forms/mobile-activity-form", () => ({
+  MobileActivityForm: () => <div>mobile-activity-form</div>,
+}));
+
+vi.mock("@/pages/activity/hooks/use-activity-action-dialogs", () => ({
+  useActivityActionDialogs: () => ({
+    selectedActivity: undefined,
+    formOpen: false,
+    deleteDialogOpen: false,
+    isDeleting: false,
+    openForm: vi.fn(),
+    closeForm: vi.fn(),
+    requestDelete: vi.fn(),
+    cancelDelete: vi.fn(),
+    confirmDelete: vi.fn(),
+    duplicateActivity: vi.fn(),
+  }),
+}));
+
+vi.mock("@/pages/activity/hooks/use-activity-search", () => ({
+  useActivitySearch: vi.fn(() => ({
+    mode: "infinite",
+    data: [],
+    totalRowCount: 0,
+    fetchNextPage: vi.fn(),
+    hasNextPage: false,
+    isFetching: false,
+    isFetchingNextPage: false,
+    isLoading: false,
+    refetch: vi.fn(),
+  })),
 }));
 
 vi.mock("@/pages/dashboard/portfolio-update-trigger", () => ({
@@ -100,7 +160,21 @@ vi.mock("@wealthfolio/ui", () => {
   const Passthrough = ({ children }: { children?: React.ReactNode }) => <>{children}</>;
 
   return {
-    AnimatedToggleGroup: () => <div>toggle-group</div>,
+    AnimatedToggleGroup: ({
+      items,
+      onValueChange,
+    }: {
+      items?: { value: string; label: string }[];
+      onValueChange?: (value: string) => void;
+    }) => (
+      <div>
+        {items?.map((item) => (
+          <button key={item.value} type="button" onClick={() => onValueChange?.(item.value)}>
+            {item.label}
+          </button>
+        ))}
+      </div>
+    ),
     Card: Passthrough,
     CardContent: Passthrough,
     CardHeader: Passthrough,
@@ -109,6 +183,7 @@ vi.mock("@wealthfolio/ui", () => {
     GainPercent: ({ value }: { value: number }) => <span>{`gain-percent:${value}`}</span>,
     Icons: {
       Activity: Icon,
+      ArrowRight: Icon,
       Bitcoin: Icon,
       Briefcase: Icon,
       Check: Icon,
@@ -116,6 +191,7 @@ vi.mock("@wealthfolio/ui", () => {
       Clock: Icon,
       CreditCard: Icon,
       DollarSign: Icon,
+      ExternalLink: Icon,
       History: Icon,
       Holdings: Icon,
       Import: Icon,
@@ -140,10 +216,12 @@ vi.mock("@wealthfolio/ui", () => {
 vi.mock("@wealthfolio/ui/components/ui/button", () => ({
   Button: ({
     children,
+    asChild,
     ...props
-  }: React.ButtonHTMLAttributes<HTMLButtonElement> & { children?: React.ReactNode }) => (
-    <button {...props}>{children}</button>
-  ),
+  }: React.ButtonHTMLAttributes<HTMLButtonElement> & {
+    asChild?: boolean;
+    children?: React.ReactNode;
+  }) => (asChild ? <>{children}</> : <button {...props}>{children}</button>),
 }));
 
 vi.mock("@wealthfolio/ui/components/ui/command", () => ({
@@ -178,6 +256,18 @@ vi.mock("react-router-dom", async () => {
   const actual = await vi.importActual<typeof import("react-router-dom")>("react-router-dom");
   return {
     ...actual,
+    Link: ({
+      children,
+      to,
+      ...props
+    }: React.AnchorHTMLAttributes<HTMLAnchorElement> & {
+      children?: React.ReactNode;
+      to: string;
+    }) => (
+      <a href={to} {...props}>
+        {children}
+      </a>
+    ),
     useNavigate: () => vi.fn(),
     useParams: () => ({ id: "account-1" }),
   };
@@ -201,9 +291,11 @@ vi.mock("./account-snapshot-history", () => ({
 
 const mockUseAccounts = vi.mocked(useAccounts);
 const mockUseCurrentValuation = vi.mocked(useCurrentValuation);
+const mockUseIsMobileViewport = vi.mocked(useIsMobileViewport);
 const mockUseValuationHistory = vi.mocked(useValuationHistory);
 const mockUseSettingsContext = vi.mocked(useSettingsContext);
 const mockUseCalculatePerformanceHistory = vi.mocked(useCalculatePerformanceHistory);
+const mockUseActivitySearch = vi.mocked(useActivitySearch);
 const mockUseQuery = vi.mocked(useQuery);
 const mockUseRecalculatePortfolioMutation = vi.mocked(useRecalculatePortfolioMutation);
 
@@ -219,6 +311,8 @@ describe("AccountPage", () => {
       accounts: [createAccount()],
       isLoading: false,
     } as unknown as ReturnType<typeof useAccounts>);
+
+    mockUseIsMobileViewport.mockReturnValue(false);
 
     mockUseRecalculatePortfolioMutation.mockReturnValue({
       mutate: vi.fn(),
@@ -329,6 +423,42 @@ describe("AccountPage", () => {
       "Some exchange rates are missing, so this value may be approximate.",
     );
     expect(screen.getByTestId("account-notices")).not.toHaveTextContent("Summary notice");
+  });
+
+  it("adds an activities tab to the account detail area", () => {
+    mockUseValuationHistory.mockReturnValue({
+      valuationHistory: [createHistoricalValuation({ totalValue: 100 })],
+      isLoading: false,
+      error: null,
+    } as unknown as ReturnType<typeof useValuationHistory>);
+    mockUseCurrentValuation.mockReturnValue({
+      currentValuation: {
+        summary: createCurrentSummary({ totalValueBase: 125 }),
+        accounts: [createCurrentAccountValuation({ totalValue: 125 })],
+      },
+      isLoading: false,
+      isFetching: false,
+      error: null,
+    } as unknown as ReturnType<typeof useCurrentValuation>);
+
+    render(<AccountPage />);
+
+    expect(screen.getByText("Activities")).toBeInTheDocument();
+    expect(mockUseActivitySearch.mock.calls.at(-1)?.[0]).toMatchObject({
+      mode: "infinite",
+      filters: { accountIds: [] },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Activities" }));
+
+    expect(mockUseActivitySearch.mock.calls.at(-1)?.[0]).toMatchObject({
+      mode: "infinite",
+      filters: { accountIds: ["account-1"] },
+    });
+    expect(screen.getByRole("link", { name: /Explore activities/i })).toHaveAttribute(
+      "href",
+      "/activities?account=account-1",
+    );
   });
 });
 

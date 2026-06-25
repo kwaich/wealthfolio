@@ -1237,7 +1237,13 @@ export function RebalanceTab({
         ? "Invest your cash first, then sell overweight sleeves only if cash alone can't close the gap. Cash can add to a holding but can't shrink one you already own too much of. Tax impact is not estimated."
         : "Put your new cash to work in the sleeves you're light on. Buys only — nothing is sold.";
 
-  const bandBps = profile.driftBandBps;
+  const bandBps = (() => {
+    if (!driftReport?.rows.length) return profile.driftBandBps;
+    const maxRow = driftReport.rows
+      .filter((r) => r.isRequired)
+      .reduce((best, r) => (Math.abs(r.driftBps) > Math.abs(best.driftBps) ? r : best));
+    return maxRow.effectiveBandBps;
+  })();
   const baseDrift = driftReport?.maxDriftBps ?? 0;
   const beforeDrift = plan?.maxDriftBpsBefore ?? baseDrift;
   const scaleMaxBps = driftScaleMaxBps(Math.max(beforeDrift, baseDrift), bandBps);

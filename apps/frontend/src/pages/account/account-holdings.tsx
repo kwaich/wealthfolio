@@ -23,12 +23,14 @@ import { useNavigate } from "react-router-dom";
 interface AccountHoldingsProps {
   accountId: string;
   showEmptyState?: boolean;
+  showTitle?: boolean;
   onAddHoldings?: () => void;
 }
 
 const AccountHoldings = ({
   accountId,
   showEmptyState = true,
+  showTitle = true,
   onAddHoldings,
 }: AccountHoldingsProps) => {
   const isMobile = useIsMobileViewport();
@@ -201,25 +203,29 @@ const AccountHoldings = ({
     );
   }
 
+  const showHeader = showTitle || (canEditHoldingsDirectly && onAddHoldings);
+
   return (
     <div>
-      <div className="flex items-center justify-between gap-3">
-        <h3 className="text-lg font-bold">Holdings</h3>
-        {canEditHoldingsDirectly && onAddHoldings && (
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button variant="ghost" size="icon" onClick={onAddHoldings}>
-                  <Icons.Pencil className="h-4 w-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>Update holdings</p>
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-        )}
-      </div>
+      {showHeader && (
+        <div className={`flex items-center gap-3 ${showTitle ? "justify-between" : "justify-end"}`}>
+          {showTitle && <h3 className="text-lg font-bold">Holdings</h3>}
+          {canEditHoldingsDirectly && onAddHoldings && (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button variant="ghost" size="icon" onClick={onAddHoldings}>
+                    <Icons.Pencil className="h-4 w-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Update holdings</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
+        </div>
+      )}
       {isMobile ? (
         <HoldingsTableMobile
           holdings={filteredHoldings ?? []}
@@ -227,7 +233,7 @@ const AccountHoldings = ({
           selectedTypes={selectedTypes}
           setSelectedTypes={setSelectedTypes}
           accountFilter={{ type: "account", accountId: selectedAccount?.id ?? "" }}
-          onAccountScopeChange={() => {}}
+          onAccountScopeChange={() => undefined}
           accounts={[]}
           portfolios={[]}
           showAccountScope={false}

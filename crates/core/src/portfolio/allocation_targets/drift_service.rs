@@ -183,7 +183,12 @@ impl DriftService {
                 };
                 let value_delta = current_value - target_value;
 
-                let status = if drift_bps.abs() <= target.drift_band_bps {
+                let effective_band = target.band_type.effective_band_bps(
+                    target_bps,
+                    target.drift_band_bps,
+                    target.relative_factor_bps,
+                );
+                let status = if drift_bps.abs() <= effective_band {
                     DriftStatus::InBand
                 } else if drift_bps < 0 {
                     DriftStatus::Underweight
@@ -215,6 +220,7 @@ impl DriftService {
                     current_value,
                     target_value,
                     value_delta,
+                    effective_band_bps: effective_band,
                     status,
                     is_required: weight.is_required,
                     is_zero_current: current_value == Decimal::ZERO,
@@ -246,6 +252,7 @@ impl DriftService {
                 current_value: current.value,
                 target_value: Decimal::ZERO,
                 value_delta: current.value,
+                effective_band_bps: 0,
                 status: DriftStatus::NotTargeted,
                 is_required: false,
                 is_zero_current: current.value == Decimal::ZERO,
@@ -445,8 +452,9 @@ mod tests {
         PortfolioAllocations, TaxonomyAllocation, TaxonomyHoldingContributions,
     };
     use crate::portfolio::allocation_targets::model::{
-        AllocationTarget, AllocationTargetWeight, NewAllocationTarget, NewAllocationTargetWeight,
-        RebalanceGoal, SaveAllocationTargetResult, ScopeType, TriggerType,
+        AllocationTarget, AllocationTargetWeight, BandType, NewAllocationTarget,
+        NewAllocationTargetWeight, RebalanceGoal, SaveAllocationTargetResult, ScopeType,
+        TriggerType,
     };
     use crate::portfolio::holdings::HoldingType;
     use async_trait::async_trait;
@@ -463,6 +471,8 @@ mod tests {
             taxonomy_id: "asset_classes".to_string(),
             trigger_type: TriggerType::Threshold,
             drift_band_bps,
+            band_type: BandType::Absolute,
+            relative_factor_bps: 2000,
             rebalance_goal: RebalanceGoal::NearestBand,
             min_trade_amount: "0".to_string(),
             whole_shares_only: false,
@@ -1257,5 +1267,99 @@ mod tests {
         assert_eq!(unknown.current_bps, 10000);
         assert_eq!(target.status, DriftStatus::Underweight);
         assert_eq!(target.current_bps, 0);
+    }
+
+    // ── Hybrid band tests ──────────────────────────────────────────────────
+
+    fn hybrid_target(drift_band_bps: i32, relative_factor_bps: i32) -> AllocationTarget {
+        AllocationTarget {
+            band_type: BandType::Hybrid,
+            relative_factor_bps,
+            ..base_target(drift_band_bps)
+        }
+    }
+
+    #[tokio::test]
+    async fn hybrid_band_large_sleeve_in_band_where_absolute_would_flag() {
+        // EQUITY: target=50% (5000 bps), current=56% (5600 bps), drift=+600.
+        // Absolute band 500 → 600 > 500 → Overweight.
+        // Hybrid 20%: effective = max(5000*2000/10000, 500) = max(1000, 500) = 1000 → 600 ≤ 1000 → InBand.
+        let svc = make_service(
+            hybrid_target(500, 2000),
+            vec![weight("EQUITY", 5000), weight("BONDS", 5000)],
+            alloc_with(
+                vec![cat("EQUITY", dec!(5600)), cat("BONDS", dec!(4400))],
+                dec!(10000),
+            ),
+        );
+        let report = svc
+            .get_drift_report_for_target("p1", &[], "USD", "agg")
+            .await
+            .unwrap();
+
+        let equity = report
+            .rows
+            .iter()
+            .find(|r| r.category_id == "EQUITY")
+            .unwrap();
+        assert_eq!(equity.drift_bps, 600);
+        assert_eq!(equity.status, DriftStatus::InBand);
+        assert_eq!(equity.effective_band_bps, 1000);
+    }
+
+    #[tokio::test]
+    async fn hybrid_band_small_sleeve_uses_floor() {
+        // SMALL: target=5% (500 bps), current=8% (800 bps), drift=+300.
+        // Hybrid 20%: effective = max(500*2000/10000, 100) = max(100, 100) = 100 → 300 > 100 → Overweight.
+        // With absolute 500: 300 ≤ 500 → InBand.
+        let svc = make_service(
+            hybrid_target(100, 2000),
+            vec![weight("SMALL", 500), weight("OTHER", 9500)],
+            alloc_with(
+                vec![cat("SMALL", dec!(800)), cat("OTHER", dec!(9200))],
+                dec!(10000),
+            ),
+        );
+        let report = svc
+            .get_drift_report_for_target("p1", &[], "USD", "agg")
+            .await
+            .unwrap();
+
+        let small = report
+            .rows
+            .iter()
+            .find(|r| r.category_id == "SMALL")
+            .unwrap();
+        assert_eq!(small.drift_bps, 300);
+        assert_eq!(small.status, DriftStatus::Overweight);
+        assert_eq!(small.effective_band_bps, 100);
+    }
+
+    #[tokio::test]
+    async fn hybrid_effective_band_bps_varies_per_sleeve() {
+        // Two sleeves with different targets should get different effective bands.
+        let svc = make_service(
+            hybrid_target(100, 2000),
+            vec![weight("BIG", 6000), weight("SMALL", 4000)],
+            alloc_with(
+                vec![cat("BIG", dec!(6000)), cat("SMALL", dec!(4000))],
+                dec!(10000),
+            ),
+        );
+        let report = svc
+            .get_drift_report_for_target("p1", &[], "USD", "agg")
+            .await
+            .unwrap();
+
+        let big = report.rows.iter().find(|r| r.category_id == "BIG").unwrap();
+        let small = report
+            .rows
+            .iter()
+            .find(|r| r.category_id == "SMALL")
+            .unwrap();
+        // BIG: 6000 * 2000 / 10000 = 1200; max(1200, 100) = 1200
+        assert_eq!(big.effective_band_bps, 1200);
+        // SMALL: 4000 * 2000 / 10000 = 800; max(800, 100) = 800
+        assert_eq!(small.effective_band_bps, 800);
     }
 }

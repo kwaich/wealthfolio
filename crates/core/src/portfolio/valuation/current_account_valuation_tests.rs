@@ -592,7 +592,7 @@ fn current_account_valuation_preserves_requested_account_order() {
 }
 
 #[test]
-fn current_valuation_account_filter_excludes_inactive_and_archived_requested_accounts() {
+fn current_valuation_account_filter_keeps_hidden_and_excludes_archived_requested_accounts() {
     let requested = unique_account_ids(vec![
         "active".to_string(),
         "inactive".to_string(),
@@ -613,7 +613,7 @@ fn current_valuation_account_filter_excludes_inactive_and_archived_requested_acc
             .iter()
             .map(|account| account.id.as_str())
             .collect::<Vec<_>>(),
-        vec!["active"]
+        vec!["active", "inactive"]
     );
 }
 

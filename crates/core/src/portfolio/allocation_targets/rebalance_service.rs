@@ -410,6 +410,8 @@ impl RebalanceServiceTrait for RebalanceService {
             profile: RebalanceProfile {
                 target_id: input.target_id.clone(),
                 drift_band_bps: profile.drift_band_bps,
+                band_type: profile.band_type.clone(),
+                relative_factor_bps: profile.relative_factor_bps,
                 rebalance_goal: profile.rebalance_goal.clone(),
                 min_trade_amount: Decimal::from_str(&profile.min_trade_amount)
                     .unwrap_or(Decimal::ZERO),
@@ -438,7 +440,7 @@ mod tests {
         TaxonomyHoldingContributions,
     };
     use crate::portfolio::allocation_targets::{
-        AllocationTarget, AllocationTargetWeight, DriftReport, DriftRow, DriftStatus,
+        AllocationTarget, AllocationTargetWeight, BandType, DriftReport, DriftRow, DriftStatus,
         NewAllocationTarget, NewAllocationTargetWeight, RebalanceGoal, ScenarioMode, ScopeType,
         TriggerType,
     };
@@ -456,6 +458,8 @@ mod tests {
             taxonomy_id: "asset_classes".to_string(),
             trigger_type: TriggerType::Threshold,
             drift_band_bps: 500,
+            band_type: BandType::Absolute,
+            relative_factor_bps: 2000,
             rebalance_goal,
             min_trade_amount: "0".to_string(),
             whole_shares_only,
@@ -493,6 +497,7 @@ mod tests {
             current_value,
             target_value,
             value_delta,
+            effective_band_bps: 500,
             status,
             is_required: true,
             is_zero_current: current_bps == 0,

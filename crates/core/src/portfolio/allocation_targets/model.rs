@@ -69,6 +69,49 @@ pub enum ScenarioMode {
     Hybrid,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BandType {
+    #[default]
+    Absolute,
+    Hybrid,
+}
+
+impl BandType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Absolute => "absolute",
+            Self::Hybrid => "hybrid",
+        }
+    }
+
+    pub fn effective_band_bps(
+        &self,
+        target_bps: i32,
+        drift_band_bps: i32,
+        relative_factor_bps: i32,
+    ) -> i32 {
+        match self {
+            Self::Absolute => drift_band_bps,
+            Self::Hybrid => {
+                let relative = target_bps as i64 * relative_factor_bps as i64 / 10_000;
+                (relative as i32).max(drift_band_bps)
+            }
+        }
+    }
+}
+
+impl TryFrom<&str> for BandType {
+    type Error = String;
+    fn try_from(s: &str) -> Result<Self, Self::Error> {
+        match s {
+            "absolute" => Ok(Self::Absolute),
+            "hybrid" => Ok(Self::Hybrid),
+            _ => Err(format!("unknown band type: {s}")),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RebalanceGoal {
@@ -108,6 +151,8 @@ pub struct AllocationTarget {
     pub taxonomy_id: String,
     pub trigger_type: TriggerType,
     pub drift_band_bps: i32,
+    pub band_type: BandType,
+    pub relative_factor_bps: i32,
     pub rebalance_goal: RebalanceGoal,
     pub min_trade_amount: String,
     pub whole_shares_only: bool,
@@ -126,6 +171,8 @@ pub struct NewAllocationTarget {
     pub taxonomy_id: String,
     pub trigger_type: TriggerType,
     pub drift_band_bps: i32,
+    pub band_type: Option<BandType>,
+    pub relative_factor_bps: Option<i32>,
     pub rebalance_goal: Option<RebalanceGoal>,
     pub min_trade_amount: Option<String>,
     pub whole_shares_only: Option<bool>,
@@ -185,11 +232,10 @@ pub struct DriftRow {
     pub current_value: Decimal,
     pub target_value: Decimal,
     pub value_delta: Decimal,
+    pub effective_band_bps: i32,
     pub status: DriftStatus,
     pub is_required: bool,
     pub is_zero_current: bool,
-    /// True when this category holds only cash. The rebalance planner reduces
-    /// this row by the deployed cash when estimating after-drift.
     #[serde(default)]
     pub is_cash: bool,
 }
@@ -304,4 +350,57 @@ pub struct RebalancePlan {
     /// instead of re-deriving from trades (which only carry the primary category).
     #[serde(default)]
     pub after_bps_by_category: std::collections::HashMap<String, i32>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn absolute_band_ignores_target_bps() {
+        let band = BandType::Absolute;
+        assert_eq!(band.effective_band_bps(5000, 500, 2000), 500);
+        assert_eq!(band.effective_band_bps(100, 500, 2000), 500);
+        assert_eq!(band.effective_band_bps(0, 500, 2000), 500);
+    }
+
+    #[test]
+    fn hybrid_band_large_sleeve_uses_relative() {
+        let band = BandType::Hybrid;
+        // 50% target, 20% factor → relative = 5000 * 2000 / 10000 = 1000 bps
+        // floor = 100 bps → max(1000, 100) = 1000
+        assert_eq!(band.effective_band_bps(5000, 100, 2000), 1000);
+    }
+
+    #[test]
+    fn hybrid_band_small_sleeve_uses_floor() {
+        let band = BandType::Hybrid;
+        // 1% target, 20% factor → relative = 100 * 2000 / 10000 = 20 bps
+        // floor = 100 bps → max(20, 100) = 100
+        assert_eq!(band.effective_band_bps(100, 100, 2000), 100);
+    }
+
+    #[test]
+    fn hybrid_band_zero_target_uses_floor() {
+        let band = BandType::Hybrid;
+        // 0% target → relative = 0, floor = 100
+        assert_eq!(band.effective_band_bps(0, 100, 2000), 100);
+    }
+
+    #[test]
+    fn hybrid_band_mid_sleeve() {
+        let band = BandType::Hybrid;
+        // 10% target, 20% factor → relative = 1000 * 2000 / 10000 = 200 bps
+        // floor = 100 → max(200, 100) = 200
+        assert_eq!(band.effective_band_bps(1000, 100, 2000), 200);
+    }
+
+    #[test]
+    fn band_type_round_trip() {
+        assert_eq!(BandType::try_from("absolute"), Ok(BandType::Absolute));
+        assert_eq!(BandType::try_from("hybrid"), Ok(BandType::Hybrid));
+        assert!(BandType::try_from("invalid").is_err());
+        assert_eq!(BandType::Absolute.as_str(), "absolute");
+        assert_eq!(BandType::Hybrid.as_str(), "hybrid");
+    }
 }

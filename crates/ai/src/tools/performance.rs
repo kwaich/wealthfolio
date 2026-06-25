@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use crate::env::AiEnvironment;
 use crate::error::AiError;
-use wealthfolio_core::accounts::{account_supports_purpose, AccountPurpose};
+use wealthfolio_core::accounts::{account_supports_portfolio_scope, AccountPurpose};
 use wealthfolio_core::portfolio::performance::PerformanceResult as CorePerformanceResult;
 
 // ============================================================================
@@ -243,10 +243,7 @@ impl<E: AiEnvironment + 'static> Tool for GetPerformanceTool<E> {
                 .account_service()
                 .get_account(account_id)
                 .map_err(|e| AiError::ToolExecutionFailed(e.to_string()))?;
-            if !account.is_active
-                || account.is_archived
-                || !account_supports_purpose(&account.account_type, AccountPurpose::Performance)
-            {
+            if !account_supports_portfolio_scope(&account, AccountPurpose::Performance) {
                 let reason = "Performance unavailable for this account type.".to_string();
                 return Ok(GetPerformanceOutput {
                     id: account_id.to_string(),
@@ -280,14 +277,14 @@ impl<E: AiEnvironment + 'static> Tool for GetPerformanceTool<E> {
             let accounts = self
                 .env
                 .account_service()
-                .get_active_non_archived_accounts()
+                .get_non_archived_accounts()
                 .map_err(|e| AiError::ToolExecutionFailed(e.to_string()))?;
             let mut account_tracking_modes = std::collections::HashMap::new();
             let mut account_types = std::collections::HashMap::new();
             let account_ids: Vec<String> = accounts
                 .into_iter()
                 .filter(|account| {
-                    account_supports_purpose(&account.account_type, AccountPurpose::Performance)
+                    account_supports_portfolio_scope(account, AccountPurpose::Performance)
                 })
                 .map(|account| {
                     account_tracking_modes.insert(account.id.clone(), account.tracking_mode);

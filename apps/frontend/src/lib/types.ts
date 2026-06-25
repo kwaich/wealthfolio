@@ -2433,6 +2433,8 @@ export type ScenarioMode = "cash_flow_only" | "sell_to_rebalance" | "hybrid";
 export type DriftStatus = "in_band" | "underweight" | "overweight" | "not_targeted";
 export type RebalanceTo = "nearest_band" | "exact_target";
 
+export type BandType = "absolute" | "hybrid";
+
 export interface AllocationTarget {
   id: string;
   name: string;
@@ -2441,6 +2443,8 @@ export interface AllocationTarget {
   taxonomyId: string;
   triggerType: TriggerType;
   driftBandBps: number;
+  bandType: BandType;
+  relativeFactorBps: number;
   rebalanceGoal: RebalanceGoal;
   minTradeAmount: string;
   wholeSharesOnly: boolean;
@@ -2457,6 +2461,8 @@ export interface NewAllocationTarget {
   taxonomyId: string;
   triggerType: TriggerType;
   driftBandBps: number;
+  bandType?: BandType;
+  relativeFactorBps?: number;
   rebalanceGoal?: RebalanceGoal;
   minTradeAmount?: string;
   wholeSharesOnly?: boolean;
@@ -2497,6 +2503,7 @@ export interface DriftRow {
   currentValue: number;
   targetValue: number;
   valueDelta: number;
+  effectiveBandBps: number;
   status: DriftStatus;
   isRequired: boolean;
   isZeroCurrent: boolean;

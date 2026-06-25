@@ -22,7 +22,6 @@ interface TargetRailsCardProps {
   selectedTargetId: string | null;
   onTargetChange: (id: string) => void;
   driftReport: DriftReport | null;
-  driftBandBps: number;
   isLoading?: boolean;
   onCreateTarget?: () => void;
   /** Opens the full current-vs-target analysis. */
@@ -40,7 +39,6 @@ export function TargetRailsCard({
   selectedTargetId,
   onTargetChange,
   driftReport,
-  driftBandBps,
   isLoading,
   onCreateTarget,
   onViewDetails,
@@ -68,6 +66,20 @@ export function TargetRailsCard({
   const hasTarget = !!resolvedDriftReport;
   const currency = resolvedDriftReport?.baseCurrency ?? "USD";
   const rows = resolvedDriftReport?.rows.filter(hasVisibleAllocation) ?? [];
+
+  const toleranceLabel = (() => {
+    const requiredRows = rows.filter((r) => r.isRequired && r.targetBps > 0);
+    if (!requiredRows.length) return formatTolerance(selectedTarget?.driftBandBps ?? 0);
+    const bands = requiredRows.map((r) => r.effectiveBandBps);
+    const minBand = Math.min(...bands);
+    const maxBand = Math.max(...bands);
+    if (minBand === maxBand) return formatTolerance(minBand);
+    const fmt = (bps: number) => {
+      const pp = bps / 100;
+      return Number.isInteger(pp) ? pp.toFixed(0) : pp.toFixed(1);
+    };
+    return `±${fmt(minBand)}–${fmt(maxBand)}%`;
+  })();
   const maxScale =
     Math.max(1, ...rows.flatMap((r) => [r.currentBps / 100, r.targetBps / 100])) * 1.08;
   const withinTolerance = resolvedDriftReport ? resolvedDriftReport.outOfBandCount === 0 : false;
@@ -241,7 +253,7 @@ export function TargetRailsCard({
                 ? "Inside target range"
                 : `${resolvedDriftReport?.outOfBandCount} outside range · largest gap ${largestGapLabel}`}
             </span>
-            <span className="shrink-0 tabular-nums">tolerance {formatTolerance(driftBandBps)}</span>
+            <span className="shrink-0 tabular-nums">tolerance {toleranceLabel}</span>
           </div>
         </>
       ) : (

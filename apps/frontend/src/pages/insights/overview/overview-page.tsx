@@ -370,6 +370,7 @@ export function OverviewPage({
             report={driftReport}
             taxonomyId={effectiveTarget?.taxonomyId ?? "asset_classes"}
             targetName={effectiveTarget?.name}
+            target={effectiveTarget}
             onRebalanceClick={() => setWorkspaceView("rebalance")}
           />
         ) : targetLoading ? (
@@ -446,7 +447,6 @@ export function OverviewPage({
             selectedTargetId={effectiveTargetId}
             onTargetChange={requestTargetChange}
             driftReport={driftReport}
-            driftBandBps={effectiveTarget?.driftBandBps ?? 0}
             isLoading={driftLoading && !driftReport}
             onCreateTarget={handleCreateTarget}
             onViewDetails={() => setWorkspaceView("details")}

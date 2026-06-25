@@ -12,6 +12,7 @@ import { isOutOfBand } from "./drift-row-utils";
 interface DriftDriversCardProps {
   report: DriftReport;
   statusDescription: string;
+  bandLabel?: string | null;
   onRebalanceClick?: () => void;
 }
 
@@ -64,6 +65,7 @@ function markerTextColor(color: string): string {
 export function DriftDriversCard({
   report,
   statusDescription,
+  bandLabel,
   onRebalanceClick,
 }: DriftDriversCardProps) {
   const colorByCategory = useMemo(() => buildAllocationTargetColorMap(report.rows), [report.rows]);
@@ -78,7 +80,15 @@ export function DriftDriversCard({
     <Card className="flex h-full flex-col">
       <CardHeader className="pb-4">
         <CardTitle className="text-base">Largest gaps</CardTitle>
-        <CardDescription>{statusDescription}</CardDescription>
+        <CardDescription>
+          {statusDescription}
+          {bandLabel && (
+            <>
+              {" · "}
+              <span className="text-muted-foreground">{bandLabel}</span>
+            </>
+          )}
+        </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-1 flex-col">
         {oobRows.length === 0 ? (

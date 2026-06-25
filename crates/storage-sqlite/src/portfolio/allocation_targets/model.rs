@@ -1,7 +1,7 @@
 use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
 use wealthfolio_core::portfolio::allocation_targets::{
-    AllocationTarget, AllocationTargetWeight, RebalanceGoal, ScopeType, TriggerType,
+    AllocationTarget, AllocationTargetWeight, BandType, RebalanceGoal, ScopeType, TriggerType,
 };
 
 #[derive(Debug, Clone, Queryable, Insertable, AsChangeset, Serialize, Deserialize)]
@@ -14,6 +14,8 @@ pub struct AllocationTargetDB {
     pub taxonomy_id: String,
     pub trigger_type: String,
     pub drift_band_bps: i32,
+    pub band_type: String,
+    pub relative_factor_bps: i32,
     pub rebalance_goal: String,
     pub min_trade_amount: String,
     pub whole_shares_only: i32,
@@ -33,6 +35,8 @@ impl From<AllocationTarget> for AllocationTargetDB {
             taxonomy_id: target.taxonomy_id,
             trigger_type: target.trigger_type.as_str().to_string(),
             drift_band_bps: target.drift_band_bps,
+            band_type: target.band_type.as_str().to_string(),
+            relative_factor_bps: target.relative_factor_bps,
             rebalance_goal: target.rebalance_goal.as_str().to_string(),
             min_trade_amount: target.min_trade_amount,
             whole_shares_only: target.whole_shares_only as i32,
@@ -55,6 +59,8 @@ impl TryFrom<AllocationTargetDB> for AllocationTarget {
             taxonomy_id: db.taxonomy_id,
             trigger_type: TriggerType::try_from(db.trigger_type.as_str())?,
             drift_band_bps: db.drift_band_bps,
+            band_type: BandType::try_from(db.band_type.as_str())?,
+            relative_factor_bps: db.relative_factor_bps,
             rebalance_goal: RebalanceGoal::try_from(db.rebalance_goal.as_str())?,
             min_trade_amount: db.min_trade_amount,
             whole_shares_only: db.whole_shares_only != 0,

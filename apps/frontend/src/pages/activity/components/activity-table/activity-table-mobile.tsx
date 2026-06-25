@@ -23,6 +23,7 @@ import { ActivityTypeBadge } from "../activity-type-badge";
 
 interface ActivityTableMobileProps {
   activities: ActivityDetails[];
+  isLoading?: boolean;
   isCompactView: boolean;
   handleEdit: (activity?: ActivityDetails) => void;
   handleDelete: (activity: ActivityDetails) => void;
@@ -36,6 +37,7 @@ interface ActivityTableMobileProps {
 
 export const ActivityTableMobile = ({
   activities,
+  isLoading = false,
   isCompactView,
   handleEdit,
   handleDelete,
@@ -48,6 +50,14 @@ export const ActivityTableMobile = ({
 }: ActivityTableMobileProps) => {
   const { settings } = useSettingsContext();
   const appTimezone = settings?.timezone?.trim() || undefined;
+
+  if (isLoading) {
+    return (
+      <div className="text-muted-foreground flex h-full items-center justify-center text-sm">
+        Loading...
+      </div>
+    );
+  }
 
   if (activities.length === 0) {
     return (

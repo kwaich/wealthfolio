@@ -14,7 +14,10 @@ use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
 use wealthfolio_core::{
-    accounts::{account_supports_purpose, Account, AccountPurpose, TrackingMode},
+    accounts::{
+        account_supports_portfolio_scope, account_supports_purpose, Account, AccountPurpose,
+        TrackingMode,
+    },
     allocation::{AllocationHoldings, PortfolioAllocations},
     holdings::Holding,
     income::IncomeSummary,
@@ -105,7 +108,7 @@ pub(super) fn holdings_account_ids(
         .get_accounts_by_ids(account_ids)
         .map_err(|e| e.to_string())?
         .into_iter()
-        .filter(|account| account_supports_purpose(&account.account_type, AccountPurpose::Holdings))
+        .filter(|account| account_supports_portfolio_scope(account, AccountPurpose::Holdings))
         .map(|account| account.id)
         .collect())
 }
@@ -139,11 +142,7 @@ fn performance_account_ids_from_map(
     account_ids
         .iter()
         .filter_map(|account_id| accounts_by_id.get(account_id))
-        .filter(|account| {
-            account.is_active
-                && !account.is_archived
-                && account_supports_purpose(&account.account_type, AccountPurpose::Performance)
-        })
+        .filter(|account| account_supports_portfolio_scope(account, AccountPurpose::Performance))
         .filter_map(|account| {
             if seen.insert(account.id.clone()) {
                 Some(account.id.clone())
@@ -636,10 +635,8 @@ pub async fn calculate_accounts_simple_performance(
             .map_err(|e| format!("Failed to fetch accounts: {}", e))?;
         requested
             .into_iter()
-            .filter(|acc| {
-                acc.is_active
-                    && !acc.is_archived
-                    && account_supports_purpose(&acc.account_type, AccountPurpose::Performance)
+            .filter(|account| {
+                account_supports_portfolio_scope(account, AccountPurpose::Performance)
             })
             .map(|acc| acc.id)
             .collect()
@@ -713,7 +710,7 @@ pub async fn calculate_performance_history(
             );
             if !resolved.account_ids.is_empty() {
                 result.data_quality.warnings.push(
-                    "Requested accounts were excluded because they are inactive, archived, or not eligible for performance."
+                    "Requested accounts were excluded because they are archived or not eligible for performance."
                         .to_string(),
                 );
                 sync_performance_summary_quality(&mut result);
@@ -737,7 +734,7 @@ pub async fn calculate_performance_history(
             .map_err(|e| format!("Failed to calculate performance: {}", e))?;
         if account_ids.len() != resolved.account_ids.len() {
             result.data_quality.warnings.push(
-                "Some requested accounts were excluded because they are inactive, archived, or not eligible for performance."
+                "Some requested accounts were excluded because they are archived or not eligible for performance."
                     .to_string(),
             );
             result.data_quality.status = DataQualityStatus::Partial;
@@ -750,10 +747,7 @@ pub async fn calculate_performance_history(
                 .account_service()
                 .get_account(&item_id)
                 .map_err(|e| format!("Failed to fetch account: {}", e))?;
-            if !account.is_active
-                || account.is_archived
-                || !account_supports_purpose(&account.account_type, AccountPurpose::Performance)
-            {
+            if !account_supports_portfolio_scope(&account, AccountPurpose::Performance) {
                 return Ok(empty_performance_metrics(
                     &item_id,
                     account.currency,
@@ -906,7 +900,7 @@ pub async fn calculate_performance_summary(
             );
             if !resolved.account_ids.is_empty() {
                 result.data_quality.warnings.push(
-                    "Requested accounts were excluded because they are inactive, archived, or not eligible for performance."
+                    "Requested accounts were excluded because they are archived or not eligible for performance."
                         .to_string(),
                 );
                 sync_performance_summary_quality(&mut result);
@@ -931,7 +925,7 @@ pub async fn calculate_performance_summary(
             .map_err(|e| format!("Failed to calculate performance: {}", e))?;
         if account_ids.len() != resolved.account_ids.len() {
             result.data_quality.warnings.push(
-                "Some requested accounts were excluded because they are inactive, archived, or not eligible for performance."
+                "Some requested accounts were excluded because they are archived or not eligible for performance."
                     .to_string(),
             );
             result.data_quality.status = DataQualityStatus::Partial;
@@ -944,10 +938,7 @@ pub async fn calculate_performance_summary(
                 .account_service()
                 .get_account(&item_id)
                 .map_err(|e| format!("Failed to fetch account: {}", e))?;
-            if !account.is_active
-                || account.is_archived
-                || !account_supports_purpose(&account.account_type, AccountPurpose::Performance)
-            {
+            if !account_supports_portfolio_scope(&account, AccountPurpose::Performance) {
                 return Ok(empty_performance_metrics(
                     &item_id,
                     account.currency,
@@ -1022,7 +1013,7 @@ pub async fn get_performance_summaries(
             );
             if !scope.account_ids.is_empty() {
                 result.data_quality.warnings.push(
-                    "Requested accounts were excluded because they are inactive, archived, or not eligible for performance."
+                    "Requested accounts were excluded because they are archived or not eligible for performance."
                         .to_string(),
                 );
                 sync_performance_summary_quality(&mut result);
@@ -1048,7 +1039,7 @@ pub async fn get_performance_summaries(
 
         if account_ids.len() != scope.account_ids.len() {
             result.data_quality.warnings.push(
-                "Some requested accounts were excluded because they are inactive, archived, or not eligible for performance."
+                "Some requested accounts were excluded because they are archived or not eligible for performance."
                     .to_string(),
             );
             result.data_quality.status = DataQualityStatus::Partial;
@@ -1916,4 +1907,65 @@ pub async fn delete_snapshot(
     emit_portfolio_trigger_recalculate(&handle, payload);
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::NaiveDateTime;
+    use wealthfolio_core::accounts::account_types;
+
+    fn account(id: &str, account_type: &str) -> Account {
+        Account {
+            id: id.to_string(),
+            name: id.to_string(),
+            account_type: account_type.to_string(),
+            group: None,
+            currency: "USD".to_string(),
+            is_default: false,
+            is_active: true,
+            created_at: NaiveDateTime::default(),
+            updated_at: NaiveDateTime::default(),
+            platform_id: None,
+            account_number: None,
+            meta: None,
+            provider: None,
+            provider_account_id: None,
+            is_archived: false,
+            tracking_mode: TrackingMode::Transactions,
+        }
+    }
+
+    #[test]
+    fn performance_account_ids_keep_hidden_and_exclude_archived_accounts() {
+        let mut hidden = account("hidden", account_types::SECURITIES);
+        hidden.is_active = false;
+        let mut archived = account("archived", account_types::SECURITIES);
+        archived.is_archived = true;
+        let accounts_by_id = HashMap::from([
+            (
+                "active".to_string(),
+                account("active", account_types::SECURITIES),
+            ),
+            ("hidden".to_string(), hidden),
+            ("archived".to_string(), archived),
+            (
+                "card".to_string(),
+                account("card", account_types::CREDIT_CARD),
+            ),
+        ]);
+
+        let ids = performance_account_ids_from_map(
+            &accounts_by_id,
+            &[
+                "hidden".to_string(),
+                "archived".to_string(),
+                "active".to_string(),
+                "card".to_string(),
+                "hidden".to_string(),
+            ],
+        );
+
+        assert_eq!(ids, vec!["hidden", "active"]);
+    }
 }

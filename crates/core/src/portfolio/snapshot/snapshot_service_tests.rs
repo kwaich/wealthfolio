@@ -3759,6 +3759,85 @@ mod tests {
         assert_eq!(count, 0);
     }
 
+    #[tokio::test]
+    async fn test_global_snapshot_recalc_keeps_hidden_and_excludes_archived_accounts() {
+        let base = Arc::new(RwLock::new("USD".to_string()));
+
+        let mut account_repo = MockAccountRepository::new();
+        let active = create_test_account("active", "USD", "Active Account");
+        let mut hidden = create_test_account("hidden", "USD", "Hidden Account");
+        hidden.is_active = false;
+        let mut archived = create_test_account("archived", "USD", "Archived Account");
+        archived.is_archived = true;
+        account_repo.add_account(active.clone());
+        account_repo.add_account(hidden.clone());
+        account_repo.add_account(archived.clone());
+
+        let d1 = NaiveDate::from_ymd_opt(2025, 1, 10).unwrap();
+        let activity_repo = Arc::new(MockActivityRepositoryWithData::new(vec![
+            create_test_activity(
+                "active-deposit",
+                &active.id,
+                Some("CASH:USD"),
+                "DEPOSIT",
+                d1,
+                None,
+                None,
+                Some(dec!(1000)),
+                "USD",
+            ),
+            create_test_activity(
+                "hidden-deposit",
+                &hidden.id,
+                Some("CASH:USD"),
+                "DEPOSIT",
+                d1,
+                None,
+                None,
+                Some(dec!(2000)),
+                "USD",
+            ),
+            create_test_activity(
+                "archived-deposit",
+                &archived.id,
+                Some("CASH:USD"),
+                "DEPOSIT",
+                d1,
+                None,
+                None,
+                Some(dec!(3000)),
+                "USD",
+            ),
+        ]));
+        let snapshot_repo = Arc::new(MockSnapshotRepository::new());
+
+        let svc = SnapshotService::new(
+            base,
+            Arc::new(account_repo),
+            activity_repo,
+            snapshot_repo.clone(),
+            Arc::new(MockAssetRepository::new()),
+            Arc::new(MockFxService::new()),
+        );
+
+        svc.recalculate_holdings_snapshots(None, SnapshotRecalcMode::IncrementalFromLast)
+            .await
+            .unwrap();
+
+        assert!(!snapshot_repo
+            .get_snapshots_by_account("active", None, None)
+            .unwrap()
+            .is_empty());
+        assert!(!snapshot_repo
+            .get_snapshots_by_account("hidden", None, None)
+            .unwrap()
+            .is_empty());
+        assert!(snapshot_repo
+            .get_snapshots_by_account("archived", None, None)
+            .unwrap()
+            .is_empty());
+    }
+
     // ==================== CASH AGGREGATION CALCULATION TESTS ====================
 
     #[tokio::test]

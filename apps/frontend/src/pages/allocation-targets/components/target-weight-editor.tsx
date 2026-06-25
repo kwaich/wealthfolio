@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { Icons } from "@wealthfolio/ui";
-import type { TaxonomyCategory } from "@/lib/types";
+import type { BandType, TaxonomyCategory } from "@/lib/types";
 import { allocationTargetColor } from "./allocation-target-colors";
 
 export interface WeightDraft {
@@ -16,6 +16,9 @@ interface TargetWeightEditorProps {
   weights: WeightDraft[];
   currentAllocation?: Record<string, number>; // categoryId → pct 0-100
   categoryLabel?: string;
+  bandType: BandType;
+  driftBandBps: number;
+  relativeFactorBps: number;
   onChange: (weights: WeightDraft[]) => void;
 }
 
@@ -78,8 +81,19 @@ function redistribute(weights: WeightDraft[], changedId: string, newBps: number)
   return result;
 }
 
-function driftTone(drift: number): { label: string; className: string } {
-  if (Math.abs(drift) < 0.05) {
+function effectiveBandPct(
+  targetBps: number,
+  bandType: BandType,
+  driftBandBps: number,
+  relativeFactorBps: number,
+): number {
+  if (bandType === "absolute") return driftBandBps / 100;
+  const relative = (targetBps * relativeFactorBps) / 10_000 / 100;
+  return Math.max(relative, driftBandBps / 100);
+}
+
+function driftTone(drift: number, bandPct: number): { label: string; className: string } {
+  if (Math.abs(drift) <= bandPct) {
     return {
       label: "On target",
       className: "bg-muted text-muted-foreground",
@@ -102,6 +116,9 @@ export function TargetWeightEditor({
   weights,
   currentAllocation = {},
   categoryLabel = "Asset class",
+  bandType,
+  driftBandBps,
+  relativeFactorBps,
   onChange,
 }: TargetWeightEditorProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -151,12 +168,14 @@ export function TargetWeightEditor({
     const currentPct = currentAllocation[cat.id] ?? 0;
     const targetPct = bps / 100;
     const drift = currentPct - targetPct;
+    const bandPct = effectiveBandPct(bps, bandType, driftBandBps, relativeFactorBps);
     return {
       cat,
       bps,
       currentPct,
       targetPct,
       drift,
+      bandPct,
       color: allocationTargetColor(cat.id, cat.name, index),
       isLocked: getIsLocked(cat.id),
       isEditing: editingId === cat.id,
@@ -164,7 +183,7 @@ export function TargetWeightEditor({
   });
 
   const biggestMove = [...rows]
-    .filter((row) => Math.abs(row.drift) >= 0.05)
+    .filter((row) => Math.abs(row.drift) > row.bandPct)
     .sort((a, b) => Math.abs(b.drift) - Math.abs(a.drift))[0];
 
   return (
@@ -183,7 +202,7 @@ export function TargetWeightEditor({
         {/* Category rows */}
         <div className="divide-y">
           {rows.map((row) => {
-            const tone = driftTone(row.drift);
+            const tone = driftTone(row.drift, row.bandPct);
             return (
               <div
                 key={row.cat.id}
