@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useQuery } from "@tanstack/react-query";
-import { getHoldings } from "@/adapters";
+import { getHoldingsList } from "@/adapters";
 import { useAccounts } from "@/hooks/use-accounts";
 import { useRecalculatePortfolioMutation } from "@/hooks/use-calculate-portfolio";
 import { useCurrentValuation } from "@/hooks/use-current-account-valuations";
@@ -23,7 +23,7 @@ import AccountPage from "./account-page";
 
 vi.mock("@/adapters", () => ({
   getContributionLimit: vi.fn(),
-  getHoldings: vi.fn(),
+  getHoldingsList: vi.fn(),
   getSnapshots: vi.fn(),
   searchActivities: vi.fn(),
 }));
@@ -342,7 +342,7 @@ describe("AccountPage", () => {
       } as ReturnType<typeof useQuery>;
     });
 
-    vi.mocked(getHoldings).mockResolvedValue([createCashHolding()]);
+    vi.mocked(getHoldingsList).mockResolvedValue([createCashHolding()]);
   });
 
   it("displays live current account valuation instead of stale historical valuation", () => {

@@ -1,7 +1,11 @@
-use crate::portfolio::economic_events::BasisStatus;
+use crate::{
+    accounts::{account_supports_portfolio_scope, Account, AccountPurpose, TrackingMode},
+    portfolio::economic_events::BasisStatus,
+};
 use chrono::NaiveDate;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CumulativeReturn {
@@ -67,6 +71,197 @@ pub enum PerformanceSummaryProfile {
     Full,
     #[serde(alias = "headline")]
     Summary,
+    Dashboard,
+}
+
+pub fn performance_tracking_composition(
+    tracking_modes: &HashMap<String, TrackingMode>,
+    account_ids: &[String],
+) -> String {
+    let mut holdings_count = 0;
+    let mut transaction_count = 0;
+
+    for account_id in account_ids {
+        if matches!(tracking_modes.get(account_id), Some(TrackingMode::Holdings)) {
+            holdings_count += 1;
+        } else {
+            transaction_count += 1;
+        }
+    }
+
+    match (holdings_count, transaction_count) {
+        (0, _) => format!("transactions({transaction_count})"),
+        (_, 0) => format!("holdings({holdings_count})"),
+        _ => format!("mixed(holdings={holdings_count}, transactions={transaction_count})"),
+    }
+}
+
+pub fn performance_summary_scope_key(account_ids: &[String]) -> String {
+    let mut sorted = account_ids.to_vec();
+    sorted.sort();
+    sorted.dedup();
+    format!("accounts:{}", sorted.join(","))
+}
+
+pub fn unique_account_ids(account_ids: impl IntoIterator<Item = String>) -> Vec<String> {
+    let mut seen = HashSet::new();
+    account_ids
+        .into_iter()
+        .filter(|account_id| seen.insert(account_id.clone()))
+        .collect()
+}
+
+pub fn performance_account_ids_from_map(
+    accounts_by_id: &HashMap<String, Account>,
+    account_ids: &[String],
+) -> Vec<String> {
+    let mut seen = HashSet::new();
+    account_ids
+        .iter()
+        .filter_map(|account_id| accounts_by_id.get(account_id))
+        .filter(|account| account_supports_portfolio_scope(account, AccountPurpose::Performance))
+        .filter_map(|account| {
+            if seen.insert(account.id.clone()) {
+                Some(account.id.clone())
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+pub fn performance_account_tracking_modes_from_map(
+    accounts_by_id: &HashMap<String, Account>,
+    account_ids: &[String],
+) -> HashMap<String, TrackingMode> {
+    account_ids
+        .iter()
+        .filter_map(|account_id| {
+            accounts_by_id
+                .get(account_id)
+                .map(|account| (account.id.clone(), account.tracking_mode))
+        })
+        .collect()
+}
+
+pub fn performance_account_types_from_map(
+    accounts_by_id: &HashMap<String, Account>,
+    account_ids: &[String],
+) -> HashMap<String, String> {
+    account_ids
+        .iter()
+        .filter_map(|account_id| {
+            accounts_by_id
+                .get(account_id)
+                .map(|account| (account.id.clone(), account.account_type.clone()))
+        })
+        .collect()
+}
+
+pub fn empty_performance_metrics(
+    id: &str,
+    currency: String,
+    start_date: Option<NaiveDate>,
+    end_date: Option<NaiveDate>,
+) -> PerformanceResult {
+    unavailable_performance_metrics(
+        id,
+        currency,
+        start_date,
+        end_date,
+        "Performance unavailable for this account type.",
+    )
+}
+
+pub fn unavailable_performance_metrics(
+    id: &str,
+    currency: String,
+    start_date: Option<NaiveDate>,
+    end_date: Option<NaiveDate>,
+    reason: impl Into<String>,
+) -> PerformanceResult {
+    let reason = reason.into();
+    PerformanceResult {
+        scope: PerformanceScopeDescriptor {
+            id: id.to_string(),
+            currency,
+        },
+        period: PerformancePeriod {
+            start_date,
+            end_date,
+        },
+        mode: ReturnMethod::NotApplicable,
+        returns: PerformanceReturns {
+            twr: None,
+            annualized_twr: None,
+            irr: None,
+            annualized_irr: None,
+            value_return: None,
+            annualized_value_return: None,
+        },
+        attribution: PerformanceAttribution::default(),
+        risk: PerformanceRisk {
+            volatility: None,
+            max_drawdown: None,
+            peak_date: None,
+            trough_date: None,
+            recovery_date: None,
+            drawdown_duration_days: None,
+        },
+        data_quality: PerformanceDataQuality {
+            status: DataQualityStatus::NoData,
+            warnings: Vec::new(),
+            not_applicable_reasons: vec![reason.clone()],
+        },
+        basis_status: BasisStatus::NotApplicable,
+        summary: PerformanceSummary {
+            quality: DataQualityStatus::NoData,
+            basis_status: BasisStatus::NotApplicable,
+            reasons: vec![reason],
+            ..PerformanceSummary::default()
+        },
+        series: Vec::new(),
+        is_holdings_mode: false,
+        is_mixed_tracking_mode: false,
+    }
+}
+
+pub fn sync_performance_summary_quality(result: &mut PerformanceResult) {
+    result.summary.quality = result.data_quality.status.clone();
+    result.summary.reasons = result
+        .data_quality
+        .warnings
+        .iter()
+        .chain(result.data_quality.not_applicable_reasons.iter())
+        .cloned()
+        .collect();
+}
+
+#[derive(Debug, Clone)]
+pub struct PerformanceSummaryBatchScope {
+    pub account_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct PerformanceSummaryScopeTiming {
+    pub index: usize,
+    pub total: usize,
+    pub key: String,
+    pub requested_accounts: usize,
+    pub eligible_accounts: usize,
+    pub tracking_composition: String,
+    pub warnings: usize,
+    pub skipped: bool,
+    pub failed: bool,
+    pub elapsed_ms: f64,
+}
+
+#[derive(Debug)]
+pub struct PerformanceSummaryBatchResult {
+    pub results: HashMap<String, PerformanceResult>,
+    pub failed_scope_count: usize,
+    pub scope_timings: Vec<PerformanceSummaryScopeTiming>,
+    pub elapsed_ms: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

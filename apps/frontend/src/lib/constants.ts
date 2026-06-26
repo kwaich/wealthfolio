@@ -276,6 +276,7 @@ export type ImportRequiredField = (typeof IMPORT_REQUIRED_FIELDS)[number];
 export const ExportDataType = {
   ACCOUNTS: "accounts",
   ACTIVITIES: "activities",
+  HOLDINGS: "holdings",
   GOALS: "goals",
   PORTFOLIO_HISTORY: "portfolio-history",
 } as const;
@@ -285,6 +286,7 @@ export type ExportDataType = (typeof ExportDataType)[keyof typeof ExportDataType
 export const exportDataTypeSchema = z.enum([
   ExportDataType.ACCOUNTS,
   ExportDataType.ACTIVITIES,
+  ExportDataType.HOLDINGS,
   ExportDataType.GOALS,
   ExportDataType.PORTFOLIO_HISTORY,
 ]);

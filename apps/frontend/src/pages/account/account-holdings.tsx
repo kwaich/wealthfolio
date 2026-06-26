@@ -1,8 +1,7 @@
-import { getHoldings } from "@/adapters";
 import { useAccounts } from "@/hooks/use-accounts";
+import { useHoldings } from "@/hooks/use-holdings";
 import { useIsMobileViewport } from "@/hooks/use-platform";
-import { QueryKeys } from "@/lib/query-keys";
-import { Holding, HoldingType } from "@/lib/types";
+import { HoldingType } from "@/lib/types";
 import { AccountType, isLiabilityAccountType } from "@/lib/constants";
 import { canAddHoldings } from "@/lib/activity-restrictions";
 import { HoldingsTable } from "@/pages/holdings/components/holdings-table";
@@ -16,7 +15,6 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@wealthfolio/ui";
-import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
@@ -37,9 +35,9 @@ const AccountHoldings = ({
   const navigate = useNavigate();
   const [selectedTypes, setSelectedTypes] = useState<string[]>([]);
 
-  const { data: holdings, isLoading } = useQuery<Holding[], Error>({
-    queryKey: [QueryKeys.HOLDINGS, accountId],
-    queryFn: () => getHoldings({ type: "account", accountId }),
+  const { holdings, isLoading } = useHoldings({
+    type: "account",
+    accountId,
   });
 
   const { accounts } = useAccounts();

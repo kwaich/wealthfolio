@@ -1,4 +1,4 @@
-import { getContributionLimit, getHoldings, getSnapshots, searchActivities } from "@/adapters";
+import { getContributionLimit, getSnapshots, searchActivities } from "@/adapters";
 import { HistoryChart } from "@/components/history-chart";
 import type { ActivityDetails } from "@/lib/types";
 import {
@@ -27,6 +27,7 @@ import { PrivacyToggle } from "@/components/privacy-toggle";
 import { useAccounts } from "@/hooks/use-accounts";
 import { useRecalculatePortfolioMutation } from "@/hooks/use-calculate-portfolio";
 import { useCurrentValuation } from "@/hooks/use-current-account-valuations";
+import { useHoldings } from "@/hooks/use-holdings";
 import { useIsMobileViewport } from "@/hooks/use-platform";
 import { useValuationHistory } from "@/hooks/use-valuation-history";
 import { canAddHoldings, getActivityRestrictionLevel } from "@/lib/activity-restrictions";
@@ -51,7 +52,6 @@ import {
   AccountValuation,
   ContributionLimit,
   DateRange,
-  Holding,
   SnapshotInfo,
   TimePeriod,
   TrackedItem,
@@ -236,10 +236,9 @@ const AccountPage = () => {
     return canAddHoldings(account);
   }, [account]);
 
-  // Query holdings to check if account has any assets
-  const { data: holdings, isLoading: isHoldingsLoading } = useQuery<Holding[], Error>({
-    queryKey: [QueryKeys.HOLDINGS, id],
-    queryFn: () => getHoldings({ type: "account", accountId: id }),
+  const { holdings, isLoading: isHoldingsLoading } = useHoldings({
+    type: "account",
+    accountId: id,
   });
 
   // Check if account has any holdings (including cash)

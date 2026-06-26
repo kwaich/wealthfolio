@@ -40,6 +40,12 @@ const dataTypes = {
       description: "Detailed transaction history and logs",
     },
     {
+      key: "holdings",
+      name: "Holdings",
+      icon: Icons.Holdings,
+      description: "Current holdings with valuation, performance, allocation, and instrument data",
+    },
+    {
       key: "goals",
       name: "Goals",
       icon: Icons.Goals,
@@ -65,6 +71,12 @@ const dataTypes = {
       name: "Activities",
       icon: Icons.Activity,
       description: "Detailed transaction history and logs",
+    },
+    {
+      key: "holdings",
+      name: "Holdings",
+      icon: Icons.Holdings,
+      description: "Current holdings with valuation, performance, allocation, and instrument data",
     },
     {
       key: "goals",

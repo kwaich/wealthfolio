@@ -20,7 +20,7 @@ import { useBalancePrivacy } from "@/hooks/use-balance-privacy";
 import { HoldingType } from "@/lib/constants";
 import { useSettingsContext } from "@/lib/settings-provider";
 import { Holding } from "@/lib/types";
-import { AmountDisplay, QuantityDisplay } from "@wealthfolio/ui";
+import { AmountDisplay, QuantityDisplay, formatPercent } from "@wealthfolio/ui";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 
@@ -46,6 +46,21 @@ const getDisplayValueAndCurrency = (
       currency: holding.localCurrency, // Use localCurrency from Holding
     };
   }
+};
+
+const getAveragePrice = (holding: Holding): number | null => {
+  const costBasis = holding.costBasis?.local;
+  if (costBasis == null || holding.quantity === 0) {
+    return null;
+  }
+
+  const symbol = holding.instrument?.symbol ?? holding.id;
+  const isOption = !!parseOccSymbol(symbol);
+  const contractMultiplier = holding.contractMultiplier ?? 1;
+  const costUnits =
+    isOption && contractMultiplier > 0 ? holding.quantity * contractMultiplier : holding.quantity;
+
+  return costUnits !== 0 ? costBasis / costUnits : null;
 };
 
 export const HoldingsTable = ({
@@ -116,6 +131,8 @@ export const HoldingsTable = ({
           currency: false,
           symbolName: false,
           holdingType: false,
+          avgPrice: false,
+          weight: false,
           bookValue: false,
           totalPnl: false,
           unrealizedPnl: false,
@@ -304,6 +321,41 @@ const getColumns = (
     },
   },
   {
+    id: "avgPrice",
+    accessorFn: (row) => getAveragePrice(row) ?? 0,
+    enableHiding: true,
+    enableSorting: true,
+    header: ({ column }) => (
+      <DataTableColumnHeader className="justify-end text-right" column={column} title="Avg Price" />
+    ),
+    meta: {
+      label: "Avg Price",
+    },
+    cell: ({ row }) => {
+      const averagePrice = getAveragePrice(row.original);
+
+      return (
+        <div className="flex min-h-[40px] flex-col items-end justify-center px-4">
+          {averagePrice == null ? (
+            <span className="text-muted-foreground">-</span>
+          ) : (
+            <AmountDisplay
+              value={averagePrice}
+              currency={row.original.localCurrency}
+              isHidden={isHidden}
+            />
+          )}
+          <div className="text-xs text-transparent">-</div>
+        </div>
+      );
+    },
+    sortingFn: (rowA, rowB) => {
+      const valueA = getAveragePrice(rowA.original) ?? 0;
+      const valueB = getAveragePrice(rowB.original) ?? 0;
+      return valueA - valueB;
+    },
+  },
+  {
     id: "bookValue",
     accessorFn: (row) => row.costBasis?.local ?? 0,
     enableHiding: true,
@@ -366,6 +418,25 @@ const getColumns = (
 
       return valueA - valueB;
     },
+  },
+  {
+    id: "weight",
+    accessorFn: (row) => row.weight ?? 0,
+    enableHiding: true,
+    enableSorting: true,
+    header: ({ column }) => (
+      <DataTableColumnHeader className="justify-end text-right" column={column} title="Weight" />
+    ),
+    meta: {
+      label: "Weight",
+    },
+    cell: ({ row }) => (
+      <div className="flex min-h-[40px] flex-col items-end justify-center px-4">
+        <span className="font-medium tabular-nums">{formatPercent(row.original.weight ?? 0)}</span>
+        <div className="text-xs text-transparent">-</div>
+      </div>
+    ),
+    sortingFn: (rowA, rowB) => (rowA.original.weight ?? 0) - (rowB.original.weight ?? 0),
   },
   {
     id: "totalPnl",

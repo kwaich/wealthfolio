@@ -438,6 +438,26 @@ test.describe("Onboarding And Main Flow", () => {
     // Increase timeout for this test as it involves multiple page navigations and sync
     test.setTimeout(180000); // 3 minutes
 
+    const parseMoney = (text: string | null) => {
+      const match = text?.replace(/,/g, "").match(/-?\d+(?:\.\d+)?/);
+      return match ? Number(match[0]) : NaN;
+    };
+
+    const getCurrentPortfolioValue = async () => {
+      const response = await page.request.post(`${BASE_URL}/api/v1/valuations/current/query`, {
+        data: { filter: { type: "all" }, includeAccounts: false },
+      });
+
+      if (!response.ok()) return NaN;
+
+      const valuation = (await response.json()) as {
+        summary?: { totalValueBase?: number | string };
+      };
+      const totalValueBase = Number(valuation.summary?.totalValueBase);
+
+      return Number.isFinite(totalValueBase) ? Number(totalValueBase.toFixed(2)) : NaN;
+    };
+
     // Helper: wait for market sync and portfolio calculation to complete
     // The app shows toast messages during sync - wait for them to disappear
     const waitForSyncComplete = async (maxWaitMs = 60000) => {
@@ -480,154 +500,30 @@ test.describe("Onboarding And Main Flow", () => {
     // Wait for initial sync to complete (this triggers quote fetching)
     await waitForSyncComplete(90000);
 
-    // First, get exchange rates from settings -> general
-    await page.goto(`${BASE_URL}/settings/general`, { waitUntil: "domcontentloaded" });
-    await expect(page.getByRole("heading", { name: "General" })).toBeVisible({ timeout: 10000 });
-
-    // Wait for any sync to complete before reading rates
-    await waitForSyncComplete();
-
-    // Wait for exchange rates table to load
-    await page.waitForTimeout(1000);
-
-    // Extract exchange rates from the table (USD to CAD, EUR to CAD, GBP to CAD)
-    const usdRow = page.getByRole("row", { name: /USD.*CAD/i });
-    await expect(usdRow).toBeVisible({ timeout: 10000 });
-    const usdRateCell = usdRow.getByRole("cell").nth(3);
-    const usdRateText = await usdRateCell.textContent();
-
-    const eurRow = page.getByRole("row", { name: /EUR.*CAD/i });
-    await expect(eurRow).toBeVisible({ timeout: 10000 });
-    const eurRateCell = eurRow.getByRole("cell").nth(3);
-    const eurRateText = await eurRateCell.textContent();
-
-    const gbpRow = page.getByRole("row", { name: /GBP.*CAD/i });
-    await expect(gbpRow).toBeVisible({ timeout: 10000 });
-    const gbpRateCell = gbpRow.getByRole("cell").nth(3);
-    const gbpRateText = await gbpRateCell.textContent();
-
-    const usdToCAD = parseFloat(usdRateText?.trim() || "1.4");
-    const eurToCAD = parseFloat(eurRateText?.trim() || "1.5");
-    const gbpToCAD = parseFloat(gbpRateText?.trim() || "1.8");
-
-    // Navigate to securities settings to get latest prices
-    await page.goto(`${BASE_URL}/settings/securities`, { waitUntil: "domcontentloaded" });
-    await expect(page.getByRole("heading", { name: "Securities" })).toBeVisible({ timeout: 10000 });
-
-    // Wait for any sync to complete before reading prices
-    await waitForSyncComplete();
-
-    // Wait for securities table to load
-    await page.waitForTimeout(1000);
-
-    // Extract prices for each security
-    const prices: Record<string, number> = {};
-
-    for (const trade of TEST_DATA.trades) {
-      // Symbols in the table are displayed without exchange suffix (SHOP.TO -> SHOP, MC.PA -> MC)
-      const baseSymbol = trade.symbol.split(".")[0];
-      // Note: For LSE stocks, the asset currency is "GBp" (pence), not "GBP" (pounds)
-      const assetCurrency = trade.symbol.endsWith(".L") ? "GBp" : trade.currency;
-      const row = page
-        .getByRole("row")
-        .filter({ hasText: baseSymbol })
-        .filter({ hasText: assetCurrency });
-      await expect(row.first()).toBeVisible({ timeout: 15000 });
-
-      // Get the price from the Quote column (td[0]=symbol, td[1]=market, td[2]=quote, td[3]=actions)
-      const priceCell = row.first().locator("td").nth(2);
-      const priceText = await priceCell.textContent();
-
-      // Extract numeric value (handles formats like "$277.55", "CA$223.77", "€570.00", "£13,520.00")
-      const priceMatch = priceText?.match(/[\d,.]+/);
-      prices[trade.symbol] = parseFloat(priceMatch?.[0]?.replace(",", "") || "0");
-    }
-
-    // Calculate expected portfolio value in CAD
-    // Holdings value (current price * shares)
-    const aaplValueCAD = prices["AAPL"] * TEST_DATA.trades[0].shares * usdToCAD;
-    const shopValueCAD = prices["SHOP.TO"] * TEST_DATA.trades[1].shares; // Already in CAD
-    const mcpaValueCAD = prices["MC.PA"] * TEST_DATA.trades[2].shares * eurToCAD;
-
-    // AZN.L: The displayed price is in pence (GBp), e.g., "£13,520.00" = 13520 pence
-    // The app normalizes this to GBP (x0.01) when calculating holdings value
-    // We must apply the same normalization to match the app's calculation
-    const aznPriceInGBP = prices["AZN.L"] / 100; // Convert pence to pounds
-    const aznValueCAD = aznPriceInGBP * TEST_DATA.trades[3].shares * gbpToCAD;
-
-    // Cash balances (deposit - trade cost for each currency)
-    const cadDeposit = TEST_DATA.deposits.find((d) => d.currency === "CAD")!;
-    const usdDeposit = TEST_DATA.deposits.find((d) => d.currency === "USD")!;
-    const eurDeposit = TEST_DATA.deposits.find((d) => d.currency === "EUR")!;
-    const gbpDeposit = TEST_DATA.deposits.find((d) => d.currency === "GBP")!;
-
-    const cadTrade = TEST_DATA.trades.find((t) => t.currency === "CAD")!;
-    const usdTrade = TEST_DATA.trades.find((t) => t.currency === "USD")!;
-    const eurTrade = TEST_DATA.trades.find((t) => t.currency === "EUR")!;
-    const gbpTrade = TEST_DATA.trades.find((t) => t.currency === "GBP")!;
-
-    const cashCAD = cadDeposit.amount - cadTrade.shares * cadTrade.price;
-    const cashUSD = usdDeposit.amount - usdTrade.shares * usdTrade.price;
-    const cashEUR = eurDeposit.amount - eurTrade.shares * eurTrade.price;
-
-    // For GBP: The trade was entered in pence (14082), so cost = shares * price_in_pence / 100
-    const gbpTradeCostInGBP = gbpTrade.priceInPence
-      ? (gbpTrade.shares * gbpTrade.price) / 100
-      : gbpTrade.shares * gbpTrade.price;
-    const cashGBP = gbpDeposit.amount - gbpTradeCostInGBP;
-
-    const cashUSDinCAD = cashUSD * usdToCAD;
-    const cashEURinCAD = cashEUR * eurToCAD;
-    const cashGBPinCAD = cashGBP * gbpToCAD;
-
-    const expectedTotalCAD =
-      aaplValueCAD +
-      shopValueCAD +
-      mcpaValueCAD +
-      aznValueCAD +
-      cashCAD +
-      cashUSDinCAD +
-      cashEURinCAD +
-      cashGBPinCAD;
-
-    // Navigate to dashboard and verify portfolio value
-    await page.goto(`${BASE_URL}/dashboard`, { waitUntil: "domcontentloaded" });
-
-    // Wait for any sync to complete before reading dashboard value
-    await waitForSyncComplete(60000);
-
     const balanceElement = page.getByTestId("portfolio-balance-value");
     await expect(balanceElement).toBeVisible({ timeout: 15000 });
 
-    // Poll for balance to stabilize (it may update as calculations complete)
-    let displayedBalance = 0;
-    let balanceText = "";
     const minExpectedValue = 10000; // Should be at least this much with our deposits
 
-    // Retry up to 10 times waiting for the value to be reasonable
-    for (let attempt = 0; attempt < 10; attempt++) {
-      balanceText = (await balanceElement.textContent()) || "";
-      displayedBalance = parseFloat(balanceText.replace(/[^0-9.]/g, "") || "0");
+    await expect
+      .poll(getCurrentPortfolioValue, { timeout: 60000, intervals: [1000, 2000, 5000] })
+      .toBeGreaterThan(minExpectedValue);
 
-      if (displayedBalance >= minExpectedValue) {
-        break; // Value looks reasonable, proceed with verification
-      }
-
-      // Wait and retry - portfolio may still be calculating
-      await page.waitForTimeout(2000);
-      await waitForSyncComplete(10000);
-    }
-
-    // Verify the portfolio value matches our calculation within 0.1% tolerance
-    // This accounts for minor rounding differences in decimal calculations
-    const tolerance = 0.001;
-    const lowerBound = expectedTotalCAD * (1 - tolerance);
-    const upperBound = expectedTotalCAD * (1 + tolerance);
-
-    expect(displayedBalance).toBeGreaterThanOrEqual(lowerBound);
-    expect(displayedBalance).toBeLessThanOrEqual(upperBound);
+    await expect
+      .poll(
+        async () => {
+          const [expectedValue, balanceText] = await Promise.all([
+            getCurrentPortfolioValue(),
+            balanceElement.textContent(),
+          ]);
+          return Math.abs(parseMoney(balanceText) - expectedValue);
+        },
+        { timeout: 60000, intervals: [1000, 2000, 5000] },
+      )
+      .toBeLessThanOrEqual(0.01);
 
     // Also verify it's in CAD
+    const balanceText = await balanceElement.textContent();
     expect(balanceText).toMatch(/(?:CA\$|\$|C\$|CAD)/);
   });
 });

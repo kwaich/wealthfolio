@@ -35,6 +35,8 @@ interface AllocationDetailSheetProps {
   initialCategoryId?: string | null;
 }
 
+type HoldingsByAllocationQueryKey = readonly [string, AccountScope, string, string];
+
 export function AllocationDetailSheet({
   isOpen,
   onOpenChange,
@@ -88,6 +90,15 @@ export function AllocationDetailSheet({
     }
   }, [isOpen, initialCategoryId, allocation?.categories]);
 
+  const taxonomyId = allocation?.taxonomyId ?? "";
+  const categoryId = selectedCategoryId ?? "";
+  const holdingsQueryKey: HoldingsByAllocationQueryKey = [
+    QueryKeys.HOLDINGS_BY_ALLOCATION,
+    accountFilter,
+    taxonomyId,
+    categoryId,
+  ];
+
   // Fetch holdings for the selected category
   const {
     data: allocationHoldings,
@@ -96,23 +107,22 @@ export function AllocationDetailSheet({
     error: holdingsQueryError,
     refetch: refetchAllocationHoldings,
   } = useQuery({
-    queryKey: [
-      QueryKeys.HOLDINGS_BY_ALLOCATION,
-      accountFilter,
-      allocation?.taxonomyId,
-      selectedCategoryId,
-    ],
-    queryFn: () =>
-      getHoldingsByAllocation(
-        accountFilter,
-        allocation?.taxonomyId ?? "",
-        selectedCategoryId ?? "",
-      ),
-    enabled: !!selectedCategoryId && !!allocation?.taxonomyId,
+    queryKey: holdingsQueryKey,
+    queryFn: ({ queryKey }) => {
+      const [, filter, selectedTaxonomyId, selectedCategoryId] = queryKey;
+      return getHoldingsByAllocation(filter, selectedTaxonomyId, selectedCategoryId);
+    },
+    enabled: !!categoryId && !!taxonomyId,
     staleTime: 30000,
   });
 
-  const holdings = allocationHoldings?.holdings;
+  const hasRequestedCategory = !!categoryId && !!taxonomyId;
+  const holdingsMatchSelection =
+    allocationHoldings?.taxonomyId === taxonomyId && allocationHoldings?.categoryId === categoryId;
+  const holdings = holdingsMatchSelection ? allocationHoldings?.holdings : undefined;
+  const holdingsLoadingForSelection =
+    holdingsLoading ||
+    (hasRequestedCategory && !holdingsError && !!allocationHoldings && !holdingsMatchSelection);
 
   const handleSegmentClick = useCallback(
     (categoryId: string, categoryName: string) => {
@@ -325,7 +335,7 @@ export function AllocationDetailSheet({
                 </Button>
               </div>
 
-              {holdingsLoading ? (
+              {holdingsLoadingForSelection ? (
                 <div className="space-y-2">
                   {[1, 2, 3].map((i) => (
                     <div key={i} className="flex items-center gap-3 py-3">
@@ -361,15 +371,29 @@ export function AllocationDetailSheet({
                 </div>
               ) : holdings && holdings.length > 0 ? (
                 <div className="divide-y">
-                  {holdings.map((holding) => {
+                  {holdings.map((holding, index) => {
                     const canNavigate = holding.holdingType !== HoldingType.CASH;
-                    const avatarSymbol =
-                      holding.holdingType === HoldingType.CASH
-                        ? `CASH:${holding.currency}`
-                        : holding.symbol;
+                    const isCash = holding.holdingType === HoldingType.CASH;
+                    const avatarSymbol = isCash ? `CASH:${holding.currency}` : holding.symbol;
+                    const primaryLabel = isCash
+                      ? (holding.accountName ?? holding.symbol)
+                      : holding.symbol;
+                    const secondaryLabel = isCash
+                      ? (holding.name ?? `Cash (${holding.currency})`)
+                      : (holding.name ?? holding.symbol);
+                    const rowKey = isCash
+                      ? [
+                          categoryId,
+                          holding.id,
+                          holding.accountName ?? "",
+                          holding.symbol,
+                          holding.currency,
+                          index,
+                        ].join(":")
+                      : `${categoryId}:${holding.id}`;
                     return (
                       <div
-                        key={holding.id}
+                        key={rowKey}
                         className={cn(
                           "flex items-center gap-3 py-3 transition-colors",
                           canNavigate ? "hover:bg-muted/30 cursor-pointer" : "cursor-default",
@@ -378,10 +402,8 @@ export function AllocationDetailSheet({
                       >
                         <TickerAvatar symbol={avatarSymbol} className="h-9 w-9" />
                         <div className="min-w-0 flex-1">
-                          <p className="truncate text-sm font-semibold">{holding.symbol}</p>
-                          <p className="text-muted-foreground truncate text-xs">
-                            {holding.name ?? holding.symbol}
-                          </p>
+                          <p className="truncate text-sm font-semibold">{primaryLabel}</p>
+                          <p className="text-muted-foreground truncate text-xs">{secondaryLabel}</p>
                         </div>
                         <div className="text-right">
                           <AmountDisplay

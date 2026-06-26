@@ -615,6 +615,8 @@ export interface Instrument {
   notes?: string | null;
   quoteMode: QuoteMode;
   preferredProvider?: string | null;
+  isin?: string | null;
+  exchangeMic?: string | null;
 
   // Taxonomy-based classifications
   classifications?: AssetClassifications | null;
@@ -727,6 +729,7 @@ export interface HoldingSummary {
   id: string;
   symbol: string;
   name?: string | null;
+  accountName?: string | null;
   holdingType: HoldingType;
   quantity: number;
   marketValue: number; // Base currency value
@@ -1146,7 +1149,7 @@ export interface PerformanceResult {
   isMixedTrackingMode?: boolean;
 }
 
-export type PerformanceSummaryProfile = "full" | "summary";
+export type PerformanceSummaryProfile = "full" | "summary" | "dashboard";
 
 export interface PerformanceScopeDescriptor {
   id: string;
@@ -2520,6 +2523,7 @@ export interface DriftReport {
   outOfBandCount: number;
   rows: DriftRow[];
   holdings?: DriftHoldingsReport | null;
+  deployableCash: number;
 }
 
 export interface DriftHoldingRow {
@@ -2551,6 +2555,7 @@ export interface DriftHoldingsReport {
 export type RebalanceWarningKind =
   | "missing_quote"
   | "no_buy_candidate"
+  | "tagged_cash"
   | "unclassified_asset"
   | "partial_classification";
 

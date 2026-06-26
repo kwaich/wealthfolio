@@ -65,6 +65,7 @@ describe("resolveDriftReportCategories", () => {
         baseCurrency: "USD",
         rows: [holdingRow({ categoryId: "region-a" })],
       },
+      deployableCash: 5000,
     };
     const categories: TaxonomyCategory[] = [
       {

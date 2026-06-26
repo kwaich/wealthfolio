@@ -1,12 +1,16 @@
 import { render, screen } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { describe, expect, it, vi } from "vitest";
-import { useQuery } from "@tanstack/react-query";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useCurrentValuation } from "@/hooks/use-current-account-valuations";
 import { useHoldings } from "@/hooks/use-holdings";
 import { useValuationHistory } from "@/hooks/use-valuation-history";
 import { useSettingsContext } from "@/lib/settings-provider";
 import { DashboardContent } from "./dashboard-content";
+
+const uiMocks = vi.hoisted(() => ({
+  intervalCode: "3M" as "3M" | "ALL",
+}));
 
 vi.mock("@/adapters", () => ({
   calculatePerformanceSummary: vi.fn(),
@@ -37,18 +41,25 @@ vi.mock("@/lib/settings-provider", () => ({
 }));
 
 vi.mock("@tanstack/react-query", () => ({
+  keepPreviousData: Symbol("keepPreviousData"),
   useQuery: vi.fn(),
 }));
 
 vi.mock("@wealthfolio/ui", () => ({
   GainAmount: ({ value }: { value: number }) => <span>{`gain-amount:${value}`}</span>,
   GainPercent: ({ value }: { value: number }) => <span>{`gain-percent:${value}`}</span>,
-  getInitialIntervalData: () => ({
-    range: { from: new Date("2026-03-01T00:00:00Z"), to: new Date("2026-06-01T00:00:00Z") },
-    description: "3M",
-  }),
+  getInitialIntervalData: (code?: string) =>
+    code === "ALL"
+      ? {
+          range: { from: new Date("1970-01-01T00:00:00Z"), to: new Date("2026-06-24T00:00:00Z") },
+          description: "All Time",
+        }
+      : {
+          range: { from: new Date("2026-03-01T00:00:00Z"), to: new Date("2026-06-01T00:00:00Z") },
+          description: "3M",
+        },
   IntervalSelector: () => <div>interval-selector</div>,
-  usePersistentState: () => ["3M", vi.fn()],
+  usePersistentState: () => [uiMocks.intervalCode, vi.fn()],
 }));
 
 vi.mock("@wealthfolio/ui/components/ui/skeleton", () => ({
@@ -98,6 +109,11 @@ const mockUseValuationHistory = vi.mocked(useValuationHistory);
 const mockUseSettingsContext = vi.mocked(useSettingsContext);
 
 describe("DashboardContent", () => {
+  beforeEach(() => {
+    uiMocks.intervalCode = "3M";
+    vi.clearAllMocks();
+  });
+
   function mockCurrentValuation(totalValueBase = 125) {
     mockUseCurrentValuation.mockReturnValue({
       currentValuation: {
@@ -223,6 +239,70 @@ describe("DashboardContent", () => {
     expect(screen.queryByText("balance:100")).not.toBeInTheDocument();
     expect(screen.getByTestId("portfolio-as-of")).toHaveTextContent("2026-06-01T12:30:00Z");
     expect(screen.getByTestId("portfolio-as-of")).not.toHaveTextContent("2026-06-01T13:00:00Z");
+  });
+
+  it("requests all-time valuation history without the 1970 sentinel range", () => {
+    uiMocks.intervalCode = "ALL";
+    mockCurrentValuation(125);
+    mockUseHoldings.mockReturnValue({
+      holdings: [],
+      isLoading: false,
+      error: null,
+    } as unknown as ReturnType<typeof useHoldings>);
+    mockUseValuationHistory.mockReturnValue({
+      valuationHistory: [],
+      isLoading: false,
+      error: null,
+    } as unknown as ReturnType<typeof useValuationHistory>);
+    mockUseSettingsContext.mockReturnValue({
+      settings: { baseCurrency: "USD" },
+    } as unknown as ReturnType<typeof useSettingsContext>);
+    mockUseQuery.mockReturnValue({
+      isLoading: false,
+      data: null,
+    } as unknown as ReturnType<typeof useQuery>);
+
+    render(<DashboardContent />);
+
+    expect(mockUseValuationHistory).toHaveBeenCalledWith(undefined);
+  });
+
+  it("starts dashboard performance queries while valuation history is loading", () => {
+    mockCurrentValuation(125);
+    mockUseHoldings.mockReturnValue({
+      holdings: [],
+      isLoading: false,
+      error: null,
+    } as unknown as ReturnType<typeof useHoldings>);
+    mockUseValuationHistory.mockReturnValue({
+      valuationHistory: [
+        {
+          valuationDate: "2026-06-01",
+          totalValueBase: 1000,
+          netContributionBase: 900,
+          baseCurrency: "USD",
+          calculatedAt: "2026-06-01T12:00:00Z",
+        },
+      ],
+      isLoading: true,
+      error: null,
+    } as unknown as ReturnType<typeof useValuationHistory>);
+    mockUseSettingsContext.mockReturnValue({
+      settings: { baseCurrency: "USD" },
+    } as unknown as ReturnType<typeof useSettingsContext>);
+    mockUseQuery.mockReturnValue({
+      isLoading: false,
+      data: null,
+    } as unknown as ReturnType<typeof useQuery>);
+
+    render(<DashboardContent />);
+
+    const performanceQueryOptions = mockUseQuery.mock.calls[0]?.[0] as
+      | { enabled?: boolean; placeholderData?: unknown }
+      | undefined;
+    expect(performanceQueryOptions?.enabled).toBe(true);
+    expect(performanceQueryOptions?.placeholderData).toBe(keepPreviousData);
+    expect(screen.getByText("accounts-summary")).toBeInTheDocument();
   });
 
   it("does not render a failed current valuation as zero", () => {

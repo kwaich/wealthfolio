@@ -86,7 +86,9 @@ impl AccountRepositoryTrait for AccountRepository {
                 account_db.platform_id = existing.platform_id;
                 account_db.provider = existing.provider;
                 account_db.account_number = existing.account_number;
-                account_db.meta = existing.meta;
+                if account_db.meta.is_none() {
+                    account_db.meta = existing.meta;
+                }
 
                 // Preserve is_archived and tracking_mode if not explicitly provided
                 if !is_archived_provided {

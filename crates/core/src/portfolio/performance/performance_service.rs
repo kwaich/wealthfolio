@@ -1,4 +1,4 @@
-use crate::accounts::{account_types, TrackingMode};
+use crate::accounts::{account_types, Account, TrackingMode};
 use crate::activities::{Activity, ActivityRepositoryTrait, ActivityType, TransferPairResolution};
 use crate::constants::DECIMAL_PRECISION;
 use crate::errors::{self, Result, ValidationError};
@@ -16,10 +16,12 @@ use crate::valuation::ValuationServiceTrait;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, NaiveDate, Utc};
+use futures::stream::{self, StreamExt};
 use num_traits::ToPrimitive;
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 use std::sync::{Arc, RwLock};
+use std::time::Instant;
 
 use log::{debug, warn};
 use rust_decimal::prelude::FromPrimitive;
@@ -28,10 +30,15 @@ use rust_decimal::MathematicalOps;
 use rust_decimal_macros::dec;
 
 use super::{
-    is_external_transfer, DataQualityStatus, PerformanceAttribution, PerformanceDataQuality,
-    PerformancePeriod, PerformanceResult, PerformanceReturns, PerformanceRisk,
-    PerformanceScopeDescriptor, PerformanceSummary, PerformanceSummaryBasis,
-    PerformanceSummaryProfile, PerformanceSummaryStatus, ReturnMethod, SimplePerformanceMetrics,
+    empty_performance_metrics, is_external_transfer, performance_account_ids_from_map,
+    performance_account_tracking_modes_from_map, performance_account_types_from_map,
+    performance_summary_scope_key, performance_tracking_composition,
+    sync_performance_summary_quality, unavailable_performance_metrics, DataQualityStatus,
+    PerformanceAttribution, PerformanceDataQuality, PerformancePeriod, PerformanceResult,
+    PerformanceReturns, PerformanceRisk, PerformanceScopeDescriptor, PerformanceSummary,
+    PerformanceSummaryBasis, PerformanceSummaryBatchResult, PerformanceSummaryBatchScope,
+    PerformanceSummaryProfile, PerformanceSummaryScopeTiming, PerformanceSummaryStatus,
+    ReturnMethod, SimplePerformanceMetrics,
 };
 use crate::portfolio::valuation::{
     DailyAccountValuation, ExternalFlowSource as ValuationExternalFlowSource,
@@ -92,6 +99,192 @@ pub trait PerformanceServiceTrait: Send + Sync {
         &self,
         account_ids: &[String],
     ) -> Result<Vec<SimplePerformanceMetrics>>;
+}
+
+pub const PERFORMANCE_SUMMARY_BATCH_PARALLELISM: usize = 4;
+
+struct PerformanceSummaryBatchScopeResult {
+    key: String,
+    result: PerformanceResult,
+    timing: PerformanceSummaryScopeTiming,
+}
+
+pub async fn calculate_performance_summary_batch_for_accounts<T>(
+    performance_service: Arc<T>,
+    scopes: Vec<PerformanceSummaryBatchScope>,
+    accounts_by_id: HashMap<String, Account>,
+    base_currency: String,
+    start_date: Option<NaiveDate>,
+    end_date: Option<NaiveDate>,
+    profile: PerformanceSummaryProfile,
+) -> PerformanceSummaryBatchResult
+where
+    T: PerformanceServiceTrait + ?Sized + 'static,
+{
+    let total_scope_count = scopes.len();
+    let batch_start = Instant::now();
+    let mut results = HashMap::new();
+    let mut scope_results = stream::iter(scopes.into_iter().enumerate())
+        .map(|(scope_index, scope)| {
+            let performance_service = Arc::clone(&performance_service);
+            let accounts_by_id = accounts_by_id.clone();
+            let base_currency = base_currency.clone();
+            async move {
+                let key = performance_summary_scope_key(&scope.account_ids);
+                let account_ids =
+                    performance_account_ids_from_map(&accounts_by_id, &scope.account_ids);
+                let scope_start = Instant::now();
+
+                if account_ids.is_empty() {
+                    let mut result = empty_performance_metrics(
+                        &key,
+                        base_currency.clone(),
+                        start_date,
+                        end_date,
+                    );
+                    if !scope.account_ids.is_empty() {
+                        result.data_quality.warnings.push(
+                            "Requested accounts were excluded because they are archived or not eligible for performance."
+                                .to_string(),
+                        );
+                        sync_performance_summary_quality(&mut result);
+                    }
+                    let timing = PerformanceSummaryScopeTiming {
+                        index: scope_index + 1,
+                        total: total_scope_count,
+                        key: key.clone(),
+                        requested_accounts: scope.account_ids.len(),
+                        eligible_accounts: 0,
+                        tracking_composition: "none".to_string(),
+                        warnings: result.data_quality.warnings.len(),
+                        skipped: true,
+                        failed: false,
+                        elapsed_ms: scope_start.elapsed().as_secs_f64() * 1000.0,
+                    };
+                    return PerformanceSummaryBatchScopeResult {
+                        key,
+                        result,
+                        timing,
+                    };
+                }
+
+                let tracking_modes =
+                    performance_account_tracking_modes_from_map(&accounts_by_id, &account_ids);
+                let account_types =
+                    performance_account_types_from_map(&accounts_by_id, &account_ids);
+                let tracking_composition =
+                    performance_tracking_composition(&tracking_modes, &account_ids);
+                let requested_account_count = scope.account_ids.len();
+                let handle = tokio::runtime::Handle::current();
+                let key_for_task = key.clone();
+                let account_ids_for_task = account_ids.clone();
+                let base_currency_for_task = base_currency.clone();
+                let tracking_modes_for_task = tracking_modes.clone();
+                let account_types_for_task = account_types.clone();
+                let calculation = match tokio::task::spawn_blocking(move || {
+                    handle.block_on(async move {
+                        performance_service
+                            .calculate_performance_summary_for_accounts(
+                                &key_for_task,
+                                &account_ids_for_task,
+                                &base_currency_for_task,
+                                &tracking_modes_for_task,
+                                &account_types_for_task,
+                                start_date,
+                                end_date,
+                                profile,
+                            )
+                            .await
+                    })
+                })
+                .await
+                {
+                    Ok(result) => result
+                        .map_err(|e| format!("Failed to calculate performance summary: {}", e)),
+                    Err(error) => Err(format!(
+                        "Failed to join performance summary calculation for {}: {}",
+                        key, error
+                    )),
+                };
+
+                let mut result = match calculation {
+                    Ok(result) => result,
+                    Err(error) => {
+                        let mut result = unavailable_performance_metrics(
+                            &key,
+                            base_currency.clone(),
+                            start_date,
+                            end_date,
+                            format!("Performance unavailable for this scope: {error}"),
+                        );
+                        result.data_quality.status = DataQualityStatus::Partial;
+                        sync_performance_summary_quality(&mut result);
+                        let timing = PerformanceSummaryScopeTiming {
+                            index: scope_index + 1,
+                            total: total_scope_count,
+                            key: key.clone(),
+                            requested_accounts: requested_account_count,
+                            eligible_accounts: account_ids.len(),
+                            tracking_composition,
+                            warnings: result.data_quality.warnings.len(),
+                            skipped: false,
+                            failed: true,
+                            elapsed_ms: scope_start.elapsed().as_secs_f64() * 1000.0,
+                        };
+                        return PerformanceSummaryBatchScopeResult {
+                            key,
+                            result,
+                            timing,
+                        };
+                    }
+                };
+
+                if account_ids.len() != requested_account_count {
+                    result.data_quality.warnings.push(
+                        "Some requested accounts were excluded because they are archived or not eligible for performance."
+                            .to_string(),
+                    );
+                    result.data_quality.status = DataQualityStatus::Partial;
+                    sync_performance_summary_quality(&mut result);
+                }
+
+                let timing = PerformanceSummaryScopeTiming {
+                    index: scope_index + 1,
+                    total: total_scope_count,
+                    key: key.clone(),
+                    requested_accounts: requested_account_count,
+                    eligible_accounts: account_ids.len(),
+                    tracking_composition,
+                    warnings: result.data_quality.warnings.len(),
+                    skipped: false,
+                    failed: false,
+                    elapsed_ms: scope_start.elapsed().as_secs_f64() * 1000.0,
+                };
+                PerformanceSummaryBatchScopeResult {
+                    key,
+                    result,
+                    timing,
+                }
+            }
+        })
+        .buffer_unordered(PERFORMANCE_SUMMARY_BATCH_PARALLELISM);
+
+    let mut failed_scope_count = 0usize;
+    let mut scope_timings = Vec::new();
+    while let Some(scope_result) = scope_results.next().await {
+        if scope_result.timing.failed {
+            failed_scope_count += 1;
+        }
+        scope_timings.push(scope_result.timing);
+        results.insert(scope_result.key, scope_result.result);
+    }
+
+    PerformanceSummaryBatchResult {
+        results,
+        failed_scope_count,
+        scope_timings,
+        elapsed_ms: batch_start.elapsed().as_secs_f64() * 1000.0,
+    }
 }
 
 pub struct PerformanceService {
@@ -766,16 +959,29 @@ impl PerformanceService {
         flow_basis: ExternalFlowBasis,
     ) -> Option<Decimal> {
         let start_point = full_history.first()?;
-        let end_point = full_history.last()?;
         let start_value = Self::return_total_value(start_point, flow_basis);
         if start_value <= Decimal::ZERO {
             return None;
         }
 
-        let net_cash_flow: Decimal = daily_flows.iter().map(|flow| flow.net()).sum();
-        let end_value = Self::return_total_value(end_point, flow_basis);
+        Self::compute_simple_value_return_amount(full_history, daily_flows, flow_basis)
+            .map(|amount| amount / start_value)
+    }
 
-        Some((end_value - start_value - net_cash_flow) / start_value)
+    fn compute_simple_value_return_amount(
+        full_history: &[DailyAccountValuation],
+        daily_flows: &[DailyExternalFlow],
+        flow_basis: ExternalFlowBasis,
+    ) -> Option<Decimal> {
+        let start_point = full_history.first()?;
+        let end_point = full_history.last()?;
+        let net_cash_flow: Decimal = daily_flows.iter().map(|flow| flow.net()).sum();
+
+        Some(
+            Self::return_total_value(end_point, flow_basis)
+                - Self::return_total_value(start_point, flow_basis)
+                - net_cash_flow,
+        )
     }
 
     fn total_external_flows(daily_flows: &[DailyExternalFlow]) -> (Decimal, Decimal) {
@@ -2637,6 +2843,10 @@ impl PerformanceService {
             Self::is_cash_account_type(account_type),
         )?;
         metrics.scope.id = account_id.to_string();
+        if profile == PerformanceSummaryProfile::Dashboard {
+            return Ok(metrics);
+        }
+
         let attribution_baseline = Self::attribution_baseline(
             matches!(tracking_mode, Some(TrackingMode::Holdings)),
             start_date_opt,
@@ -2815,6 +3025,10 @@ impl PerformanceService {
         };
 
         metrics.scope.id = scope_id.to_string();
+        if profile == PerformanceSummaryProfile::Dashboard {
+            return Ok(metrics);
+        }
+
         // Transaction-only all-time scopes can use inception attribution; holdings-only
         // scopes stay period-based because holdings snapshots do not carry cash-flow history.
         let attribution_baseline = if scoped_tracking_composition
@@ -3122,6 +3336,19 @@ impl PerformanceService {
                     holdings_amount
                         .unwrap_or(Decimal::ZERO)
                         .round_dp(DECIMAL_PRECISION),
+                    Decimal::ZERO,
+                )
+            } else if profile == PerformanceSummaryProfile::Dashboard {
+                (
+                    Decimal::ZERO,
+                    Decimal::ZERO,
+                    Self::compute_simple_value_return_amount(
+                        full_history,
+                        &daily_flows,
+                        flow_basis,
+                    )
+                    .unwrap_or(Decimal::ZERO)
+                    .round_dp(DECIMAL_PRECISION),
                     Decimal::ZERO,
                 )
             } else {
@@ -3779,15 +4006,22 @@ impl PerformanceService {
                 continue;
             }
 
+            let component_profile = if profile == PerformanceSummaryProfile::Dashboard {
+                PerformanceSummaryProfile::Dashboard
+            } else {
+                PerformanceSummaryProfile::Summary
+            };
             let mut metrics = Self::compute_mixed_scope_component_metrics(
                 component,
                 start_date_opt,
-                PerformanceSummaryProfile::Summary,
+                component_profile,
                 flow_basis,
                 is_all_time,
             )?;
 
-            if matches!(component.tracking_mode, TrackingMode::Transactions) {
+            if profile != PerformanceSummaryProfile::Dashboard
+                && matches!(component.tracking_mode, TrackingMode::Transactions)
+            {
                 let mut component_result = Self::compute_mixed_scope_transaction_component_result(
                     component,
                     start_date_opt,
@@ -9425,6 +9659,144 @@ mod tests {
         assert_eq!(
             result.returns.value_return.unwrap().round_dp(4),
             dec!(0.0667)
+        );
+    }
+
+    #[tokio::test]
+    async fn mixed_scope_dashboard_skips_transaction_component_attribution() {
+        let transaction = [
+            account_valuation(
+                "transaction",
+                "2026-06-12",
+                dec!(1000),
+                dec!(1000),
+                dec!(1000),
+                dec!(1000),
+            ),
+            account_valuation(
+                "transaction",
+                "2026-06-19",
+                dec!(1050),
+                dec!(1000),
+                dec!(1000),
+                dec!(1000),
+            ),
+        ];
+        let holdings = [
+            account_valuation(
+                "holdings",
+                "2026-06-12",
+                dec!(500),
+                dec!(500),
+                Decimal::ZERO,
+                Decimal::ZERO,
+            ),
+            account_valuation(
+                "holdings",
+                "2026-06-19",
+                dec!(550),
+                dec!(500),
+                Decimal::ZERO,
+                Decimal::ZERO,
+            ),
+        ];
+        let history = vec![
+            transaction[0].clone(),
+            transaction[1].clone(),
+            holdings[0].clone(),
+            holdings[1].clone(),
+        ];
+        let valuation_service = Arc::new(TestValuationService::new_with_aggregate_failure(history));
+        let mut dividend = income_activity_on(
+            "dividend-1",
+            "transaction",
+            "2026-06-19",
+            ActivityType::Dividend,
+            dec!(50),
+        );
+        dividend.currency = "CAD".to_string();
+        let activity_repo = Arc::new(TestActivityRepository::new(vec![dividend]));
+        let service = PerformanceService::new(valuation_service, Arc::new(TestQuoteService))
+            .with_activity_repository(activity_repo, Arc::new(TestFxService));
+        let account_ids = vec!["transaction".to_string(), "holdings".to_string()];
+        let mut modes = HashMap::new();
+        modes.insert("transaction".to_string(), TrackingMode::Transactions);
+        modes.insert("holdings".to_string(), TrackingMode::Holdings);
+        let account_types = HashMap::new();
+
+        let result = service
+            .calculate_performance_summary_for_accounts(
+                "mixed-scope",
+                &account_ids,
+                "CAD",
+                &modes,
+                &account_types,
+                Some(date("2026-06-12")),
+                Some(date("2026-06-19")),
+                PerformanceSummaryProfile::Dashboard,
+            )
+            .await
+            .expect("mixed dashboard summary should skip detailed attribution");
+
+        assert_eq!(result.attribution.income, Decimal::ZERO);
+        assert_eq!(result.attribution.unrealized_pnl_change, dec!(100));
+        assert_eq!(attribution_pnl(&result), dec!(100));
+        assert_eq!(
+            result.returns.value_return.unwrap().round_dp(4),
+            dec!(0.0667)
+        );
+    }
+
+    #[tokio::test]
+    async fn dashboard_scope_preserves_time_weighted_return_percent() {
+        let mut history = vec![
+            account_valuation(
+                "transaction",
+                "2026-06-12",
+                dec!(1000),
+                dec!(1000),
+                dec!(1000),
+                dec!(1000),
+            ),
+            account_valuation(
+                "transaction",
+                "2026-06-19",
+                dec!(1200),
+                dec!(1100),
+                dec!(1200),
+                dec!(1100),
+            ),
+        ];
+        history[1].external_inflow_base = dec!(100);
+        history[1].external_flow_source = ValuationExternalFlowSource::StoredGross;
+        let valuation_service = Arc::new(TestValuationService::new(history));
+        let service = PerformanceService::new(valuation_service, Arc::new(TestQuoteService));
+        let account_ids = vec!["transaction".to_string()];
+        let mut modes = HashMap::new();
+        modes.insert("transaction".to_string(), TrackingMode::Transactions);
+        let account_types = HashMap::new();
+
+        let result = service
+            .calculate_performance_summary_for_accounts(
+                "dashboard-scope",
+                &account_ids,
+                "CAD",
+                &modes,
+                &account_types,
+                Some(date("2026-06-12")),
+                Some(date("2026-06-19")),
+                PerformanceSummaryProfile::Dashboard,
+            )
+            .await
+            .expect("dashboard summary should preserve return semantics");
+
+        assert_eq!(result.summary.amount, Some(dec!(100)));
+        assert_eq!(result.summary.method, ReturnMethod::TimeWeighted);
+        assert_eq!(result.returns.value_return.unwrap().round_dp(4), dec!(0.1));
+        assert_eq!(result.returns.twr.unwrap().round_dp(4), dec!(0.0909));
+        assert_eq!(
+            result.summary.percent.unwrap().round_dp(4),
+            result.returns.twr.unwrap().round_dp(4)
         );
     }
 

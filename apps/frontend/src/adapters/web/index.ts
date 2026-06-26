@@ -166,6 +166,7 @@ export {
   getHistoricalValuations,
   getHolding,
   getHoldings,
+  getHoldingsList,
   getHoldingsByAllocation,
   getIncomeSummary,
   getCurrentValuation,

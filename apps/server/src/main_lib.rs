@@ -441,7 +441,8 @@ pub async fn build_state(config: &Config) -> anyhow::Result<Arc<AppState>> {
     );
 
     let allocation_service: Arc<dyn AllocationServiceTrait + Send + Sync> = Arc::new(
-        AllocationService::new(holdings_service.clone(), taxonomy_service.clone()),
+        AllocationService::new(holdings_service.clone(), taxonomy_service.clone())
+            .with_account_service(account_service.clone()),
     );
 
     let allocation_target_repository = Arc::new(
@@ -467,6 +468,7 @@ pub async fn build_state(config: &Config) -> anyhow::Result<Arc<AppState>> {
             allocation_target_service.clone(),
             allocation_service.clone(),
         )
+        .with_holdings_service(holdings_service.clone())
         .with_taxonomy_service(taxonomy_service.clone()),
     );
     let rebalance_service: Arc<

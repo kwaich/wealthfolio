@@ -88,10 +88,49 @@ function parseCashValue(value: string): number {
   return parseFloat(value.replace(/,/g, "")) || 0;
 }
 
-/** Round drift-bar scale up to a clean ceiling (nearest 5pp), always covering the band. */
-function driftScaleMaxBps(maxDriftBps: number, bandBps: number): number {
-  const ceiling = Math.ceil(Math.max(maxDriftBps, bandBps * 1.4, 100) / 500) * 500;
+/** Round drift-bar scale up to a clean ceiling, always covering the tolerance range. */
+function driftScaleMaxBps(maxDriftBps: number, toleranceMaxBps: number): number {
+  const ceiling = Math.ceil(Math.max(maxDriftBps, toleranceMaxBps * 1.4, 100) / 500) * 500;
   return Math.max(ceiling, 500);
+}
+
+interface DriftToleranceRange {
+  minBps: number;
+  maxBps: number;
+  label: string;
+}
+
+function formatTolerancePct(bps: number): string {
+  const pct = bps / 100;
+  return Number.isInteger(pct) ? pct.toFixed(0) : pct.toFixed(1);
+}
+
+function driftToleranceRange(
+  profile: AllocationTarget,
+  driftReport: DriftReport | null,
+): DriftToleranceRange {
+  const bands =
+    driftReport?.rows
+      .filter((row) => row.isRequired && row.targetBps > 0)
+      .map((row) => row.effectiveBandBps) ?? [];
+
+  if (bands.length === 0) {
+    const bps = profile.driftBandBps;
+    return {
+      minBps: bps,
+      maxBps: bps,
+      label: `tolerance ±${formatTolerancePct(bps)}%`,
+    };
+  }
+
+  const minBps = Math.min(...bands);
+  const maxBps = Math.max(...bands);
+  const label =
+    minBps === maxBps
+      ? `tolerance ±${formatTolerancePct(maxBps)}%`
+      : `tolerance range ±${formatTolerancePct(minBps)}-${formatTolerancePct(maxBps)}%`;
+
+  return { minBps, maxBps, label };
 }
 
 interface SleeveSummaryRow {
@@ -512,18 +551,19 @@ function PlannerInput({
 function DriftBar({
   beforeBps,
   afterBps,
-  bandBps,
+  tolerance,
   scaleMaxBps,
 }: {
   beforeBps: number;
   afterBps: number | null;
-  bandBps: number;
+  tolerance: DriftToleranceRange;
   scaleMaxBps: number;
 }) {
   const clamp = (bps: number) => Math.min(100, Math.max(0, (bps / scaleMaxBps) * 100));
   const beforePos = clamp(beforeBps);
   const afterPos = afterBps != null ? clamp(afterBps) : 0;
-  const bandPos = clamp(bandBps);
+  const toleranceMinPos = clamp(tolerance.minBps);
+  const toleranceMaxPos = clamp(tolerance.maxBps);
   const isAfter = afterBps != null;
   const primaryLabel = driftLabelPlacement(isAfter ? afterPos : beforePos);
   const beforeLabel = driftLabelPlacement(beforePos);
@@ -551,11 +591,21 @@ function DriftBar({
           </>
         ) : (
           <>
-            {/* tolerance band: 0 → band */}
+            {/* tolerance band: solid to the tightest sleeve, soft to the widest sleeve */}
             <div
               className="absolute inset-y-0 left-0 rounded-full"
-              style={{ width: `${bandPos}%`, background: "#9db8a8" }}
+              style={{ width: `${toleranceMinPos}%`, background: "#9db8a8" }}
             />
+            {toleranceMaxPos > toleranceMinPos && (
+              <div
+                className="absolute inset-y-0 rounded-full opacity-45"
+                style={{
+                  left: `${toleranceMinPos}%`,
+                  width: `${toleranceMaxPos - toleranceMinPos}%`,
+                  background: "#9db8a8",
+                }}
+              />
+            )}
           </>
         )}
         {/* NOW / AFTER marker */}
@@ -596,7 +646,7 @@ function DriftBar({
       {/* scale */}
       <div className="text-muted-foreground mt-1 flex justify-between font-mono text-xs tabular-nums">
         <span>0%</span>
-        <span>tolerance ±{(bandBps / 100).toFixed(0)}%</span>
+        <span>{tolerance.label}</span>
         <span>{(scaleMaxBps / 100).toFixed(0)}%</span>
       </div>
     </div>
@@ -618,7 +668,7 @@ function PlannerResult({
   driftReport,
   plan,
   currency,
-  bandBps,
+  tolerance,
   scaleMaxBps,
   mode,
   onReview,
@@ -626,7 +676,7 @@ function PlannerResult({
   driftReport: DriftReport;
   plan: RebalancePlan | null;
   currency: string;
-  bandBps: number;
+  tolerance: DriftToleranceRange;
   scaleMaxBps: number;
   mode: ScenarioMode;
   onReview: () => void;
@@ -646,7 +696,7 @@ function PlannerResult({
           <DriftBar
             beforeBps={driftReport.maxDriftBps}
             afterBps={null}
-            bandBps={bandBps}
+            tolerance={tolerance}
             scaleMaxBps={scaleMaxBps}
           />
         </div>
@@ -700,7 +750,7 @@ function PlannerResult({
                 : "bg-[#f0e0da] text-[#b4664a] dark:bg-red-950/40 dark:text-red-400",
             )}
           >
-            {improved ? "↓" : "↑"} {Math.abs(improvedBps / 100).toFixed(1)} pts
+            {improved ? "↓" : "↑"} {Math.abs(improvedBps / 100).toFixed(1)}%
           </span>
         )}
       </div>
@@ -717,7 +767,7 @@ function PlannerResult({
         <DriftBar
           beforeBps={plan.maxDriftBpsBefore}
           afterBps={plan.maxDriftBpsAfter}
-          bandBps={bandBps}
+          tolerance={tolerance}
           scaleMaxBps={scaleMaxBps}
         />
       </div>
@@ -937,6 +987,7 @@ function SleeveReshapeCard({ sleeves, mode }: { sleeves: SleeveSummaryRow[]; mod
 const WARN_LABEL: Record<string, string> = {
   missing_quote: "Missing quote",
   no_buy_candidate: "No buy candidate",
+  tagged_cash: "Tagged cash",
   unclassified_asset: "Unclassified",
   partial_classification: "Partial classification",
 };
@@ -1237,16 +1288,10 @@ export function RebalanceTab({
         ? "Invest your cash first, then sell overweight sleeves only if cash alone can't close the gap. Cash can add to a holding but can't shrink one you already own too much of. Tax impact is not estimated."
         : "Put your new cash to work in the sleeves you're light on. Buys only — nothing is sold.";
 
-  const bandBps = (() => {
-    if (!driftReport?.rows.length) return profile.driftBandBps;
-    const maxRow = driftReport.rows
-      .filter((r) => r.isRequired)
-      .reduce((best, r) => (Math.abs(r.driftBps) > Math.abs(best.driftBps) ? r : best));
-    return maxRow.effectiveBandBps;
-  })();
+  const tolerance = driftToleranceRange(profile, driftReport);
   const baseDrift = driftReport?.maxDriftBps ?? 0;
   const beforeDrift = plan?.maxDriftBpsBefore ?? baseDrift;
-  const scaleMaxBps = driftScaleMaxBps(Math.max(beforeDrift, baseDrift), bandBps);
+  const scaleMaxBps = driftScaleMaxBps(Math.max(beforeDrift, baseDrift), tolerance.maxBps);
 
   const sleeveSummary = plan && driftReport ? computeSleeveSummary(driftReport, plan) : [];
   const isCalculating = planQuery.isFetching;
@@ -1300,7 +1345,7 @@ export function RebalanceTab({
                   driftReport={driftReport}
                   plan={plan}
                   currency={currency}
-                  bandBps={bandBps}
+                  tolerance={tolerance}
                   scaleMaxBps={scaleMaxBps}
                   mode={scenarioMode}
                   onReview={reviewTrades}

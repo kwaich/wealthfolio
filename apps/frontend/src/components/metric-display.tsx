@@ -10,6 +10,7 @@ import {
 import { cn } from "@/lib/utils";
 import { formatPercent, GainAmount, GainPercent } from "@wealthfolio/ui";
 import React, { useState } from "react";
+import { Link } from "react-router-dom";
 
 // Explanatory texts for info popovers
 export const TIME_WEIGHTED_RETURN_INFO =
@@ -157,9 +158,16 @@ export const MetricDisplay: React.FC<MetricDisplayProps> = ({
       )}
 
       {value === undefined && emptyReason && (
-        <div className="text-muted-foreground line-clamp-2 max-w-[11rem] text-center text-[10px] leading-tight">
+        <Link
+          to="/health"
+          title={emptyReason}
+          aria-label={`Open Health Center for ${label} issue`}
+          className="text-muted-foreground hover:text-foreground focus-visible:ring-ring line-clamp-2 max-w-[11rem] rounded-sm text-center text-[10px] leading-tight underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
+          onClick={(event) => event.stopPropagation()}
+          onPointerDown={(event) => event.stopPropagation()}
+        >
           {emptyReason}
-        </div>
+        </Link>
       )}
     </>
   );

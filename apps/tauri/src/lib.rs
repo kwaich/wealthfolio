@@ -501,6 +501,7 @@ pub fn run() {
             commands::portfolios::delete_portfolio_entry,
             // Portfolio commands
             commands::portfolio::get_holdings,
+            commands::portfolio::get_holdings_list,
             commands::portfolio::get_holding,
             commands::portfolio::get_asset_holdings,
             commands::portfolio::get_asset_lots,

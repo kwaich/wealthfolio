@@ -8,12 +8,13 @@ import { performanceSummaryReturn, performancePeriodPnl } from "@/lib/performanc
 import { QueryKeys } from "@/lib/query-keys";
 import { useSettingsContext } from "@/lib/settings-provider";
 import type {
+  Account,
   CurrentAccountValuation,
   DateRange,
   PerformanceSummaryScope,
   TrackingMode,
 } from "@/lib/types";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { GainAmount, GainPercent, PrivacyAmount } from "@wealthfolio/ui";
 import { Button } from "@wealthfolio/ui/components/ui/button";
 import { Icons } from "@wealthfolio/ui/components/ui/icons";
@@ -43,6 +44,67 @@ interface AccountSummaryDisplayData {
   displayInAccountCurrency?: boolean;
 }
 
+function addPerformanceScope(
+  scopes: PerformanceSummaryScope[],
+  seenScopeKeys: Set<string>,
+  accountIds: string[],
+) {
+  const uniqueAccountIds = [...new Set(accountIds)].filter(Boolean);
+  if (uniqueAccountIds.length === 0) return;
+
+  const key = performanceSummaryScopeKey(uniqueAccountIds);
+  if (seenScopeKeys.has(key)) return;
+
+  seenScopeKeys.add(key);
+  scopes.push({ accountIds: uniqueAccountIds });
+}
+
+function getDashboardAccountPerformanceScopes(
+  accounts: Account[],
+  accountsGrouped: boolean,
+  expandedGroups: Record<string, boolean>,
+): PerformanceSummaryScope[] {
+  const scopes: PerformanceSummaryScope[] = [];
+  const seenScopeKeys = new Set<string>();
+
+  if (!accountsGrouped) {
+    accounts.forEach((account) => addPerformanceScope(scopes, seenScopeKeys, [account.id]));
+    return scopes;
+  }
+
+  const groupedAccountIds = new Map<string, string[]>();
+  const standaloneAccountIds: string[] = [];
+
+  for (const account of accounts) {
+    const groupName = account.group ?? "Uncategorized";
+    if (groupName === "Uncategorized") {
+      standaloneAccountIds.push(account.id);
+      continue;
+    }
+
+    groupedAccountIds.set(groupName, [...(groupedAccountIds.get(groupName) ?? []), account.id]);
+  }
+
+  for (const [groupName, accountIds] of groupedAccountIds) {
+    if (accountIds.length === 1) {
+      standaloneAccountIds.push(accountIds[0]);
+      continue;
+    }
+
+    addPerformanceScope(scopes, seenScopeKeys, accountIds);
+
+    if (expandedGroups[groupName]) {
+      accountIds.forEach((accountId) => addPerformanceScope(scopes, seenScopeKeys, [accountId]));
+    }
+  }
+
+  standaloneAccountIds.forEach((accountId) =>
+    addPerformanceScope(scopes, seenScopeKeys, [accountId]),
+  );
+
+  return scopes;
+}
+
 const AccountSummarySkeleton = () => (
   <div className="flex w-full items-center justify-between gap-3">
     <div className="flex min-w-0 flex-1 flex-col gap-1 md:gap-1.5">
@@ -67,6 +129,7 @@ const AccountSummaryComponent = React.memo(
     isExpanded = false,
     onToggle,
     isLoadingValuation = false,
+    isLoadingPerformance = false,
     displayInAccountCurrency = false,
     isNested = false,
   }: {
@@ -74,6 +137,7 @@ const AccountSummaryComponent = React.memo(
     isExpanded?: boolean;
     onToggle?: () => void;
     isLoadingValuation?: boolean;
+    isLoadingPerformance?: boolean;
     displayInAccountCurrency?: boolean;
     isNested?: boolean;
   }) => {
@@ -81,12 +145,20 @@ const AccountSummaryComponent = React.memo(
     const useAccountCurrency =
       displayInAccountCurrency || (item.displayInAccountCurrency && Boolean(item.accountCurrency));
 
-    if (!isGroup && isLoadingValuation) {
+    if (isLoadingValuation) {
       const skeletonContent = <AccountSummarySkeleton />;
 
       if (isNested) {
         return (
           <div className="flex w-full items-center justify-between gap-3">{skeletonContent}</div>
+        );
+      }
+
+      if (isGroup) {
+        return (
+          <div className="flex w-full items-center justify-between gap-3 rounded-lg p-3 md:p-4">
+            {skeletonContent}
+          </div>
         );
       }
 
@@ -145,8 +217,18 @@ const AccountSummaryComponent = React.memo(
     const shouldRenderNestedPlaceholder = isNested && !shouldRenderGainMetrics;
 
     let secondaryMetricContent: React.ReactNode = null;
+    let shouldExposeSecondaryMetric = false;
 
-    if (shouldRenderNestedPlaceholder) {
+    if (isLoadingPerformance) {
+      secondaryMetricContent = (
+        <div
+          aria-hidden="true"
+          className="bg-muted/70 h-4 w-28 rounded"
+          data-testid="account-summary-performance-placeholder"
+        />
+      );
+      shouldExposeSecondaryMetric = true;
+    } else if (shouldRenderNestedPlaceholder) {
       secondaryMetricContent = (
         <div
           className="text-muted-foreground text-xs font-medium md:text-sm md:font-medium"
@@ -155,6 +237,7 @@ const AccountSummaryComponent = React.memo(
           -
         </div>
       );
+      shouldExposeSecondaryMetric = true;
     } else if (shouldRenderGainMetrics) {
       secondaryMetricContent = (
         <>
@@ -175,6 +258,9 @@ const AccountSummaryComponent = React.memo(
           />
         </>
       );
+      shouldExposeSecondaryMetric = true;
+    } else {
+      secondaryMetricContent = <span aria-hidden="true" className="block h-4 w-28 opacity-0" />;
     }
 
     const content = (
@@ -207,7 +293,9 @@ const AccountSummaryComponent = React.memo(
             {secondaryMetricContent && (
               <div
                 className="flex items-center gap-1.5 md:gap-2"
-                data-testid="account-summary-secondary-metric"
+                data-testid={
+                  shouldExposeSecondaryMetric ? "account-summary-secondary-metric" : undefined
+                }
               >
                 {secondaryMetricContent}
               </div>
@@ -318,27 +406,9 @@ export const AccountsSummary = React.memo(
     const datesReady = isAllTime || (!!startDate && !!endDate);
 
     const performanceScopes = useMemo((): PerformanceSummaryScope[] => {
-      const scopes = accounts.map((account) => ({ accountIds: [account.id] }));
-      if (!accountsGrouped) return scopes;
-
-      const groupedAccountIds = new Map<string, string[]>();
-
-      for (const account of accounts) {
-        const groupName = account.group ?? "Uncategorized";
-        if (groupName === "Uncategorized") continue;
-        const ids = groupedAccountIds.get(groupName) ?? [];
-        ids.push(account.id);
-        groupedAccountIds.set(groupName, ids);
-      }
-
-      for (const ids of groupedAccountIds.values()) {
-        if (ids.length > 1) {
-          scopes.push({ accountIds: ids });
-        }
-      }
-
-      return scopes;
-    }, [accounts, accountsGrouped]);
+      return getDashboardAccountPerformanceScopes(accounts, accountsGrouped, expandedGroups);
+    }, [accounts, accountsGrouped, expandedGroups]);
+    const shouldFetchPerformance = datesReady && performanceScopes.length > 0;
 
     const {
       data: performanceSummaries,
@@ -354,8 +424,9 @@ export const AccountsSummary = React.memo(
         endDate,
       ],
       queryFn: () =>
-        calculatePerformanceSummaries(performanceScopes, startDate, endDate, "summary"),
-      enabled: datesReady && performanceScopes.length > 0,
+        calculatePerformanceSummaries(performanceScopes, startDate, endDate, "dashboard"),
+      enabled: shouldFetchPerformance,
+      placeholderData: keepPreviousData,
       staleTime: 30 * 1000,
       retry: 1,
     });
@@ -553,6 +624,8 @@ export const AccountsSummary = React.memo(
                       item={group}
                       isExpanded={isExpanded}
                       onToggle={() => toggleGroup(group.accountName)}
+                      isLoadingValuation={isLoadingCurrentValuations}
+                      isLoadingPerformance={isLoadingPerformanceQueries}
                     />
                   </div>
                   {isExpanded && (
@@ -562,7 +635,8 @@ export const AccountsSummary = React.memo(
                           <div key={account.accountId} className="px-4 py-3 md:px-5 md:py-4">
                             <AccountSummaryComponent
                               item={account}
-                              isLoadingValuation={isLoadingPerformance}
+                              isLoadingValuation={isLoadingCurrentValuations}
+                              isLoadingPerformance={isLoadingPerformance}
                               displayInAccountCurrency={
                                 account.accountCurrency !== account.baseCurrency
                               }
@@ -580,7 +654,8 @@ export const AccountsSummary = React.memo(
               <AccountSummaryComponent
                 key={account.accountId}
                 item={account}
-                isLoadingValuation={isLoadingPerformance}
+                isLoadingValuation={isLoadingCurrentValuations}
+                isLoadingPerformance={isLoadingPerformance}
                 displayInAccountCurrency={account.accountCurrency !== account.baseCurrency}
               />
             ))}
@@ -595,7 +670,8 @@ export const AccountsSummary = React.memo(
           <AccountSummaryComponent
             key={account.accountId}
             item={account}
-            isLoadingValuation={isLoadingPerformance}
+            isLoadingValuation={isLoadingCurrentValuations}
+            isLoadingPerformance={isLoadingPerformance}
             displayInAccountCurrency={account.accountCurrency !== account.baseCurrency}
           />
         ));

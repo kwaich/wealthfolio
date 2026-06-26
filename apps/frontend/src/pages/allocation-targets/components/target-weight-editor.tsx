@@ -357,7 +357,7 @@ export function TargetWeightEditor({
             Biggest move:{" "}
             <span className="text-foreground font-medium">
               {biggestMove.drift > 0 ? "trim" : "add"} {biggestMove.cat.name}{" "}
-              {Math.abs(biggestMove.drift).toFixed(1)} pts
+              {Math.abs(biggestMove.drift).toFixed(1)}%
             </span>
             .
           </p>

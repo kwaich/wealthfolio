@@ -1,15 +1,10 @@
-import {
-  createActivity,
-  getAssetHoldings,
-  getAssetLots,
-  getHoldings,
-  searchActivities,
-} from "@/adapters";
+import { createActivity, getAssetHoldings, getAssetLots, searchActivities } from "@/adapters";
 import { ActionPalette, type ActionPaletteGroup } from "@/components/action-palette";
 import { TickerAvatar } from "@/components/ticker-avatar";
 import { useHapticFeedback } from "@/hooks";
 import { useAccounts } from "@/hooks/use-accounts";
 import { useAlternativeAssetHolding, useAlternativeHoldings } from "@/hooks/use-alternative-assets";
+import { useHoldings } from "@/hooks/use-holdings";
 import { useIsMobileViewport } from "@/hooks/use-platform";
 import { useQuoteHistory } from "@/hooks/use-quote-history";
 import { useSyncMarketDataMutation } from "@/hooks/use-sync-market-data";
@@ -202,24 +197,22 @@ export const AssetProfilePage = () => {
   } = useAssetProfile(assetId);
 
   const {
-    data: holding,
+    holdings: allHoldings,
     isLoading: isHoldingLoading,
     isError: isHoldingError,
-  } = useQuery<Holding | null, Error>({
-    queryKey: [QueryKeys.HOLDING, { type: "all" }, assetId],
-    queryFn: async () => {
-      const holdings = await getHoldings({ type: "all" });
-      return (
-        holdings.find(
-          (item) =>
-            item.id === assetId ||
-            item.instrument?.id === assetId ||
-            item.instrument?.symbol === assetId,
-        ) ?? null
-      );
-    },
-    enabled: !!assetId,
-  });
+  } = useHoldings({ type: "all" });
+
+  const holding = useMemo<Holding | null>(() => {
+    if (!assetId) return null;
+    return (
+      allHoldings.find(
+        (item) =>
+          item.id === assetId ||
+          item.instrument?.id === assetId ||
+          item.instrument?.symbol === assetId,
+      ) ?? null
+    );
+  }, [allHoldings, assetId]);
 
   const {
     data: quoteHistory,

@@ -44,6 +44,7 @@ export const COMMANDS: CommandMap = {
   list_database_backups: { method: "GET", path: "/utilities/database/backups" },
   delete_database_backup: { method: "DELETE", path: "/utilities/database/backups" },
   get_holdings: { method: "POST", path: "/holdings/query" },
+  get_holdings_list: { method: "POST", path: "/holdings/list/query" },
   get_holding: { method: "GET", path: "/holdings/item" },
   get_asset_holdings: { method: "GET", path: "/holdings/by-asset" },
   get_asset_lots: { method: "GET", path: "/holdings/lots" },
@@ -481,10 +482,12 @@ export const invoke = async <T>(command: string, payload?: Record<string, unknow
       body = JSON.stringify(data.settingsUpdate);
       break;
     }
-    case "get_holdings": {
+    case "get_holdings":
+    case "get_holdings_list": {
       const p = payload as { filter: { type: string; accountId?: string } };
       if (p.filter?.type === "account" && p.filter.accountId) {
-        url = `${API_PREFIX}/holdings?accountId=${encodeURIComponent(p.filter.accountId)}`;
+        const path = command === "get_holdings_list" ? "/holdings/list" : "/holdings";
+        url = `${API_PREFIX}${path}?accountId=${encodeURIComponent(p.filter.accountId)}`;
         method = "GET";
       } else {
         body = JSON.stringify({ filter: p.filter });

@@ -35,6 +35,7 @@ use std::time::Instant;
 use super::DailyFxRateMap;
 
 static VALUATION_SERVICE_INSTANCE_COUNTER: AtomicU64 = AtomicU64::new(1);
+const SCOPED_HISTORY_CACHE_LIMIT_PER_MODE: usize = 128;
 
 fn parse_decimal_lossy(value: &str) -> Decimal {
     Decimal::from_str(value).unwrap_or(Decimal::ZERO)
@@ -94,6 +95,28 @@ pub trait ValuationServiceTrait: Send + Sync {
         start_date_opt: Option<NaiveDate>,
         end_date_opt: Option<NaiveDate>,
     ) -> CoreResult<Vec<DailyAccountValuation>>;
+
+    /// Loads and aggregates scoped valuation totals without activity-flow enrichment.
+    ///
+    /// Use this for chart/read paths that only need stored valuation totals and
+    /// net contribution history. Performance calculations should use
+    /// `get_historical_valuations_for_accounts`.
+    fn get_historical_valuation_totals_for_accounts(
+        &self,
+        scope_id: &str,
+        account_ids: &[String],
+        base_currency: &str,
+        start_date_opt: Option<NaiveDate>,
+        end_date_opt: Option<NaiveDate>,
+    ) -> CoreResult<Vec<DailyAccountValuation>> {
+        self.get_historical_valuations_for_accounts(
+            scope_id,
+            account_ids,
+            base_currency,
+            start_date_opt,
+            end_date_opt,
+        )
+    }
 
     /// Loads real-account valuation histories in an account-keyed shape.
     fn get_historical_valuations_by_account(
@@ -167,12 +190,19 @@ pub struct ValuationService {
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 struct ScopedValuationCacheKey {
     service_instance_id: u64,
+    mode: ScopedValuationHistoryMode,
     scope_id: String,
     membership_hash: String,
     base_currency: String,
     start_date: Option<NaiveDate>,
     end_date: Option<NaiveDate>,
     max_calculated_at: String,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+enum ScopedValuationHistoryMode {
+    TotalsOnly,
+    PerformanceFlows,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -285,6 +315,20 @@ impl ValuationService {
         ids.dedup();
         let digest = Sha256::digest(ids.join("\n").as_bytes());
         hex::encode(&digest[..8])
+    }
+
+    fn insert_scoped_history_cache(
+        &self,
+        cache_key: ScopedValuationCacheKey,
+        aggregate: &[DailyAccountValuation],
+    ) {
+        let mode = cache_key.mode;
+        let mut cache = self.scoped_history_cache.write().unwrap();
+        let mode_entry_count = cache.keys().filter(|key| key.mode == mode).count();
+        if mode_entry_count >= SCOPED_HISTORY_CACHE_LIMIT_PER_MODE {
+            cache.retain(|key, _| key.mode != mode);
+        }
+        cache.insert(cache_key, aggregate.to_vec());
     }
 
     fn position_requires_price_quote(position: &Position) -> bool {
@@ -466,6 +510,22 @@ impl ValuationService {
             );
         }
         Ok(values)
+    }
+
+    fn aggregate_scoped_valuation_totals(
+        scope_id: &str,
+        account_ids: &[String],
+        base_currency: &str,
+        histories: Vec<Vec<DailyAccountValuation>>,
+    ) -> CoreResult<Vec<DailyAccountValuation>> {
+        Self::aggregate_scoped_valuations(
+            scope_id,
+            account_ids,
+            base_currency,
+            histories,
+            None,
+            None,
+        )
     }
 
     fn validate_scoped_history_completeness(
@@ -753,6 +813,21 @@ impl ValuationService {
 
     fn transfer_multiplier_snapshot_start(start_date_opt: Option<NaiveDate>) -> Option<NaiveDate> {
         start_date_opt.map(|start_date| start_date - Duration::days(1))
+    }
+
+    fn has_posted_security_transfer_in_range(
+        activities: &[Activity],
+        timezone: chrono_tz::Tz,
+        start_date_opt: Option<NaiveDate>,
+        end_date_opt: Option<NaiveDate>,
+    ) -> bool {
+        activities.iter().any(|activity| {
+            if !activity.is_posted() || !Self::is_security_transfer_activity(activity) {
+                return false;
+            }
+            let activity_date = time_utils::activity_date_in_tz(activity.activity_date, timezone);
+            Self::activity_date_in_range(activity_date, start_date_opt, end_date_opt)
+        })
     }
 
     fn activity_flow_amount_base(
@@ -1248,11 +1323,20 @@ impl ValuationService {
             start_date_opt,
             end_date_opt,
         )?;
-        let transfer_multiplier_context = self.transfer_multiplier_context_for_accounts(
-            account_ids,
+        let transfer_multiplier_context = if Self::has_posted_security_transfer_in_range(
+            &all_activities,
+            timezone,
             start_date_opt,
             end_date_opt,
-        )?;
+        ) {
+            self.transfer_multiplier_context_for_accounts(
+                account_ids,
+                start_date_opt,
+                end_date_opt,
+            )?
+        } else {
+            TransferMultiplierContext::default()
+        };
         let removed_lot_basis_by_activity = match Self::disposal_query_bounds_from_activities(
             &all_activities,
             timezone,
@@ -1424,11 +1508,20 @@ impl ValuationService {
             start_date_opt,
             end_date_opt,
         )?;
-        let transfer_multiplier_context = self.transfer_multiplier_context_for_accounts(
-            account_ids,
+        let transfer_multiplier_context = if Self::has_posted_security_transfer_in_range(
+            &transfer_activities,
+            timezone,
             start_date_opt,
             end_date_opt,
-        )?;
+        ) {
+            self.transfer_multiplier_context_for_accounts(
+                account_ids,
+                start_date_opt,
+                end_date_opt,
+            )?
+        } else {
+            TransferMultiplierContext::default()
+        };
 
         let mut adjustments_by_date: HashMap<NaiveDate, (Decimal, Decimal)> = HashMap::new();
         for pair in transfer_resolution.pairs() {
@@ -1822,6 +1915,7 @@ impl ValuationServiceTrait for ValuationService {
             .unwrap_or_default();
         let mut cache_key = ScopedValuationCacheKey {
             service_instance_id: self.service_instance_id,
+            mode: ScopedValuationHistoryMode::PerformanceFlows,
             scope_id: scope_id.to_string(),
             membership_hash: Self::membership_hash(account_ids),
             base_currency: base_currency.to_string(),
@@ -1898,13 +1992,87 @@ impl ValuationServiceTrait for ValuationService {
             internal_transfer_flow_adjustments_by_date.as_ref(),
         )?;
 
+        self.insert_scoped_history_cache(cache_key, &aggregate);
+
+        Ok(aggregate)
+    }
+
+    fn get_historical_valuation_totals_for_accounts(
+        &self,
+        scope_id: &str,
+        account_ids: &[String],
+        base_currency: &str,
+        start_date_opt: Option<NaiveDate>,
+        end_date_opt: Option<NaiveDate>,
+    ) -> CoreResult<Vec<DailyAccountValuation>> {
+        let max_calculated_at = self
+            .valuation_repository
+            .get_max_calculated_at_for_accounts(account_ids, start_date_opt, end_date_opt)?
+            .unwrap_or_default();
+        let mut cache_key = ScopedValuationCacheKey {
+            service_instance_id: self.service_instance_id,
+            mode: ScopedValuationHistoryMode::TotalsOnly,
+            scope_id: scope_id.to_string(),
+            membership_hash: Self::membership_hash(account_ids),
+            base_currency: base_currency.to_string(),
+            start_date: start_date_opt,
+            end_date: end_date_opt,
+            max_calculated_at,
+        };
+
+        if let Some(cached) = self
+            .scoped_history_cache
+            .read()
+            .unwrap()
+            .get(&cache_key)
+            .cloned()
         {
-            let mut cache = self.scoped_history_cache.write().unwrap();
-            if cache.len() > 128 {
-                cache.clear();
-            }
-            cache.insert(cache_key, aggregate.clone());
+            return Ok(cached);
         }
+
+        let records = self
+            .valuation_repository
+            .get_historical_valuations_for_accounts(account_ids, start_date_opt, end_date_opt)?;
+
+        let loaded_max_calculated_at = records
+            .iter()
+            .map(|valuation| valuation.calculated_at.to_rfc3339())
+            .max()
+            .unwrap_or_default();
+        if loaded_max_calculated_at != cache_key.max_calculated_at {
+            cache_key.max_calculated_at = loaded_max_calculated_at;
+            if let Some(cached) = self
+                .scoped_history_cache
+                .read()
+                .unwrap()
+                .get(&cache_key)
+                .cloned()
+            {
+                return Ok(cached);
+            }
+        }
+
+        let mut histories_by_account: HashMap<String, Vec<DailyAccountValuation>> =
+            HashMap::with_capacity(account_ids.len());
+        for record in records {
+            histories_by_account
+                .entry(record.account_id.clone())
+                .or_default()
+                .push(record);
+        }
+        let histories = account_ids
+            .iter()
+            .map(|account_id| histories_by_account.remove(account_id).unwrap_or_default())
+            .collect();
+
+        let aggregate = Self::aggregate_scoped_valuation_totals(
+            scope_id,
+            account_ids,
+            base_currency,
+            histories,
+        )?;
+
+        self.insert_scoped_history_cache(cache_key, &aggregate);
 
         Ok(aggregate)
     }
@@ -2160,6 +2328,101 @@ mod tests {
             "an unvaluable flow in one account must keep the aggregated scope unavailable",
         );
         assert!(day2.external_flow_source.is_unavailable_for_returns());
+    }
+
+    #[test]
+    fn scoped_history_cache_keys_separate_totals_from_performance_flows() {
+        let totals_key = ScopedValuationCacheKey {
+            service_instance_id: 1,
+            mode: ScopedValuationHistoryMode::TotalsOnly,
+            scope_id: "all".to_string(),
+            membership_hash: "members".to_string(),
+            base_currency: "CAD".to_string(),
+            start_date: Some(date("2026-01-01")),
+            end_date: Some(date("2026-06-25")),
+            max_calculated_at: "2026-06-25T00:00:00Z".to_string(),
+        };
+        let performance_key = ScopedValuationCacheKey {
+            mode: ScopedValuationHistoryMode::PerformanceFlows,
+            ..totals_key.clone()
+        };
+
+        assert_ne!(totals_key, performance_key);
+    }
+
+    #[test]
+    fn valuation_totals_aggregation_skips_internal_transfer_flow_adjustments() {
+        let acct_a = vec![
+            valuation(
+                "acct_a",
+                "2026-04-01",
+                dec!(100),
+                dec!(100),
+                Decimal::ZERO,
+                Decimal::ZERO,
+            ),
+            valuation(
+                "acct_a",
+                "2026-04-02",
+                dec!(150),
+                dec!(150),
+                Decimal::ZERO,
+                Decimal::ZERO,
+            ),
+        ];
+        let acct_b = vec![
+            valuation(
+                "acct_b",
+                "2026-04-01",
+                dec!(50),
+                dec!(50),
+                Decimal::ZERO,
+                Decimal::ZERO,
+            ),
+            valuation(
+                "acct_b",
+                "2026-04-02",
+                dec!(70),
+                dec!(70),
+                Decimal::ZERO,
+                Decimal::ZERO,
+            ),
+        ];
+        let histories = vec![acct_a, acct_b];
+        let account_ids = ["acct_a".to_string(), "acct_b".to_string()];
+        let mut internal_transfer_adjustments = HashMap::new();
+        internal_transfer_adjustments.insert(date("2026-04-02"), (dec!(70), Decimal::ZERO));
+
+        let totals = ValuationService::aggregate_scoped_valuation_totals(
+            "scope",
+            &account_ids,
+            "CAD",
+            histories.clone(),
+        )
+        .expect("totals aggregation should succeed");
+        let adjusted = ValuationService::aggregate_scoped_valuations(
+            "scope",
+            &account_ids,
+            "CAD",
+            histories,
+            None,
+            Some(&internal_transfer_adjustments),
+        )
+        .expect("adjusted aggregation should succeed");
+
+        let totals_day2 = totals
+            .iter()
+            .find(|valuation| valuation.valuation_date == date("2026-04-02"))
+            .expect("totals day 2 present");
+        let adjusted_day2 = adjusted
+            .iter()
+            .find(|valuation| valuation.valuation_date == date("2026-04-02"))
+            .expect("adjusted day 2 present");
+
+        assert_eq!(totals_day2.total_value_base, dec!(220));
+        assert_eq!(totals_day2.net_contribution_base, dec!(220));
+        assert_eq!(totals_day2.external_inflow_base, dec!(70));
+        assert_eq!(adjusted_day2.external_inflow_base, Decimal::ZERO);
     }
 
     // Core availability contract: merging two provenances must never upgrade
@@ -2813,6 +3076,38 @@ mod tests {
             ValuationService::transfer_multiplier_snapshot_start(None),
             None
         );
+    }
+
+    #[test]
+    fn transfer_multiplier_context_is_needed_only_for_security_transfers_in_range() {
+        let cash_transfer =
+            transfer_activity(ACTIVITY_TYPE_TRANSFER_IN, None, None, None, Some(dec!(250)));
+        let security_transfer = transfer_activity(
+            ACTIVITY_TYPE_TRANSFER_IN,
+            Some("AAPL"),
+            Some(dec!(10)),
+            Some(dec!(8)),
+            None,
+        );
+
+        assert!(!ValuationService::has_posted_security_transfer_in_range(
+            &[cash_transfer],
+            chrono_tz::UTC,
+            None,
+            None,
+        ));
+        assert!(ValuationService::has_posted_security_transfer_in_range(
+            std::slice::from_ref(&security_transfer),
+            chrono_tz::UTC,
+            None,
+            None,
+        ));
+        assert!(!ValuationService::has_posted_security_transfer_in_range(
+            &[security_transfer],
+            chrono_tz::UTC,
+            Some(date("2026-06-02")),
+            None,
+        ));
     }
 
     #[test]

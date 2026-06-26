@@ -12,11 +12,12 @@ import type {
   AccountValuation,
   CurrentAccountValuation,
   PerformanceResult,
+  PerformanceSummaryScope,
   Settings,
   TrackingMode,
 } from "@/lib/types";
 import { AccountType } from "@/lib/types";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { AccountsSummary } from "./accounts-summary";
 
 vi.mock("@/adapters", () => ({
@@ -42,6 +43,7 @@ vi.mock("@/lib/settings-provider", () => ({
 }));
 
 vi.mock("@tanstack/react-query", () => ({
+  keepPreviousData: Symbol("keepPreviousData"),
   useQuery: vi.fn(),
 }));
 
@@ -265,12 +267,14 @@ function renderAccountsSummary({
   currentValuations,
   performanceByAccountId = {},
   performanceByScopeKey = {},
+  isPerformanceLoading = false,
 }: {
   accounts: Account[];
   valuations: AccountValuation[];
   currentValuations?: CurrentAccountValuation[];
   performanceByAccountId?: Record<string, PerformanceFixture>;
   performanceByScopeKey?: Record<string, PerformanceFixture>;
+  isPerformanceLoading?: boolean;
 }) {
   mockUseSettingsContext.mockReturnValue({
     settings: mockSettings,
@@ -357,7 +361,7 @@ function renderAccountsSummary({
   }
 
   mockUseQuery.mockReturnValue({
-    isLoading: false,
+    isLoading: isPerformanceLoading,
     data: performanceSummaries,
   } as unknown as ReturnType<typeof useQuery>);
 
@@ -370,9 +374,78 @@ function renderAccountsSummary({
   );
 }
 
+function getLastPerformanceScopes(): PerformanceSummaryScope[] {
+  const lastCall = mockUseQuery.mock.calls[mockUseQuery.mock.calls.length - 1];
+  const options = lastCall?.[0] as { queryKey?: unknown[] } | undefined;
+  return (options?.queryKey?.[2] ?? []) as PerformanceSummaryScope[];
+}
+
+function getLastPerformanceQueryPlaceholderData(): unknown {
+  const lastCall = mockUseQuery.mock.calls[mockUseQuery.mock.calls.length - 1];
+  const options = lastCall?.[0] as { placeholderData?: unknown } | undefined;
+  return options?.placeholderData;
+}
+
 describe("AccountsSummary", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it("requests performance for visible grouped dashboard rows only", async () => {
+    const user = userEvent.setup();
+
+    renderAccountsSummary({
+      accounts: [
+        createAccount({ id: "group-a-1", name: "Group A One", group: "Group A" }),
+        createAccount({ id: "group-a-2", name: "Group A Two", group: "Group A" }),
+        createAccount({ id: "standalone", name: "Standalone" }),
+        createAccount({ id: "single-group", name: "Single Group", group: "Single Group" }),
+      ],
+      valuations: [
+        createValuation({ accountId: "group-a-1", totalValue: 100 }),
+        createValuation({ accountId: "group-a-2", totalValue: 200 }),
+        createValuation({ accountId: "standalone", totalValue: 300 }),
+        createValuation({ accountId: "single-group", totalValue: 400 }),
+      ],
+    });
+
+    expect(getLastPerformanceScopes()).toEqual([
+      { accountIds: ["group-a-1", "group-a-2"] },
+      { accountIds: ["standalone"] },
+      { accountIds: ["single-group"] },
+    ]);
+
+    await user.click(screen.getByText("Group A"));
+
+    expect(getLastPerformanceScopes()).toEqual([
+      { accountIds: ["group-a-1", "group-a-2"] },
+      { accountIds: ["group-a-1"] },
+      { accountIds: ["group-a-2"] },
+      { accountIds: ["standalone"] },
+      { accountIds: ["single-group"] },
+    ]);
+  });
+
+  it("keeps standalone account values visible while performance is loading", () => {
+    renderAccountsSummary({
+      accounts: [createAccount({ id: "live-account", name: "Live Account" })],
+      valuations: [
+        createValuation({
+          accountId: "live-account",
+          totalValue: 125,
+          totalValueBase: 125,
+        }),
+      ],
+      isPerformanceLoading: true,
+    });
+
+    const row = screen.getByText("Live Account").closest("a");
+    expect(row).not.toBeNull();
+    expect(within(row as HTMLElement).getByText("value:USD:125")).toBeInTheDocument();
+    expect(
+      within(row as HTMLElement).getByTestId("account-summary-performance-placeholder"),
+    ).toBeInTheDocument();
+    expect(getLastPerformanceQueryPlaceholderData()).toBe(keepPreviousData);
   });
 
   it("shows consistent secondary metrics for expanded grouped child rows", async () => {

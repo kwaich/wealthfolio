@@ -1,5 +1,6 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Instant;
 
 use crate::{
     context::ServiceContext,
@@ -19,15 +20,17 @@ use wealthfolio_core::{
         TrackingMode,
     },
     allocation::{AllocationHoldings, PortfolioAllocations},
-    holdings::Holding,
+    holdings::{Holding, HoldingListItem},
     income::IncomeSummary,
     lots::AssetLotView,
     performance::{
-        DataQualityStatus, PerformanceAttribution, PerformanceDataQuality, PerformancePeriod,
-        PerformanceResult, PerformanceReturns, PerformanceRisk, PerformanceScopeDescriptor,
-        PerformanceSummary, PerformanceSummaryProfile, ReturnMethod, SimplePerformanceMetrics,
+        calculate_performance_summary_batch_for_accounts, empty_performance_metrics,
+        performance_account_ids_from_map, performance_account_tracking_modes_from_map,
+        performance_account_types_from_map, performance_tracking_composition,
+        sync_performance_summary_quality, unique_account_ids, DataQualityStatus, PerformanceResult,
+        PerformanceSummaryBatchScope, PerformanceSummaryProfile, SimplePerformanceMetrics,
+        PERFORMANCE_SUMMARY_BATCH_PARALLELISM,
     },
-    portfolio::economic_events::BasisStatus,
     portfolio::snapshot::{
         CashBalanceInput, ManualHoldingInput, ManualSnapshotRequest, ManualSnapshotService,
         SnapshotSource,
@@ -92,13 +95,6 @@ impl AccountScopeInput {
     }
 }
 
-fn performance_summary_scope_key(account_ids: &[String]) -> String {
-    let mut sorted = account_ids.to_vec();
-    sorted.sort();
-    sorted.dedup();
-    format!("accounts:{}", sorted.join(","))
-}
-
 pub(super) fn holdings_account_ids(
     state: &ServiceContext,
     account_ids: &[String],
@@ -113,14 +109,6 @@ pub(super) fn holdings_account_ids(
         .collect())
 }
 
-fn unique_account_ids(account_ids: impl IntoIterator<Item = String>) -> Vec<String> {
-    let mut seen = HashSet::new();
-    account_ids
-        .into_iter()
-        .filter(|account_id| seen.insert(account_id.clone()))
-        .collect()
-}
-
 fn performance_accounts_by_id(
     state: &ServiceContext,
     account_ids: &[String],
@@ -132,53 +120,6 @@ fn performance_accounts_by_id(
         .into_iter()
         .map(|account| (account.id.clone(), account))
         .collect())
-}
-
-fn performance_account_ids_from_map(
-    accounts_by_id: &HashMap<String, Account>,
-    account_ids: &[String],
-) -> Vec<String> {
-    let mut seen = HashSet::new();
-    account_ids
-        .iter()
-        .filter_map(|account_id| accounts_by_id.get(account_id))
-        .filter(|account| account_supports_portfolio_scope(account, AccountPurpose::Performance))
-        .filter_map(|account| {
-            if seen.insert(account.id.clone()) {
-                Some(account.id.clone())
-            } else {
-                None
-            }
-        })
-        .collect()
-}
-
-fn account_tracking_modes_from_map(
-    accounts_by_id: &HashMap<String, Account>,
-    account_ids: &[String],
-) -> HashMap<String, TrackingMode> {
-    account_ids
-        .iter()
-        .filter_map(|account_id| {
-            accounts_by_id
-                .get(account_id)
-                .map(|account| (account.id.clone(), account.tracking_mode))
-        })
-        .collect()
-}
-
-fn account_types_from_map(
-    accounts_by_id: &HashMap<String, Account>,
-    account_ids: &[String],
-) -> HashMap<String, String> {
-    account_ids
-        .iter()
-        .filter_map(|account_id| {
-            accounts_by_id
-                .get(account_id)
-                .map(|account| (account.id.clone(), account.account_type.clone()))
-        })
-        .collect()
 }
 
 fn income_account_ids(
@@ -287,10 +228,28 @@ pub async fn get_holdings(
     filter: AccountScopeInput,
 ) -> Result<Vec<Holding>, String> {
     debug!("Get holdings...");
-    let base_currency = state.get_base_currency();
     let filter = filter.into_account_filter()?;
-    let resolved = resolve_scope(&filter, &state).await?;
-    let account_ids = holdings_account_ids(&state, &resolved.account_ids)?;
+    get_holdings_for_filter(state.inner().as_ref(), filter).await
+}
+
+#[tauri::command]
+pub async fn get_holdings_list(
+    state: State<'_, Arc<ServiceContext>>,
+    filter: AccountScopeInput,
+) -> Result<Vec<HoldingListItem>, String> {
+    debug!("Get holdings list...");
+    let filter = filter.into_account_filter()?;
+    let holdings = get_holdings_for_filter(state.inner().as_ref(), filter).await?;
+    Ok(holdings.into_iter().map(HoldingListItem::from).collect())
+}
+
+async fn get_holdings_for_filter(
+    state: &ServiceContext,
+    filter: AccountScope,
+) -> Result<Vec<Holding>, String> {
+    let base_currency = state.get_base_currency();
+    let resolved = resolve_scope(&filter, state).await?;
+    let account_ids = holdings_account_ids(state, &resolved.account_ids)?;
     if account_ids.is_empty() {
         return Ok(Vec::new());
     }
@@ -437,6 +396,9 @@ pub async fn get_historical_valuations(
     start_date: Option<String>,
     end_date: Option<String>,
 ) -> Result<Vec<DailyAccountValuation>, String> {
+    let started_at = Instant::now();
+    let debug_scope = log::log_enabled!(log::Level::Debug)
+        .then(|| (format!("{:?}", account_id), format!("{:?}", filter)));
     debug!(
         "Get historical valuations for account: {:?}, filter: {:?}",
         account_id, filter
@@ -456,7 +418,7 @@ pub async fn get_historical_valuations(
         })
         .transpose()?;
 
-    if let Some(input) = filter {
+    let result = if let Some(input) = filter {
         let base_currency = state.get_base_currency();
         let account_filter = input.into_account_filter()?;
         let resolved = state
@@ -474,7 +436,7 @@ pub async fn get_historical_valuations(
         } else {
             state
                 .valuation_service()
-                .get_historical_valuations_for_accounts(
+                .get_historical_valuation_totals_for_accounts(
                     &resolved.scope_id,
                     &account_ids,
                     &resolved.base_currency,
@@ -505,7 +467,7 @@ pub async fn get_historical_valuations(
         }
         state
             .valuation_service()
-            .get_historical_valuations_for_accounts(
+            .get_historical_valuation_totals_for_accounts(
                 &resolved.scope_id,
                 &account_ids,
                 &resolved.base_currency,
@@ -513,7 +475,18 @@ pub async fn get_historical_valuations(
                 to_date_opt,
             )
             .map_err(|e| e.to_string())
+    };
+
+    if let Some((account_debug, filter_debug)) = debug_scope {
+        debug!(
+            "Historical valuations timing: account={}, filter={}, rows={}, elapsed_ms={:.1}",
+            account_debug,
+            filter_debug,
+            result.as_ref().map(Vec::len).unwrap_or_default(),
+            started_at.elapsed().as_secs_f64() * 1000.0,
+        );
     }
+    result
 }
 
 #[tauri::command]
@@ -717,8 +690,9 @@ pub async fn calculate_performance_history(
             }
             return Ok(result);
         }
-        let tracking_modes = account_tracking_modes_from_map(&accounts_by_id, &account_ids);
-        let account_types = account_types_from_map(&accounts_by_id, &account_ids);
+        let tracking_modes =
+            performance_account_tracking_modes_from_map(&accounts_by_id, &account_ids);
+        let account_types = performance_account_types_from_map(&accounts_by_id, &account_ids);
         let mut result = state
             .performance_service()
             .calculate_performance_history_for_accounts(
@@ -775,69 +749,6 @@ pub async fn calculate_performance_history(
     }
 }
 
-fn empty_performance_metrics(
-    id: &str,
-    currency: String,
-    start_date: Option<NaiveDate>,
-    end_date: Option<NaiveDate>,
-) -> PerformanceResult {
-    let reason = "Performance unavailable for this account type.".to_string();
-    PerformanceResult {
-        scope: PerformanceScopeDescriptor {
-            id: id.to_string(),
-            currency,
-        },
-        period: PerformancePeriod {
-            start_date,
-            end_date,
-        },
-        mode: ReturnMethod::NotApplicable,
-        returns: PerformanceReturns {
-            twr: None,
-            annualized_twr: None,
-            irr: None,
-            annualized_irr: None,
-            value_return: None,
-            annualized_value_return: None,
-        },
-        attribution: PerformanceAttribution::default(),
-        risk: PerformanceRisk {
-            volatility: None,
-            max_drawdown: None,
-            peak_date: None,
-            trough_date: None,
-            recovery_date: None,
-            drawdown_duration_days: None,
-        },
-        data_quality: PerformanceDataQuality {
-            status: DataQualityStatus::NoData,
-            warnings: Vec::new(),
-            not_applicable_reasons: vec![reason.clone()],
-        },
-        basis_status: BasisStatus::NotApplicable,
-        summary: PerformanceSummary {
-            quality: DataQualityStatus::NoData,
-            basis_status: BasisStatus::NotApplicable,
-            reasons: vec![reason],
-            ..PerformanceSummary::default()
-        },
-        series: Vec::new(),
-        is_holdings_mode: false,
-        is_mixed_tracking_mode: false,
-    }
-}
-
-fn sync_performance_summary_quality(result: &mut PerformanceResult) {
-    result.summary.quality = result.data_quality.status.clone();
-    result.summary.reasons = result
-        .data_quality
-        .warnings
-        .iter()
-        .chain(result.data_quality.not_applicable_reasons.iter())
-        .cloned()
-        .collect();
-}
-
 /// Calculates performance summary for a given item (account or symbol) over a given date range.
 /// return performance metrics for the item.
 /// tracking_mode: Optional tracking mode for the account ("HOLDINGS" or "TRANSACTIONS")
@@ -880,6 +791,7 @@ pub async fn calculate_performance_summary(
         _ => None,
     });
     let profile = profile.unwrap_or_default();
+    let summary_start = Instant::now();
 
     if let (true, Some(filter)) = (item_type == "account", filter) {
         let base_currency = state.get_base_currency();
@@ -907,22 +819,52 @@ pub async fn calculate_performance_summary(
             }
             return Ok(result);
         }
-        let tracking_modes = account_tracking_modes_from_map(&accounts_by_id, &account_ids);
-        let account_types = account_types_from_map(&accounts_by_id, &account_ids);
-        let mut result = state
-            .performance_service()
-            .calculate_performance_summary_for_accounts(
-                &resolved.scope_id,
-                &account_ids,
-                &resolved.base_currency,
-                &tracking_modes,
-                &account_types,
-                start_date_opt,
-                end_date_opt,
-                profile,
+        let tracking_modes =
+            performance_account_tracking_modes_from_map(&accounts_by_id, &account_ids);
+        let account_types = performance_account_types_from_map(&accounts_by_id, &account_ids);
+        let tracking_composition = performance_tracking_composition(&tracking_modes, &account_ids);
+        let performance_service = state.performance_service();
+        let handle = tokio::runtime::Handle::current();
+        let scope_id_for_task = resolved.scope_id.clone();
+        let base_currency_for_task = resolved.base_currency.clone();
+        let account_ids_for_task = account_ids.clone();
+        let tracking_modes_for_task = tracking_modes.clone();
+        let account_types_for_task = account_types.clone();
+        let mut result = tokio::task::spawn_blocking(move || {
+            handle.block_on(async move {
+                performance_service
+                    .calculate_performance_summary_for_accounts(
+                        &scope_id_for_task,
+                        &account_ids_for_task,
+                        &base_currency_for_task,
+                        &tracking_modes_for_task,
+                        &account_types_for_task,
+                        start_date_opt,
+                        end_date_opt,
+                        profile,
+                    )
+                    .await
+            })
+        })
+        .await
+        .map_err(|e| {
+            format!(
+                "Failed to join performance summary calculation for {}: {}",
+                resolved.scope_id, e
             )
-            .await
-            .map_err(|e| format!("Failed to calculate performance: {}", e))?;
+        })?
+        .map_err(|e| format!("Failed to calculate performance: {}", e))?;
+        debug!(
+            "Performance summary timing: item_type={}, scope_id={}, profile={:?}, account_count={}, tracking_composition={}, start={:?}, end={:?}, elapsed_ms={:.1}",
+            item_type,
+            resolved.scope_id,
+            profile,
+            account_ids.len(),
+            tracking_composition,
+            start_date_opt,
+            end_date_opt,
+            summary_start.elapsed().as_secs_f64() * 1000.0
+        );
         if account_ids.len() != resolved.account_ids.len() {
             result.data_quality.warnings.push(
                 "Some requested accounts were excluded because they are archived or not eligible for performance."
@@ -951,7 +893,7 @@ pub async fn calculate_performance_summary(
             (tracking_mode_opt, None)
         };
 
-        state
+        let result = state
             .performance_service()
             .calculate_performance_summary(
                 &item_type,
@@ -963,7 +905,18 @@ pub async fn calculate_performance_summary(
                 profile,
             )
             .await
-            .map_err(|e| format!("Failed to calculate performance: {}", e))
+            .map_err(|e| format!("Failed to calculate performance: {}", e))?;
+        debug!(
+            "Performance summary timing: item_type={}, item_id={}, profile={:?}, tracking_mode={:?}, start={:?}, end={:?}, elapsed_ms={:.1}",
+            item_type,
+            item_id,
+            profile,
+            authoritative_tracking_mode,
+            start_date_opt,
+            end_date_opt,
+            summary_start.elapsed().as_secs_f64() * 1000.0
+        );
+        Ok(result)
     }
 }
 
@@ -998,58 +951,77 @@ pub async fn get_performance_summaries(
     );
     let accounts_by_id =
         performance_accounts_by_id(state.inner().as_ref(), &requested_account_ids)?;
-    let mut results = HashMap::new();
+    let batch_scopes = scopes
+        .into_iter()
+        .map(|scope| PerformanceSummaryBatchScope {
+            account_ids: scope.account_ids,
+        })
+        .collect();
+    let performance_service = state.performance_service();
+    let batch = calculate_performance_summary_batch_for_accounts(
+        performance_service,
+        batch_scopes,
+        accounts_by_id,
+        base_currency,
+        start_date_opt,
+        end_date_opt,
+        profile,
+    )
+    .await;
 
-    for scope in scopes {
-        let key = performance_summary_scope_key(&scope.account_ids);
-        let account_ids = performance_account_ids_from_map(&accounts_by_id, &scope.account_ids);
-
-        if account_ids.is_empty() {
-            let mut result = empty_performance_metrics(
-                &key,
-                base_currency.clone(),
-                start_date_opt,
-                end_date_opt,
-            );
-            if !scope.account_ids.is_empty() {
-                result.data_quality.warnings.push(
-                    "Requested accounts were excluded because they are archived or not eligible for performance."
-                        .to_string(),
-                );
-                sync_performance_summary_quality(&mut result);
-            }
-            results.insert(key.clone(), result);
-            continue;
-        }
-
-        let mut result = state
-            .performance_service()
-            .calculate_performance_summary_for_accounts(
-                &key,
-                &account_ids,
-                &base_currency,
-                &account_tracking_modes_from_map(&accounts_by_id, &account_ids),
-                &account_types_from_map(&accounts_by_id, &account_ids),
-                start_date_opt,
-                end_date_opt,
+    for timing in &batch.scope_timings {
+        if timing.skipped {
+            debug!(
+                "Performance summaries scope timing: index={}/{}, key={}, profile={:?}, requested_accounts={}, eligible_accounts=0, tracking_composition=none, skipped=true, elapsed_ms={:.1}",
+                timing.index,
+                timing.total,
+                timing.key,
                 profile,
-            )
-            .await
-            .map_err(|e| format!("Failed to calculate performance summary: {}", e))?;
-
-        if account_ids.len() != scope.account_ids.len() {
-            result.data_quality.warnings.push(
-                "Some requested accounts were excluded because they are archived or not eligible for performance."
-                    .to_string(),
+                timing.requested_accounts,
+                timing.elapsed_ms
             );
-            result.data_quality.status = DataQualityStatus::Partial;
-            sync_performance_summary_quality(&mut result);
+        } else if timing.failed {
+            debug!(
+                "Performance summaries scope timing: index={}/{}, key={}, profile={:?}, requested_accounts={}, eligible_accounts={}, tracking_composition={}, failed=true, elapsed_ms={:.1}",
+                timing.index,
+                timing.total,
+                timing.key,
+                profile,
+                timing.requested_accounts,
+                timing.eligible_accounts,
+                timing.tracking_composition,
+                timing.elapsed_ms
+            );
+        } else {
+            debug!(
+                "Performance summaries scope timing: index={}/{}, key={}, profile={:?}, requested_accounts={}, eligible_accounts={}, tracking_composition={}, warnings={}, elapsed_ms={:.1}",
+                timing.index,
+                timing.total,
+                timing.key,
+                profile,
+                timing.requested_accounts,
+                timing.eligible_accounts,
+                timing.tracking_composition,
+                timing.warnings,
+                timing.elapsed_ms
+            );
         }
-
-        results.insert(key, result);
     }
 
-    Ok(results)
+    debug!(
+        "Performance summaries batch timing: profile={:?}, scopes={}, parallelism={}, unique_requested_accounts={}, result_count={}, failed_scopes={}, start={:?}, end={:?}, elapsed_ms={:.1}",
+        profile,
+        batch.scope_timings.len(),
+        PERFORMANCE_SUMMARY_BATCH_PARALLELISM,
+        requested_account_ids.len(),
+        batch.results.len(),
+        batch.failed_scope_count,
+        start_date_opt,
+        end_date_opt,
+        batch.elapsed_ms
+    );
+
+    Ok(batch.results)
 }
 
 /// Input for a single holding when saving manual holdings

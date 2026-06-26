@@ -13,7 +13,7 @@ use wealthfolio_core::{
     lots::AssetLotView,
     portfolio::{
         allocation::{AllocationHoldings, PortfolioAllocations},
-        holdings::Holding,
+        holdings::{Holding, HoldingListItem},
         snapshot::{
             reconcile_quote_sync_from_latest_account_snapshots, CashBalanceInput,
             ManualHoldingInput, ManualSnapshotRequest, ManualSnapshotService, SnapshotSource,
@@ -88,9 +88,27 @@ pub async fn get_holdings(
     State(state): State<Arc<AppState>>,
     Json(body): Json<FilterBody>,
 ) -> ApiResult<Json<Vec<Holding>>> {
+    let holdings = load_holdings_for_filter(state.as_ref(), &body.filter).await?;
+    Ok(Json(holdings))
+}
+
+pub async fn get_holdings_list(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<FilterBody>,
+) -> ApiResult<Json<Vec<HoldingListItem>>> {
+    let holdings = load_holdings_for_filter(state.as_ref(), &body.filter).await?;
+    Ok(Json(
+        holdings.into_iter().map(HoldingListItem::from).collect(),
+    ))
+}
+
+async fn load_holdings_for_filter(
+    state: &AppState,
+    filter: &AccountScope,
+) -> ApiResult<Vec<Holding>> {
     let base = state.base_currency.read().unwrap().clone();
-    let resolved = resolve_scope(&body.filter, &state)?;
-    let account_ids = holdings_account_ids(&state, &resolved.account_ids)?;
+    let resolved = resolve_scope(filter, state)?;
+    let account_ids = holdings_account_ids(state, &resolved.account_ids)?;
     let holdings = if account_ids.is_empty() {
         Vec::new()
     } else if account_ids.len() == 1 {
@@ -104,7 +122,7 @@ pub async fn get_holdings(
             .get_holdings_for_accounts(&account_ids, &base, &resolved.scope_id)
             .await?
     };
-    Ok(Json(holdings))
+    Ok(holdings)
 }
 
 /// GET /holdings?accountId=... — simple single-account scope
@@ -122,6 +140,25 @@ pub async fn get_holdings_for_account(
         .get_holdings(&account_ids[0], &base)
         .await?;
     Ok(Json(holdings))
+}
+
+/// GET /holdings/list?accountId=... — single-account lightweight list scope
+pub async fn get_holdings_list_for_account(
+    State(state): State<Arc<AppState>>,
+    Query(q): Query<AccountIdQuery>,
+) -> ApiResult<Json<Vec<HoldingListItem>>> {
+    let base = state.base_currency.read().unwrap().clone();
+    let account_ids = holdings_account_ids(&state, std::slice::from_ref(&q.account_id))?;
+    if account_ids.is_empty() {
+        return Ok(Json(Vec::new()));
+    }
+    let holdings = state
+        .holdings_service
+        .get_holdings(&account_ids[0], &base)
+        .await?;
+    Ok(Json(
+        holdings.into_iter().map(HoldingListItem::from).collect(),
+    ))
 }
 
 /// GET /allocations?accountId=... — simple single-account scope
@@ -272,7 +309,7 @@ pub async fn get_historical_valuations_for_scope(
     } else {
         state
             .valuation_service
-            .get_historical_valuations_for_accounts(
+            .get_historical_valuation_totals_for_accounts(
                 &resolved.scope_id,
                 &account_ids,
                 &resolved.base_currency,

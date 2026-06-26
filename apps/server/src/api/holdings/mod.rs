@@ -15,6 +15,11 @@ pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/holdings", get(handlers::get_holdings_for_account))
         .route("/holdings/query", post(handlers::get_holdings))
+        .route(
+            "/holdings/list",
+            get(handlers::get_holdings_list_for_account),
+        )
+        .route("/holdings/list/query", post(handlers::get_holdings_list))
         .route("/holdings/item", get(handlers::get_holding))
         .route("/holdings/by-asset", get(handlers::get_asset_holdings))
         .route("/holdings/lots", get(handlers::get_asset_lots))
