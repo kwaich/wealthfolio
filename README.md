@@ -272,6 +272,37 @@ All configuration is done via environment variables in `.env.web`.
   (default `60`)
 - `WF_AUTH_REQUIRED` - Set to `false` to allow starting on non-loopback
   addresses without authentication (e.g. when a reverse proxy handles auth)
+- OIDC / SSO (optional) - sign in via any OpenID Connect provider (Authentik,
+  PocketID, Authelia, Keycloak, …). Works alongside or instead of
+  `WF_AUTH_PASSWORD_HASH`; a successful SSO login mints the same session cookie.
+  Enabled when both `WF_OIDC_ISSUER_URL` and `WF_OIDC_CLIENT_ID` are set.
+  - `WF_OIDC_ISSUER_URL` - provider base URL (discovery hits
+    `<issuer>/.well-known/openid-configuration`)
+  - `WF_OIDC_CLIENT_ID` - client id registered with the IdP
+  - `WF_OIDC_CLIENT_SECRET` - **Optional** client secret (PKCE is always used)
+  - `WF_OIDC_REDIRECT_URL` - **Required** when OIDC is enabled; must be
+    registered in the IdP, e.g. `https://your.host/api/v1/auth/oidc/callback`
+  - `WF_OIDC_SCOPES` - **Optional** space-separated scopes (default
+    `openid email profile`)
+  - `WF_OIDC_ALLOWED_EMAILS` / `WF_OIDC_ALLOWED_SUBS` - comma-separated
+    allowlists matched against the ID token's `email` / `sub` claims. With
+    neither set, the server **refuses to start** unless `WF_OIDC_ALLOW_ANY=true`
+    is also set — a missing allowlist must never silently grant every IdP user
+    access. An `email` is only honored when the IdP asserts
+    `email_verified=true`; `WF_OIDC_ALLOWED_SUBS` is the stronger control
+    (stable, issuer-scoped) and is recommended on shared/multi-tenant IdPs.
+  - `WF_OIDC_ALLOW_ANY` - **Optional**, default `false`. Set to `true` to allow
+    **any** user the IdP authenticates when no allowlist is configured. Only
+    safe on a dedicated single-user IdP; on a shared/multi-tenant IdP this
+    grants everyone access. A warning is logged at startup when enabled.
+  - `WF_OIDC_POST_LOGOUT_REDIRECT_URL` - **Optional**. When the IdP advertises
+    an `end_session_endpoint`, sign-out also ends the IdP session (RP-Initiated
+    Logout); otherwise logout is local-only. Set this to land back on the app
+    afterward — it must be **registered** with the IdP (e.g. Keycloak's "Valid
+    post logout redirect URIs"). If unset, the IdP shows its own logged-out
+    page.
+  - `WF_OIDC_RP_LOGOUT` - **Optional**, default `true`. Set to `false` to force
+    local-only logout even when the IdP supports RP-Initiated Logout.
 - `WF_COOKIE_SECURE` - Controls the `Secure` attribute on session cookies
   (default: `auto`)
   - `auto` - set `Secure` only when `X-Forwarded-Proto: https` is present
