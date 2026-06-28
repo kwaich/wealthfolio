@@ -48,6 +48,7 @@ use wealthfolio_device_sync::{engine::DeviceSyncRuntimeState, DeviceEnrollServic
 use wealthfolio_storage_sqlite::{
     accounts::AccountRepository,
     activities::ActivityRepository,
+    agent::{McpAuditRepository, PatRepository},
     ai_chat::AiChatRepository,
     assets::{AlternativeAssetRepository, AssetRepository},
     db::{self, write_actor},
@@ -132,6 +133,13 @@ pub struct AppState {
     pub rebalance_service: Arc<
         dyn wealthfolio_core::portfolio::allocation_targets::RebalanceServiceTrait + Send + Sync,
     >,
+    pub pat_repository: Arc<PatRepository>,
+    pub mcp_audit_repository: Arc<McpAuditRepository>,
+    pub agent_environment: Arc<dyn wealthfolio_agent_tools::AgentEnvironment>,
+    /// Whether the `/mcp` endpoint is mounted (from `Config::mcp_enabled`).
+    pub mcp_enabled: bool,
+    /// Whether agent tool calls are audited (from `Config::mcp_audit_enabled`).
+    pub mcp_audit_enabled: bool,
 }
 
 pub fn init_tracing() {
@@ -719,11 +727,20 @@ pub async fn build_state(config: &Config) -> anyhow::Result<Arc<AppState>> {
         income_service.clone(),
         health_service.clone(),
         taxonomy_service.clone(),
+        portfolio_service.clone(),
+        net_worth_service.clone(),
+        limits_service.clone(),
         cash_activity_service.clone(),
         activity_taxonomy_assignment_service.clone(),
         categorization_rules_service.clone(),
     ));
+    let agent_environment: Arc<dyn wealthfolio_agent_tools::AgentEnvironment> =
+        ai_environment.clone();
     let ai_chat_service = Arc::new(ChatService::new(ai_environment, ChatConfig::default()));
+
+    // Agent access: PAT auth + MCP audit trail (server-mode MCP)
+    let pat_repository = Arc::new(PatRepository::new(pool.clone(), writer.clone()));
+    let mcp_audit_repository = Arc::new(McpAuditRepository::new(pool.clone(), writer.clone()));
 
     // Device enroll service for E2EE sync
     let cloud_api_url = crate::features::cloud_api_base_url().unwrap_or_default();
@@ -844,6 +861,11 @@ pub async fn build_state(config: &Config) -> anyhow::Result<Arc<AppState>> {
         allocation_target_service,
         drift_service,
         rebalance_service,
+        pat_repository,
+        mcp_audit_repository,
+        agent_environment,
+        mcp_enabled: config.mcp_enabled,
+        mcp_audit_enabled: config.mcp_audit_enabled,
     });
 
     #[cfg(feature = "device-sync")]

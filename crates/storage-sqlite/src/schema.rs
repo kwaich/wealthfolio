@@ -753,6 +753,35 @@ diesel::table! {
     }
 }
 
+diesel::table! {
+    personal_access_tokens (id) {
+        id -> Text,
+        name -> Text,
+        token_prefix -> Text,
+        token_hash -> Text,
+        scopes_json -> Text,
+        expires_at -> Nullable<Text>,
+        last_used_at -> Nullable<Text>,
+        revoked_at -> Nullable<Text>,
+        created_at -> Text,
+    }
+}
+
+diesel::table! {
+    mcp_audit_log (id) {
+        id -> Text,
+        session_id -> Text,
+        actor_kind -> Text,
+        actor_fingerprint -> Text,
+        tool -> Text,
+        scopes_json -> Text,
+        args_summary -> Nullable<Text>,
+        outcome -> Text,
+        error_message -> Nullable<Text>,
+        created_at -> Text,
+    }
+}
+
 diesel::joinable!(allocation_target_weights -> allocation_targets (target_id));
 
 diesel::joinable!(accounts -> platforms (platform_id));
@@ -845,4 +874,6 @@ diesel::allow_tables_to_appear_in_same_query!(
     budget_rollover_settings,
     allocation_targets,
     allocation_target_weights,
+    personal_access_tokens,
+    mcp_audit_log,
 );
