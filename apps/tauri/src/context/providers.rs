@@ -155,6 +155,14 @@ pub async fn initialize_context(
             writer.clone(),
         ),
     );
+    let activity_splits_repo: Arc<
+        dyn wealthfolio_spending::activity_splits::ActivitySplitRepositoryTrait,
+    > = Arc::new(
+        wealthfolio_storage_sqlite::spending::activity_splits::ActivitySplitRepository::new(
+            pool.clone(),
+            writer.clone(),
+        ),
+    );
     let activity_taxonomy_assignment_service = Arc::new(
         wealthfolio_spending::activity_assignments::ActivityTaxonomyAssignmentService::new(
             activity_assignments_repo.clone(),
@@ -261,6 +269,7 @@ pub async fn initialize_context(
             account_repository.clone(),
             spending_settings_service.clone(),
             activity_taxonomy_assignment_service.clone(),
+            activity_splits_repo.clone(),
             activity_events_repo.clone(),
             events_service.clone(),
         ),
@@ -295,6 +304,7 @@ pub async fn initialize_context(
         activity_repository.clone(),
         account_repository.clone(),
         activity_assignments_repo.clone(),
+        activity_splits_repo.clone(),
         spending_settings_service.clone(),
         taxonomy_service.clone(),
         fx_service.clone(),
@@ -315,6 +325,7 @@ pub async fn initialize_context(
             activity_repository.clone(),
             account_repository.clone(),
             analytics_assignment_repo.clone(),
+            activity_splits_repo.clone(),
             spending_settings_service.clone(),
             taxonomy_service.clone(),
             events_service.clone(),
@@ -335,6 +346,7 @@ pub async fn initialize_context(
         activity_repository.clone(),
         account_repository.clone(),
         analytics_assignment_repo,
+        activity_splits_repo,
         spending_settings_service.clone(),
         taxonomy_service.clone(),
         fx_service.clone(),

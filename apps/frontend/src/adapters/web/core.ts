@@ -204,6 +204,9 @@ export const COMMANDS: CommandMap = {
   get_activity_assignments: { method: "GET", path: "/spending/activities" },
   assign_activity_category: { method: "PUT", path: "/spending/activities" },
   unassign_activity_category: { method: "DELETE", path: "/spending/activities" },
+  get_activity_splits: { method: "GET", path: "/spending/activities" },
+  replace_activity_splits: { method: "PUT", path: "/spending/activities" },
+  clear_activity_splits: { method: "DELETE", path: "/spending/activities" },
   bulk_assign_categories: { method: "POST", path: "/spending/assignments/bulk" },
   // Spending categorization rules
   list_categorization_rules: { method: "GET", path: "/spending/rules" },
@@ -1351,6 +1354,25 @@ export const invoke = async <T>(command: string, payload?: Record<string, unknow
         taxonomyId: string;
       };
       url += `/${encodeURIComponent(activityId)}/assignments/${encodeURIComponent(taxonomyId)}`;
+      break;
+    }
+    case "get_activity_splits": {
+      const { activityId } = payload as { activityId: string };
+      url += `/${encodeURIComponent(activityId)}/splits`;
+      break;
+    }
+    case "replace_activity_splits": {
+      const { activityId, splits } = payload as {
+        activityId: string;
+        splits: unknown[];
+      };
+      url += `/${encodeURIComponent(activityId)}/splits`;
+      body = JSON.stringify(splits);
+      break;
+    }
+    case "clear_activity_splits": {
+      const { activityId } = payload as { activityId: string };
+      url += `/${encodeURIComponent(activityId)}/splits`;
       break;
     }
     case "bulk_assign_categories": {

@@ -1,11 +1,10 @@
 import { expect, Page, test } from "@playwright/test";
-import { gotoActivities } from "./helpers";
+import { completeOnboardingIfNeeded, gotoActivities } from "./helpers";
 
 test.describe.configure({ mode: "serial" });
 
 test.describe("Activity Creation Tests", () => {
   const BASE_URL = process.env.WF_E2E_BASE_URL || "http://localhost:1420";
-  const TEST_PASSWORD = "password001";
   let page: Page;
 
   // Test data for activities
@@ -430,24 +429,7 @@ test.describe("Activity Creation Tests", () => {
   test("1. Setup: Login and navigate to app", async () => {
     test.setTimeout(180000);
 
-    await page.goto(BASE_URL, { waitUntil: "domcontentloaded" });
-
-    // Handle login if needed - check for login page or any authenticated page
-    const loginInput = page.getByPlaceholder("Enter your password");
-    const accountsHeading = page.getByRole("heading", { name: "Accounts" });
-    const dashboardHeading = page.getByRole("heading", { name: "Dashboard" });
-
-    // Wait for any of: login page, dashboard, or accounts page (where 01-happy-path ends)
-    await expect(loginInput.or(dashboardHeading).or(accountsHeading)).toBeVisible({
-      timeout: 120000,
-    });
-
-    if (await loginInput.isVisible()) {
-      await loginInput.fill(TEST_PASSWORD);
-      await page.getByRole("button", { name: "Sign In" }).click();
-      // After login, wait for either dashboard or accounts page
-      await expect(dashboardHeading.or(accountsHeading)).toBeVisible({ timeout: 15000 });
-    }
+    await completeOnboardingIfNeeded(page);
 
     // Navigate to dashboard to confirm app is ready
     await page.goto(`${BASE_URL}/dashboard`, { waitUntil: "domcontentloaded" });

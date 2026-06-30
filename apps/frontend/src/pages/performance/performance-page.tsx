@@ -1,9 +1,9 @@
 import { BenchmarkSymbolSelector } from "@/components/benchmark-symbol-selector";
 import {
   ANNUALIZED_RETURN_INFO as annualizedReturnInfo,
-  IRR_RETURN_INFO,
   MAX_DRAWDOWN_INFO as maxDrawdownInfo,
   MetricLabelWithInfo,
+  MONEY_WEIGHTED_RETURN_INFO,
   PRICE_RETURN_INFO,
   SIMPLE_RETURN_INFO,
   TIME_WEIGHTED_RETURN_INFO,
@@ -19,7 +19,11 @@ import { useAccounts } from "@/hooks/use-accounts";
 import { usePersistentState } from "@/hooks/use-persistent-state";
 import { useIsMobileViewport } from "@/hooks/use-platform";
 import { AccountPurpose, PORTFOLIO_SCOPE_ID } from "@/lib/constants";
-import { performancePeriodPnl, performanceSummaryReturn } from "@/lib/performance";
+import {
+  performancePeriodPnl,
+  performanceSummaryReturn,
+  shouldDisplayAnnualizedPerformanceReturn,
+} from "@/lib/performance";
 import { getPerformanceDateRangeForRequest } from "@/lib/performance-date-range";
 import { DateRange, PerformanceResult, TrackedItem } from "@/lib/types";
 import { cn, formatAmount } from "@/lib/utils";
@@ -43,6 +47,9 @@ import {
   formatPercent,
   GainPercent,
   Icons,
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
   PrivacyAmount,
   Separator,
   Sheet,
@@ -150,9 +157,9 @@ function metricPresentation(metric: PerformanceMetric): {
       };
     case "irr":
       return {
-        label: "IRR",
-        mobileLabel: "IRR",
-        infoText: IRR_RETURN_INFO,
+        label: "Money-Weighted Return",
+        mobileLabel: "MWR",
+        infoText: MONEY_WEIGHTED_RETURN_INFO,
       };
     case "valueReturn":
       return {
@@ -172,6 +179,21 @@ function metricPresentation(metric: PerformanceMetric): {
         mobileLabel: "Drawdown",
         infoText: maxDrawdownInfo,
       };
+  }
+}
+
+function stripReturnLabel(label: string | undefined): string {
+  switch (label) {
+    case "Time-Weighted Return":
+      return "Time-weighted";
+    case "Money-Weighted Return":
+      return "Money-weighted";
+    case "Value Return":
+      return "Value return";
+    case "Price Return":
+      return "Price return";
+    default:
+      return label ?? "Return";
   }
 }
 
@@ -236,6 +258,18 @@ function firstNotApplicableReason(result: PerformanceResult): string | undefined
   return result.dataQuality.notApplicableReasons?.[0];
 }
 
+function isMoneyWeightedMessage(message: string): boolean {
+  return /\bIRR\b|\bMWR\b|money-weighted|XIRR/i.test(message);
+}
+
+function firstMoneyWeightedReason(result: PerformanceResult): string | undefined {
+  const messages = [
+    ...(result.dataQuality.notApplicableReasons ?? []),
+    ...(result.dataQuality.warnings ?? []),
+  ];
+  return messages.find(isMoneyWeightedMessage);
+}
+
 const UUID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 const DECIMAL_RE = /\d+\.\d+/g;
 
@@ -252,6 +286,12 @@ function formatWarningNumbers(text: string): string {
 /** Make a data-quality warning user-facing: real account names + tidy numbers. */
 function presentWarning(text: string, namesById: Map<string, string>): string {
   return formatWarningNumbers(humanizeAccountIds(text, namesById));
+}
+
+function presentMoneyWeightedWarning(text: string, namesById: Map<string, string>): string {
+  return presentWarning(text, namesById)
+    .replace(/\bXIRR\b/gi, "annualized MWR")
+    .replace(/\bIRR\b/g, "MWR");
 }
 
 function MetricValue({
@@ -329,6 +369,130 @@ function HeaderMetric({
         />
       )}
     </div>
+  );
+}
+
+const STRIP_SECTION_CLASS =
+  "border-border/70 flex min-h-[4.75rem] min-w-0 flex-col justify-center border-l pl-5";
+const STRIP_TITLE_CLASS =
+  "text-muted-foreground/70 mb-2.5 font-mono text-[9px] font-semibold uppercase tracking-[0.28em]";
+const STRIP_LABEL_CLASS =
+  "text-muted-foreground truncate font-mono text-[11px] font-medium tracking-[0.02em]";
+const STRIP_VALUE_CLASS = "font-mono text-lg font-semibold leading-none";
+
+function StripSection({
+  title,
+  className,
+  children,
+}: {
+  title: string;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className={cn(STRIP_SECTION_CLASS, className)}>
+      <div className={STRIP_TITLE_CLASS}>{title}</div>
+      {children}
+    </section>
+  );
+}
+
+function StripMetric({
+  label,
+  value,
+  tone = "gain",
+  reason,
+  hasWarning = false,
+}: {
+  label: string;
+  value: number | null;
+  tone?: "gain" | "neutral";
+  reason?: string;
+  hasWarning?: boolean;
+}) {
+  return (
+    <div className="flex min-w-0 flex-col items-start gap-2">
+      <div className="flex max-w-full items-center gap-1">
+        <span className={STRIP_LABEL_CLASS}>{label}</span>
+        {hasWarning && <Icons.AlertTriangle className="text-warning h-3 w-3 shrink-0" />}
+      </div>
+      {value == null && reason ? (
+        <span className="text-muted-foreground line-clamp-2 max-w-[12rem] text-xs leading-snug">
+          {reason}
+        </span>
+      ) : (
+        <MetricValue value={value} tone={tone} className={STRIP_VALUE_CLASS} />
+      )}
+    </div>
+  );
+}
+
+interface StripHelpItem {
+  label: string;
+  infoText: string;
+  warningText?: string | string[];
+}
+
+function StripHelpPopover({ items }: { items: StripHelpItem[] }) {
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="text-muted-foreground hover:text-foreground absolute right-0 top-0 h-6 w-6 rounded-full"
+          aria-label="Performance metric explanations"
+        >
+          <Icons.Info className="h-3.5 w-3.5" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[34rem] max-w-[calc(100vw-2rem)] p-0" side="bottom" align="end">
+        <div className="space-y-4 p-5">
+          <div>
+            <div className="text-sm font-semibold">Performance metrics</div>
+            <div className="text-muted-foreground mt-1 text-xs">
+              Explanations and calculation notes for the selected item.
+            </div>
+          </div>
+          <div className="space-y-3">
+            {items.map((item) => {
+              const warnings = Array.from(
+                new Set(
+                  (Array.isArray(item.warningText)
+                    ? item.warningText
+                    : item.warningText
+                      ? [item.warningText]
+                      : []
+                  )
+                    .map((warning) => warning.trim())
+                    .filter(Boolean),
+                ),
+              );
+              return (
+                <div
+                  key={item.label}
+                  className="border-border/60 border-t pt-3 first:border-t-0 first:pt-0"
+                >
+                  <div className="text-xs font-semibold">{item.label}</div>
+                  <p className="text-muted-foreground mt-1 text-xs leading-relaxed">
+                    {item.infoText}
+                  </p>
+                  {warnings.length > 0 && (
+                    <div className="mt-2 space-y-1">
+                      {warnings.map((warning) => (
+                        <div key={warning} className="text-warning text-xs leading-relaxed">
+                          {warning}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -415,7 +579,11 @@ function AttributionDetailMetric({
   itemName,
   dateRangeLabel,
   isMobile,
+  sectionTitle,
+  label = "Period Gain/Loss",
+  showLabelIcon = true,
   className,
+  labelClassName,
   valueClassName,
   align = "center",
 }: {
@@ -423,7 +591,11 @@ function AttributionDetailMetric({
   itemName?: string;
   dateRangeLabel: string;
   isMobile: boolean;
+  sectionTitle?: string;
+  label?: string;
+  showLabelIcon?: boolean;
   className?: string;
+  labelClassName?: string;
   valueClassName?: string;
   align?: "left" | "center" | "right";
 }) {
@@ -478,13 +650,51 @@ function AttributionDetailMetric({
     },
   ];
 
+  const labelNode = (
+    <div
+      className={cn(
+        "text-muted-foreground flex items-center gap-1 text-xs font-light",
+        align === "left" && "justify-start",
+        align === "center" && "justify-center",
+        align === "right" && "justify-end",
+        sectionTitle && STRIP_LABEL_CLASS,
+        labelClassName,
+      )}
+    >
+      <span>{label}</span>
+      {showLabelIcon && <Icons.Info className="h-3 w-3" />}
+    </div>
+  );
+  const amountNode = (
+    <div
+      className={cn(
+        "flex items-center gap-1",
+        align === "left" && "justify-start",
+        align === "center" && "justify-center",
+        align === "right" && "justify-end",
+      )}
+    >
+      <AttributionAmount
+        value={periodPnl}
+        currency={currency}
+        className={cn("text-base font-semibold", sectionTitle && STRIP_VALUE_CLASS, valueClassName)}
+      />
+      <Icons.ChevronRight className="text-muted-foreground/60 group-hover:text-muted-foreground h-3.5 w-3.5 shrink-0 transition-all group-hover:translate-x-0.5" />
+    </div>
+  );
+
   return (
     <Sheet open={isOpen} onOpenChange={setIsOpen}>
       <Button
         type="button"
         variant="ghost"
         className={cn(
-          "hover:bg-muted/50 group h-auto w-full min-w-0 rounded-md px-2 py-1",
+          sectionTitle
+            ? cn(
+                STRIP_SECTION_CLASS,
+                "hover:bg-muted/30 group h-auto w-full items-start rounded-none px-0 pl-5 text-left",
+              )
+            : "hover:bg-muted/50 group h-auto w-full min-w-0 rounded-md px-2 py-1",
           align === "left" && "text-left",
           align === "center" && "text-center",
           align === "right" && "text-right",
@@ -492,34 +702,20 @@ function AttributionDetailMetric({
         )}
         onClick={() => setIsOpen(true)}
       >
-        <div className="w-full min-w-0 space-y-1">
-          <div
-            className={cn(
-              "text-muted-foreground flex items-center gap-1 text-xs font-light",
-              align === "left" && "justify-start",
-              align === "center" && "justify-center",
-              align === "right" && "justify-end",
-            )}
-          >
-            <span>Period Gain/Loss</span>
-            <Icons.Info className="h-3 w-3" />
+        {sectionTitle ? (
+          <div className="w-full min-w-0">
+            <div className={STRIP_TITLE_CLASS}>{sectionTitle}</div>
+            <div className="flex min-w-0 flex-col items-start gap-2">
+              {labelNode}
+              {amountNode}
+            </div>
           </div>
-          <div
-            className={cn(
-              "flex items-center gap-1",
-              align === "left" && "justify-start",
-              align === "center" && "justify-center",
-              align === "right" && "justify-end",
-            )}
-          >
-            <AttributionAmount
-              value={periodPnl}
-              currency={currency}
-              className={cn("text-base font-semibold", valueClassName)}
-            />
-            <Icons.ChevronRight className="text-muted-foreground/60 group-hover:text-muted-foreground h-3.5 w-3.5 shrink-0 transition-all group-hover:translate-x-0.5" />
+        ) : (
+          <div className="w-full min-w-0 space-y-1">
+            {labelNode}
+            {amountNode}
           </div>
-        </div>
+        )}
       </Button>
 
       <SheetContent
@@ -970,10 +1166,78 @@ export default function PerformancePage() {
           }
         : metricPresentation(selectedMetric);
     const selectedMetricValue = displayMetricValue(found, selectedMetric);
-    const visibleWarnings = (found.dataQuality.warnings ?? []).map((warning) =>
-      presentWarning(warning, accountNamesById),
+    const rawWarnings = found.dataQuality.warnings ?? [];
+    const rawMoneyWeightedWarnings = rawWarnings.filter(isMoneyWeightedMessage);
+    const visibleWarnings = rawWarnings
+      .filter((warning) => !isMoneyWeightedMessage(warning))
+      .map((warning) => presentWarning(warning, accountNamesById));
+    const moneyWeightedWarnings = rawMoneyWeightedWarnings.map((warning) =>
+      presentMoneyWeightedWarning(warning, accountNamesById),
     );
     const rawReason = selectedMetricValue == null ? firstNotApplicableReason(found) : undefined;
+    const showAnnualizedMoneyWeightedReturn =
+      shouldDisplayAnnualizedPerformanceReturn(found) && found.returns.annualizedIrr != null;
+    const moneyWeightedReturn = showAnnualizedMoneyWeightedReturn
+      ? Number(found.returns.annualizedIrr)
+      : metricValue(found, "irr");
+    const rawMoneyWeightedReason =
+      moneyWeightedReturn == null ? firstMoneyWeightedReason(found) : undefined;
+    const presentedMoneyWeightedReason = rawMoneyWeightedReason
+      ? presentMoneyWeightedWarning(rawMoneyWeightedReason, accountNamesById)
+      : undefined;
+    const moneyWeightedReason =
+      presentedMoneyWeightedReason ??
+      (moneyWeightedReturn == null ? moneyWeightedWarnings[0] : undefined);
+    const showMoneyWeightedReturn =
+      moneyWeightedReturn != null ||
+      Boolean(moneyWeightedReason) ||
+      moneyWeightedWarnings.length > 0;
+    const moneyWeightedReturnLabel = showAnnualizedMoneyWeightedReturn
+      ? "Annualized MWR"
+      : "Money-Weighted Return";
+    const moneyWeightedReturnMobileLabel = showAnnualizedMoneyWeightedReturn ? "Ann. MWR" : "MWR";
+    const moneyWeightedHelpWarnings = [
+      ...moneyWeightedWarnings,
+      ...(moneyWeightedReason ? [moneyWeightedReason] : []),
+    ];
+    const periodPnl = found.mode === "symbolPriceBased" ? null : performancePeriodPnl(found);
+    const helpItems: StripHelpItem[] = [
+      {
+        label: selectedMetricPresentation.label,
+        infoText: selectedMetricPresentation.infoText,
+        warningText: visibleWarnings,
+      },
+      ...(showMoneyWeightedReturn
+        ? [
+            {
+              label: moneyWeightedReturnLabel,
+              infoText: MONEY_WEIGHTED_RETURN_INFO,
+              warningText: moneyWeightedHelpWarnings,
+            },
+          ]
+        : []),
+      {
+        label: "Annualized Return",
+        infoText: annualizedReturnInfo,
+      },
+      {
+        label: "Volatility",
+        infoText: volatilityInfo,
+      },
+      {
+        label: "Max Drawdown",
+        infoText: maxDrawdownInfo,
+      },
+      ...(periodPnl != null
+        ? [
+            {
+              label: "Gain / loss",
+              infoText:
+                "Total profit or loss over the selected period. Open the metric for attribution details.",
+            },
+          ]
+        : []),
+    ];
     return {
       id: found.id,
       name: selectedPerformanceData.name,
@@ -983,9 +1247,20 @@ export default function PerformancePage() {
       selectedMetricReason: rawReason ? presentWarning(rawReason, accountNamesById) : undefined,
       warningTerms: Array.from(accountNamesById.values()),
       annualizedReturn: annualizedDisplayMetricValue(found, selectedMetric),
+      annualizedReturnLabel:
+        showMoneyWeightedReturn && selectedMetric === "twr"
+          ? "Annualized TWR"
+          : "Annualized Return",
+      moneyWeightedReturn,
+      moneyWeightedReturnLabel,
+      moneyWeightedReturnMobileLabel,
+      moneyWeightedReason,
+      moneyWeightedWarnings: moneyWeightedHelpWarnings,
+      showMoneyWeightedReturn,
       volatility: metricValue(found, "volatility"),
       maxDrawdown: metricValue(found, "drawdown"),
-      periodPnl: found.mode === "symbolPriceBased" ? null : performancePeriodPnl(found),
+      periodPnl,
+      helpItems,
       ...selectedMetricPresentation,
       trackingModeBadge: trackingModeBadge(found),
       returnWarnings: visibleWarnings,
@@ -1115,7 +1390,8 @@ export default function PerformancePage() {
                 align: "start",
                 loop: false,
               }}
-              className="flex-1"
+              className="flex-1 touch-pan-x overscroll-x-contain"
+              data-no-swipe-drag
             >
               <CarouselContent className="-ml-2">
                 {selectedItems.map((item) => {
@@ -1256,18 +1532,33 @@ export default function PerformancePage() {
         <div className="flex h-[calc(100vh-19rem)] flex-col md:h-[calc(100vh-12rem)]">
           <Card className="flex min-h-0 flex-1 flex-col">
             <CardHeader className={cn("pb-2", isMobile ? "px-3 py-3" : "px-6 pb-2 pt-5")}>
-              <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-                <div className="min-w-0">
-                  <CardTitle className={cn("text-lg sm:text-xl", isMobile && "text-sm")}>
+              <div className="flex flex-col gap-4 2xl:flex-row 2xl:items-start 2xl:justify-between">
+                <div
+                  className={cn(
+                    "min-w-0",
+                    !isMobile &&
+                      "grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-4 gap-y-1 2xl:block",
+                  )}
+                >
+                  <CardTitle className={cn("min-w-0 text-lg sm:text-xl", isMobile && "text-sm")}>
                     Performance
                   </CardTitle>
-                  <CardDescription className={cn("text-xs sm:text-sm", isMobile && "text-[10px]")}>
+                  <CardDescription
+                    className={cn(
+                      "text-xs sm:text-sm",
+                      !isMobile && "whitespace-nowrap text-right 2xl:text-left",
+                      isMobile && "text-[10px]",
+                    )}
+                  >
                     {displayDateRange}
                   </CardDescription>
                   {selectedItemData?.trackingModeBadge && (
                     <Badge
                       variant={selectedItemData.trackingModeBadge.variant}
-                      className="mt-2 h-5 rounded-md px-1.5 text-[10px] font-medium"
+                      className={cn(
+                        "mt-2 h-5 rounded-md px-1.5 text-[10px] font-medium",
+                        !isMobile && "col-start-1 mt-1 w-fit 2xl:mt-2",
+                      )}
                     >
                       {selectedItemData.trackingModeBadge.label}
                     </Badge>
@@ -1282,7 +1573,8 @@ export default function PerformancePage() {
                           align: "start",
                           loop: false,
                         }}
-                        className="w-full"
+                        className="w-full touch-pan-x overscroll-x-contain"
+                        data-no-swipe-drag
                       >
                         <CarouselContent className="-ml-2">
                           <CarouselItem className="basis-[42%] pl-2">
@@ -1302,7 +1594,11 @@ export default function PerformancePage() {
                           <CarouselItem className="basis-[42%] pl-2">
                             <div className="bg-muted/30 rounded-lg px-3 py-2">
                               <HeaderMetric
-                                label="Annualized"
+                                label={
+                                  selectedItemData?.annualizedReturnLabel === "Annualized TWR"
+                                    ? "Ann. TWR"
+                                    : "Annualized"
+                                }
                                 infoText={annualizedReturnInfo}
                                 value={selectedItemData?.annualizedReturn ?? null}
                                 align="left"
@@ -1310,6 +1606,21 @@ export default function PerformancePage() {
                               />
                             </div>
                           </CarouselItem>
+                          {selectedItemData?.showMoneyWeightedReturn && (
+                            <CarouselItem className="basis-[42%] pl-2">
+                              <div className="bg-muted/30 rounded-lg px-3 py-2">
+                                <HeaderMetric
+                                  label={selectedItemData.moneyWeightedReturnMobileLabel}
+                                  infoText={MONEY_WEIGHTED_RETURN_INFO}
+                                  warningText={selectedItemData.moneyWeightedWarnings}
+                                  value={selectedItemData.moneyWeightedReturn}
+                                  reason={selectedItemData.moneyWeightedReason}
+                                  align="left"
+                                  valueClassName="text-base"
+                                />
+                              </div>
+                            </CarouselItem>
+                          )}
                           <CarouselItem className="basis-[42%] pl-2">
                             <div className="bg-muted/30 rounded-lg px-3 py-2">
                               <HeaderMetric
@@ -1350,55 +1661,80 @@ export default function PerformancePage() {
                         </CarouselContent>
                       </Carousel>
                     ) : (
-                      <div
-                        className={cn(
-                          "grid min-w-0 items-start gap-4 rounded-lg p-2 backdrop-blur-sm sm:gap-5",
-                          selectedItemData?.periodPnl != null
-                            ? "grid-cols-5 xl:min-w-[58rem]"
-                            : "grid-cols-4 xl:min-w-[46rem]",
+                      <div className="relative w-full overflow-x-auto pb-1 pr-8 2xl:w-auto 2xl:overflow-visible">
+                        {selectedItemData && (
+                          <StripHelpPopover items={selectedItemData.helpItems} />
                         )}
-                      >
-                        <HeaderMetric
-                          label={selectedItemData?.label ?? "Return"}
-                          infoText={selectedItemData?.infoText ?? SIMPLE_RETURN_INFO}
-                          warningText={selectedItemData?.returnWarnings}
-                          boldTerms={selectedItemData?.warningTerms}
-                          value={selectedItemData?.selectedMetricValue ?? null}
-                          reason={selectedItemData?.selectedMetricReason}
-                          valueClassName="text-base"
-                        />
-                        <HeaderMetric
-                          label="Annualized Return"
-                          infoText={annualizedReturnInfo}
-                          value={selectedItemData?.annualizedReturn ?? null}
-                          valueClassName="text-base"
-                        />
-                        <HeaderMetric
-                          label="Volatility"
-                          infoText={volatilityInfo}
-                          warningText={selectedItemData?.volatilityWarnings}
-                          value={selectedItemData?.volatility ?? null}
-                          tone="neutral"
-                          valueClassName="text-base"
-                        />
-                        <HeaderMetric
-                          label="Max Drawdown"
-                          infoText={maxDrawdownInfo}
-                          value={selectedItemData?.maxDrawdown ?? null}
-                          valueClassName="text-base"
-                        />
-                        {selectedItemData?.periodPnl != null && (
-                          <AttributionDetailMetric
-                            result={selectedItemData.result}
-                            itemName={selectedItemData.name}
-                            dateRangeLabel={displayDateRange}
-                            isMobile={isMobile}
-                            valueClassName="text-base"
-                            // Offset the button's own py-1 so its label/value top-align with the
-                            // no-padding HeaderMetric siblings in this top-aligned grid row.
-                            className="-my-1"
-                          />
-                        )}
+                        <div className="flex min-w-max items-stretch justify-start 2xl:justify-end">
+                          <StripSection
+                            title="Returns"
+                            className={
+                              selectedItemData?.showMoneyWeightedReturn ? "w-[28rem]" : "w-[19rem]"
+                            }
+                          >
+                            <div
+                              className={cn(
+                                "grid gap-5",
+                                selectedItemData?.showMoneyWeightedReturn
+                                  ? "grid-cols-3"
+                                  : "grid-cols-2",
+                              )}
+                            >
+                              <StripMetric
+                                label={stripReturnLabel(selectedItemData?.label)}
+                                value={selectedItemData?.selectedMetricValue ?? null}
+                                reason={selectedItemData?.selectedMetricReason}
+                                hasWarning={Boolean(
+                                  selectedItemData?.returnWarnings.length ||
+                                  selectedItemData?.selectedMetricReason,
+                                )}
+                              />
+                              {selectedItemData?.showMoneyWeightedReturn && (
+                                <StripMetric
+                                  label={selectedItemData.moneyWeightedReturnLabel}
+                                  value={selectedItemData.moneyWeightedReturn}
+                                  reason={selectedItemData.moneyWeightedReason}
+                                  hasWarning={Boolean(
+                                    selectedItemData.moneyWeightedWarnings.length,
+                                  )}
+                                />
+                              )}
+                              <StripMetric
+                                label="Annualized"
+                                value={selectedItemData?.annualizedReturn ?? null}
+                              />
+                            </div>
+                          </StripSection>
+
+                          <StripSection title="Risk" className="w-[19rem]">
+                            <div className="grid grid-cols-2 gap-5">
+                              <StripMetric
+                                label="Volatility"
+                                value={selectedItemData?.volatility ?? null}
+                                tone="neutral"
+                                hasWarning={Boolean(selectedItemData?.volatilityWarnings.length)}
+                              />
+                              <StripMetric
+                                label="Max drawdown"
+                                value={selectedItemData?.maxDrawdown ?? null}
+                              />
+                            </div>
+                          </StripSection>
+
+                          {selectedItemData?.periodPnl != null && (
+                            <AttributionDetailMetric
+                              result={selectedItemData.result}
+                              itemName={selectedItemData.name}
+                              dateRangeLabel={displayDateRange}
+                              isMobile={isMobile}
+                              sectionTitle="Total"
+                              label="Gain / loss"
+                              showLabelIcon={false}
+                              align="left"
+                              className="w-[11.75rem]"
+                            />
+                          )}
+                        </div>
                       </div>
                     )}
                   </>

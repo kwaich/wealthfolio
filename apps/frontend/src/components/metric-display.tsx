@@ -15,6 +15,8 @@ import { Link } from "react-router-dom";
 // Explanatory texts for info popovers
 export const TIME_WEIGHTED_RETURN_INFO =
   "Time-weighted return (TWR) measures investment performance after removing the effect of deposits and withdrawals. Periods under one year are shown as selected-period returns; periods of one year or longer are shown annualized when available.";
+export const MONEY_WEIGHTED_RETURN_INFO =
+  "Money-weighted return (MWR) measures performance using the size and timing of external cash flows. It is calculated with IRR/XIRR; for periods of one year or longer, annualized XIRR is the standard display.";
 export const IRR_RETURN_INFO =
   "Internal rate of return (IRR) measures money-weighted performance using the size and timing of external cash flows. For periods of one year or longer, annualized XIRR is the standard display.";
 export const SIMPLE_RETURN_INFO =

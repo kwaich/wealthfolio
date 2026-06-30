@@ -147,7 +147,10 @@ impl ActivityService {
             .map(str::trim)
             .is_some_and(|subtype| !subtype.is_empty())
         {
-            activity.subtype = NewActivity::canonicalize_subtype(activity.subtype.as_deref());
+            activity.subtype = NewActivity::canonicalize_subtype_for_activity(
+                &activity.activity_type,
+                activity.subtype.as_deref(),
+            );
         }
 
         let effective_subtype = match activity.subtype.as_deref().map(str::trim) {
@@ -245,7 +248,10 @@ impl ActivityService {
     }
 
     fn normalize_activity_for_preparation(mut activity: NewActivity) -> NewActivity {
-        activity.subtype = NewActivity::canonicalize_subtype(activity.subtype.as_deref());
+        activity.subtype = NewActivity::canonicalize_subtype_for_activity(
+            &activity.activity_type,
+            activity.subtype.as_deref(),
+        );
         Self::normalize_new_activity_economic_signs(&mut activity);
         activity
     }
@@ -1847,7 +1853,10 @@ impl ActivityService {
     }
 
     async fn prepare_new_activity(&self, mut activity: NewActivity) -> Result<NewActivity> {
-        activity.subtype = NewActivity::canonicalize_subtype(activity.subtype.as_deref());
+        activity.subtype = NewActivity::canonicalize_subtype_for_activity(
+            &activity.activity_type,
+            activity.subtype.as_deref(),
+        );
         Self::normalize_new_activity_economic_signs(&mut activity);
         let account: Account = self.account_service.get_account(&activity.account_id)?;
         Self::validate_activity_allowed_for_account(&activity.activity_type, &account)?;
@@ -2981,7 +2990,10 @@ impl ActivityService {
     }
 
     fn normalize_import_activity_subtype(activity: &mut ActivityImport) {
-        activity.subtype = NewActivity::canonicalize_subtype(activity.subtype.as_deref());
+        activity.subtype = NewActivity::canonicalize_subtype_for_activity(
+            &activity.activity_type,
+            activity.subtype.as_deref(),
+        );
         if activity
             .subtype
             .as_deref()
@@ -4679,7 +4691,7 @@ impl ActivityServiceTrait for ActivityService {
 
         // ── 3.5: Lightweight pre-insert validation (no asset/FX resolution) ───
         // Catches rows that slipped through the review step without proper resolution.
-        // date errors → "symbol" to match frontend field-keying convention.
+        // Use the review-grid field key so invalid dates highlight the date cell.
         let mut has_validation_errors = false;
         for (_, activity) in import_activities_indexed.iter_mut() {
             let has_symbol = !activity.symbol.trim().is_empty();
@@ -4701,7 +4713,7 @@ impl ActivityServiceTrait for ActivityService {
                 activity.is_valid = false;
                 Self::add_activity_error(
                     activity,
-                    "symbol",
+                    "activityDate",
                     &format!("Invalid date '{}'.", activity.date),
                 );
                 has_validation_errors = true;
@@ -4811,7 +4823,10 @@ impl ActivityServiceTrait for ActivityService {
             .collect();
 
         for (new_act, src) in new_activities.iter_mut().zip(source_slice.iter()) {
-            new_act.subtype = NewActivity::canonicalize_subtype(new_act.subtype.as_deref());
+            new_act.subtype = NewActivity::canonicalize_subtype_for_activity(
+                &new_act.activity_type,
+                new_act.subtype.as_deref(),
+            );
             Self::normalize_new_activity_economic_signs(new_act);
             new_act.idempotency_key = Self::build_import_idempotency_key(src, &new_act.account_id);
         }

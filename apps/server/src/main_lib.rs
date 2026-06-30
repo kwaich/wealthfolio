@@ -322,6 +322,14 @@ pub async fn build_state(config: &Config) -> anyhow::Result<Arc<AppState>> {
             writer.clone(),
         ),
     );
+    let activity_splits_repo: Arc<
+        dyn wealthfolio_spending::activity_splits::ActivitySplitRepositoryTrait,
+    > = Arc::new(
+        wealthfolio_storage_sqlite::spending::activity_splits::ActivitySplitRepository::new(
+            pool.clone(),
+            writer.clone(),
+        ),
+    );
     let activity_taxonomy_assignment_service = Arc::new(
         wealthfolio_spending::activity_assignments::ActivityTaxonomyAssignmentService::new(
             activity_assignments_repo.clone(),
@@ -575,6 +583,7 @@ pub async fn build_state(config: &Config) -> anyhow::Result<Arc<AppState>> {
             account_repo.clone(),
             spending_settings_service.clone(),
             activity_taxonomy_assignment_service.clone(),
+            activity_splits_repo.clone(),
             activity_events_repo.clone(),
             events_service.clone(),
         ),
@@ -609,6 +618,7 @@ pub async fn build_state(config: &Config) -> anyhow::Result<Arc<AppState>> {
         activity_repository.clone(),
         account_repo.clone(),
         activity_assignments_repo.clone(),
+        activity_splits_repo.clone(),
         spending_settings_service.clone(),
         taxonomy_service.clone(),
         fx_service.clone(),
@@ -628,6 +638,7 @@ pub async fn build_state(config: &Config) -> anyhow::Result<Arc<AppState>> {
             activity_repository.clone(),
             account_repo.clone(),
             analytics_assignment_repo.clone(),
+            activity_splits_repo.clone(),
             spending_settings_service.clone(),
             taxonomy_service.clone(),
             events_service.clone(),
@@ -648,6 +659,7 @@ pub async fn build_state(config: &Config) -> anyhow::Result<Arc<AppState>> {
         activity_repository.clone(),
         account_repo.clone(),
         analytics_assignment_repo,
+        activity_splits_repo,
         spending_settings_service.clone(),
         taxonomy_service.clone(),
         fx_service.clone(),

@@ -587,6 +587,7 @@ fn fixture_cash_activity(
         },
         cash_flow_bucket: CashFlowBucket::Spending,
         assignments,
+        splits: Vec::new(),
         event_id: None,
         transfer_link_status: None,
     }
