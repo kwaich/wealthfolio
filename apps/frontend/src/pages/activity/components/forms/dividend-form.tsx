@@ -3,7 +3,6 @@ import { ACTIVITY_SUBTYPES, ActivityType } from "@/lib/constants";
 import { roundDecimal } from "@/lib/utils";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Button } from "@wealthfolio/ui/components/ui/button";
-import { Card, CardContent } from "@wealthfolio/ui/components/ui/card";
 import { Icons } from "@wealthfolio/ui/components/ui/icons";
 import { Label } from "@wealthfolio/ui/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@wealthfolio/ui/components/ui/radio-group";
@@ -16,6 +15,7 @@ import {
   AmountInput,
   createValidatedSubmit,
   DatePicker,
+  FormSection,
   NotesInput,
   QuantityInput,
   SymbolSearch,
@@ -40,6 +40,12 @@ export const dividendFormSchema = z
         invalid_type_error: "Amount must be a number.",
       })
       .positive({ message: "Amount must be greater than 0." }),
+    tax: z.coerce
+      .number({
+        invalid_type_error: "Withholding tax must be a number.",
+      })
+      .min(0, { message: "Withholding tax must be non-negative." })
+      .default(0),
     comment: z.string().optional().nullable(),
     // Advanced options
     currency: z.string().min(1, { message: "Currency is required." }),
@@ -131,6 +137,7 @@ export function DividendForm({
       symbol: "",
       activityDate: new Date(),
       amount: undefined,
+      tax: 0,
       comment: null,
       fxRate: undefined,
       subtype: null,
@@ -195,111 +202,105 @@ export function DividendForm({
   return (
     <FormProvider {...form}>
       <form onSubmit={handleSubmit} className="space-y-4">
-        <Card>
-          <CardContent className="space-y-6 pt-4">
-            {/* Account Selection */}
-            <AccountSelect name="accountId" accounts={accounts} currencyName="currency" />
+        <FormSection title="Asset & Account">
+          {/* Symbol Search/Input */}
+          <SymbolSearch
+            name="symbol"
+            label="Asset"
+            isManualAsset={isManualSymbol}
+            exchangeMicName="exchangeMic"
+            currencyName="currency"
+            quoteCcyName="symbolQuoteCcy"
+            instrumentTypeName="symbolInstrumentType"
+            existingAssetIdName="existingAssetId"
+          />
+          <input type="hidden" {...form.register("symbolQuoteCcy")} />
+          <input type="hidden" {...form.register("symbolInstrumentType")} />
+          <input type="hidden" {...form.register("existingAssetId")} />
 
-            <div className="space-y-2">
-              <div className="text-sm font-medium">Dividend type</div>
-              <RadioGroup
-                value={dividendMode}
-                onValueChange={handleDividendModeChange}
-                className="flex flex-wrap gap-4"
-              >
-                <div className="flex items-center space-x-2">
-                  <RadioGroupItem value={INCOME_MODE_CASH} id="dividend-type-cash" />
-                  <Label
-                    htmlFor="dividend-type-cash"
-                    className="cursor-pointer text-sm font-normal"
-                  >
-                    Cash
-                  </Label>
-                </div>
-                <div className="flex items-center space-x-2">
-                  <RadioGroupItem value={ACTIVITY_SUBTYPES.DRIP} id="dividend-type-drip" />
-                  <Label
-                    htmlFor="dividend-type-drip"
-                    className="cursor-pointer text-sm font-normal"
-                  >
-                    DRIP
-                  </Label>
-                </div>
-                <div className="flex items-center space-x-2">
-                  <RadioGroupItem
-                    value={ACTIVITY_SUBTYPES.DIVIDEND_IN_KIND}
-                    id="dividend-type-in-kind"
-                  />
-                  <Label
-                    htmlFor="dividend-type-in-kind"
-                    className="cursor-pointer text-sm font-normal"
-                  >
-                    In kind
-                  </Label>
-                </div>
-              </RadioGroup>
-            </div>
+          <AccountSelect name="accountId" accounts={accounts} currencyName="currency" />
+          <DatePicker name="activityDate" label="Date" />
+        </FormSection>
 
-            {/* Symbol Search/Input */}
-            <SymbolSearch
-              name="symbol"
-              label="Asset"
-              isManualAsset={isManualSymbol}
-              exchangeMicName="exchangeMic"
-              currencyName="currency"
-              quoteCcyName="symbolQuoteCcy"
-              instrumentTypeName="symbolInstrumentType"
-              existingAssetIdName="existingAssetId"
-            />
-            <input type="hidden" {...form.register("symbolQuoteCcy")} />
-            <input type="hidden" {...form.register("symbolInstrumentType")} />
-            <input type="hidden" {...form.register("existingAssetId")} />
-
-            {/* Date Picker */}
-            <DatePicker name="activityDate" label="Date" />
-
-            {/* Amount */}
-            {isAssetBacked && (
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <QuantityInput
-                  name="quantity"
-                  label={
-                    subtype === ACTIVITY_SUBTYPES.DRIP ? "Reinvested quantity" : "Received quantity"
-                  }
-                />
-                <AmountInput
-                  name="unitPrice"
-                  label={subtype === ACTIVITY_SUBTYPES.DRIP ? "Reinvestment price" : "FMV per unit"}
-                  labelHelpText={
-                    subtype === ACTIVITY_SUBTYPES.DRIP ? undefined : FMV_PER_UNIT_HELP_TEXT
-                  }
-                  maxDecimalPlaces={4}
-                  currency={currency}
-                />
+        <FormSection title="Dividend">
+          <div className="space-y-2">
+            <div className="text-sm font-medium">Dividend type</div>
+            <RadioGroup
+              value={dividendMode}
+              onValueChange={handleDividendModeChange}
+              className="flex flex-wrap gap-4"
+            >
+              <div className="flex items-center space-x-2">
+                <RadioGroupItem value={INCOME_MODE_CASH} id="dividend-type-cash" />
+                <Label htmlFor="dividend-type-cash" className="cursor-pointer text-sm font-normal">
+                  Cash
+                </Label>
               </div>
-            )}
+              <div className="flex items-center space-x-2">
+                <RadioGroupItem value={ACTIVITY_SUBTYPES.DRIP} id="dividend-type-drip" />
+                <Label htmlFor="dividend-type-drip" className="cursor-pointer text-sm font-normal">
+                  DRIP
+                </Label>
+              </div>
+              <div className="flex items-center space-x-2">
+                <RadioGroupItem
+                  value={ACTIVITY_SUBTYPES.DIVIDEND_IN_KIND}
+                  id="dividend-type-in-kind"
+                />
+                <Label
+                  htmlFor="dividend-type-in-kind"
+                  className="cursor-pointer text-sm font-normal"
+                >
+                  In kind
+                </Label>
+              </div>
+            </RadioGroup>
+          </div>
 
+          {isAssetBacked && (
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <QuantityInput
+                name="quantity"
+                label={
+                  subtype === ACTIVITY_SUBTYPES.DRIP ? "Reinvested quantity" : "Received quantity"
+                }
+              />
+              <AmountInput
+                name="unitPrice"
+                label={subtype === ACTIVITY_SUBTYPES.DRIP ? "Reinvestment price" : "FMV per unit"}
+                labelHelpText={
+                  subtype === ACTIVITY_SUBTYPES.DRIP ? undefined : FMV_PER_UNIT_HELP_TEXT
+                }
+                maxDecimalPlaces={4}
+                currency={currency}
+              />
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <AmountInput
               name="amount"
               label={isAssetBacked ? "Dividend amount" : "Amount"}
               currency={currency}
             />
+            <AmountInput name="tax" label="Withholding tax" currency={currency} />
+          </div>
+        </FormSection>
 
-            {/* Advanced Options */}
-            <AdvancedOptionsSection
-              currencyName="currency"
-              fxRateName="fxRate"
-              activityType={ActivityType.DIVIDEND}
-              assetCurrency={assetCurrency}
-              accountCurrency={accountCurrency}
-              baseCurrency={baseCurrency}
-              showSubtype={false}
-            />
-
-            {/* Notes */}
-            <NotesInput name="comment" label="Notes" placeholder="Add an optional note..." />
-          </CardContent>
-        </Card>
+        {/* Advanced options (currency, FX rate) and notes, collapsed by default */}
+        <AdvancedOptionsSection
+          title="Advanced & notes"
+          dashed
+          currencyName="currency"
+          fxRateName="fxRate"
+          activityType={ActivityType.DIVIDEND}
+          assetCurrency={assetCurrency}
+          accountCurrency={accountCurrency}
+          baseCurrency={baseCurrency}
+          showSubtype={false}
+        >
+          <NotesInput name="comment" label="Notes" placeholder="Add an optional note..." />
+        </AdvancedOptionsSection>
 
         {/* Action Buttons */}
         <div className="flex justify-end gap-2">

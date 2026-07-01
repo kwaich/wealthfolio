@@ -868,6 +868,7 @@ mod tests {
                 unit_price: None,
                 amount: Some(Decimal::new(1000, 2)),
                 fee: None,
+                tax: None,
                 currency: "USD".to_string(),
                 fx_rate: None,
                 notes: Some("test".to_string()),

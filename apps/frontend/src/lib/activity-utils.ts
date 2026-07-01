@@ -277,7 +277,11 @@ export const formatSplitRatio = (amount: number): string => {
  * @returns The fee amount
  */
 export const getFee = (activity: ActivityDetails): number => {
-  return Number(activity.fee);
+  return Number(activity.fee ?? 0);
+};
+
+export const getTax = (activity: ActivityDetails): number => {
+  return Number(activity.tax ?? 0);
 };
 
 /**
@@ -355,6 +359,7 @@ export const calculateActivityValue = (activity: ActivityDetails): number => {
   ) {
     let amount = getAmount(activity);
     const fee = getFee(activity);
+    const tax = getTax(activity);
 
     if (isAssetBackedIncomeSubtype(activityType, subtype) && amount === 0) {
       const derivedAmount = getQuantity(activity) * getUnitPrice(activity);
@@ -368,14 +373,15 @@ export const calculateActivityValue = (activity: ActivityDetails): number => {
       return roundCurrency(Number(amount) + Number(fee));
     }
 
-    // For incoming cash activities, subtract fee from amount
-    return roundCurrency(Number(amount) - Number(fee));
+    // For incoming cash activities, subtract fee and withholding tax from amount
+    return roundCurrency(Number(amount) - Number(fee) - Number(tax));
   }
 
   // Handle trading activities (and securities transfers)
   const quantity = getQuantity(activity);
   const unitPrice = getUnitPrice(activity);
   const fee = getFee(activity);
+  const tax = getTax(activity);
   let activityAmount = roundCurrency(
     Number(quantity) * Number(unitPrice) * getContractMultiplier(activity),
   );
@@ -391,11 +397,11 @@ export const calculateActivityValue = (activity: ActivityDetails): number => {
   }
 
   if (activityType === ActivityType.BUY) {
-    return roundCurrency(Number(activityAmount) + Number(fee)); // Total cost including fees
+    return roundCurrency(Number(activityAmount) + Number(fee) + Number(tax)); // Total cost including trade charges
   }
 
   if (activityType === ActivityType.SELL) {
-    return roundCurrency(Number(activityAmount) - Number(fee)); // Net proceeds after fees
+    return roundCurrency(Number(activityAmount) - Number(fee) - Number(tax)); // Net proceeds after trade charges
   }
 
   // Default case - just return the activity amount

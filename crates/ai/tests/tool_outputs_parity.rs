@@ -571,6 +571,7 @@ fn fixture_cash_activity(
             unit_price: None,
             amount: Some(Decimal::new(-1250, 2)),
             fee: None,
+            tax: None,
             currency: "USD".to_string(),
             fx_rate: None,
             notes: Some(notes.to_string()),

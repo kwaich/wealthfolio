@@ -299,6 +299,14 @@ export const ActivityTableMobile = ({
                     </span>
                   </div>
                 )}
+                {Number(activity.tax) > 0 && activity.activityType !== "SPLIT" && (
+                  <div className="flex items-center justify-between">
+                    <span className="text-muted-foreground">Tax</span>
+                    <span className="font-medium">
+                      {formatAmount(Number(activity.tax), activity.currency)}
+                    </span>
+                  </div>
+                )}
 
                 {/* Total Value */}
                 {activity.activityType !== "SPLIT" && (

@@ -447,7 +447,16 @@ function useImportReviewColumns({
         enableSorting: false,
         meta: { cell: { variant: "number", step: 0.000001, valueType: "string" } },
       },
-      // 13. FX Rate
+      // 13. Tax
+      {
+        id: "tax",
+        accessorKey: "tax",
+        header: "Tax",
+        size: 100,
+        enableSorting: false,
+        meta: { cell: { variant: "number", step: 0.000001, valueType: "string" } },
+      },
+      // 14. FX Rate
       {
         id: "fxRate",
         accessorKey: "fxRate",
@@ -713,6 +722,7 @@ export function ImportReviewGrid({
             "amount",
             "currency",
             "fee",
+            "tax",
             "fxRate",
             "subtype",
             "isExternal",

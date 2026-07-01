@@ -153,6 +153,7 @@ fn draft_to_new_activity(draft: &ActivityDraft) -> Result<NewActivity, AgentTool
         unit_price: to_decimal(draft.unit_price, "unitPrice")?,
         currency: draft.currency.clone(),
         fee: to_decimal(draft.fee, "fee")?,
+        tax: to_decimal(draft.tax, "tax")?,
         amount: to_decimal(draft.amount, "amount")?,
         status: None,
         notes: draft.notes.clone(),
@@ -360,6 +361,7 @@ fn activity_draft_schema() -> serde_json::Value {
             "unitPrice": { "type": "number" },
             "amount": { "type": "number" },
             "fee": { "type": "number" },
+            "tax": { "type": "number" },
             "currency": { "type": "string" },
             "accountId": { "type": "string" },
             "accountName": { "type": "string" },
@@ -390,6 +392,7 @@ mod tests {
             unit_price: Some(150.25),
             amount: Some(1502.5),
             fee: Some(1.0),
+            tax: None,
             currency: "USD".to_string(),
             account_id: Some("acct-1".to_string()),
             account_name: Some("Brokerage".to_string()),
@@ -411,6 +414,7 @@ mod tests {
         assert_eq!(new.quantity, Some(Decimal::from_f64(10.0).unwrap()));
         assert_eq!(new.unit_price, Some(Decimal::from_f64(150.25).unwrap()));
         assert_eq!(new.fee, Some(Decimal::from_f64(1.0).unwrap()));
+        assert_eq!(new.tax, None);
         let asset = new.asset.expect("security draft should carry an asset");
         assert_eq!(asset.id.as_deref(), Some("SEC:AAPL:XNAS"));
         assert_eq!(asset.symbol.as_deref(), Some("AAPL"));

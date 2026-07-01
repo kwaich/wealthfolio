@@ -80,7 +80,8 @@ impl HoldingsCalculator {
         // fee, half-sold, then fully consumed would persist closure rows with
         // a $5 original fee.
         let orig_fees = lot.original_fees();
-        let original_cost_basis = lot.acquisition_price * orig_qty + orig_fees;
+        let orig_taxes = lot.original_taxes();
+        let original_cost_basis = lot.acquisition_price * orig_qty + orig_fees + orig_taxes;
         let base_currency = self.base_currency.read().unwrap().clone();
         let acquisition_date = lot.acquisition_date_key();
         let fx_rate_to_base =
@@ -106,6 +107,8 @@ impl HoldingsCalculator {
                 remaining_cost_basis_base: Decimal::ZERO.to_string(),
                 fee_allocated: orig_fees.to_string(),
                 fee_allocated_base: (orig_fees * fx_rate_to_base).to_string(),
+                tax_allocated: orig_taxes.to_string(),
+                tax_allocated_base: (orig_taxes * fx_rate_to_base).to_string(),
                 currency: position_currency.to_string(),
                 base_currency: base_currency.clone(),
                 fx_rate_to_base: fx_rate_to_base.to_string(),

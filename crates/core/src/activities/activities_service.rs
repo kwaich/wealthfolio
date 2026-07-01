@@ -134,6 +134,7 @@ impl ActivityService {
         activity.unit_price = activity.unit_price.map(|v| v.abs());
         activity.amount = activity.amount.map(|v| v.abs());
         activity.fee = activity.fee.map(|v| v.abs());
+        activity.tax = activity.tax.map(|v| v.abs());
     }
 
     fn hydrate_and_validate_update_against_existing(
@@ -219,6 +220,7 @@ impl ActivityService {
             || Self::decimal_patch_changes(activity.quantity, existing.quantity)
             || Self::decimal_patch_changes(activity.unit_price, existing.unit_price)
             || Self::decimal_patch_changes(activity.fee, existing.fee)
+            || Self::decimal_patch_changes(activity.tax, existing.tax)
             || Self::decimal_patch_changes(activity.fx_rate, existing.fx_rate)
     }
 
@@ -1054,6 +1056,7 @@ impl ActivityService {
                 unit_price: None,
                 currency: values.source_currency.clone(),
                 fee: None,
+                tax: None,
                 amount: Some(values.source_amount),
                 status: None,
                 notes: request.notes.clone(),
@@ -1077,6 +1080,7 @@ impl ActivityService {
                 unit_price: None,
                 currency: values.destination_currency.clone(),
                 fee: None,
+                tax: None,
                 amount: Some(values.destination_amount),
                 status: None,
                 notes: request.notes.clone(),
@@ -1111,6 +1115,7 @@ impl ActivityService {
                 unit_price: Some(None),
                 currency: values.source_currency.clone(),
                 fee: Some(None),
+                tax: Some(None),
                 amount: Some(Some(values.source_amount)),
                 status: None,
                 notes: request.notes.clone(),
@@ -1128,6 +1133,7 @@ impl ActivityService {
                 unit_price: Some(None),
                 currency: values.destination_currency.clone(),
                 fee: Some(None),
+                tax: Some(None),
                 amount: Some(Some(values.destination_amount)),
                 status: None,
                 notes: request.notes.clone(),
@@ -1162,6 +1168,7 @@ impl ActivityService {
             unit_price: None,
             currency: counterpart.currency.clone(),
             fee: None,
+            tax: None,
             amount: None,
             status: None,
             notes: update.notes.clone(),
@@ -1256,7 +1263,7 @@ impl ActivityService {
         // Normalize to absolute values and major currencies, matching what
         // prepare_activities_internal does before the apply-step key computation.
         let quantity = activity.quantity.map(|v| v.abs());
-        let (unit_price, amount, currency) =
+        let (unit_price, amount, fee, currency) =
             if let Some(rule) = get_normalization_rule(activity.currency.as_str()) {
                 let unit_price = activity
                     .unit_price
@@ -1264,7 +1271,10 @@ impl ActivityService {
                 let amount = activity
                     .amount
                     .map(|v| normalize_amount(v.abs(), activity.currency.as_str()).0);
-                (unit_price, amount, rule.major_code)
+                let fee = activity
+                    .fee
+                    .map(|v| normalize_amount(v.abs(), activity.currency.as_str()).0);
+                (unit_price, amount, fee, rule.major_code)
             } else {
                 let ccy = if activity.currency.trim().is_empty() {
                     "USD"
@@ -1274,6 +1284,7 @@ impl ActivityService {
                 (
                     activity.unit_price.map(|v| v.abs()),
                     activity.amount.map(|v| v.abs()),
+                    activity.fee.map(|v| v.abs()),
                     ccy,
                 )
             };
@@ -1286,6 +1297,7 @@ impl ActivityService {
             quantity,
             unit_price,
             amount,
+            fee,
             currency,
             None,
             activity.comment.as_deref(),
@@ -2232,23 +2244,31 @@ impl ActivityService {
 
         // Normalize minor currency units (e.g., GBp -> GBP) and convert amounts
         if get_normalization_rule(&activity.currency).is_some() {
+            let input_currency = activity.currency.clone();
+            let mut normalized_currency = activity.currency.clone();
             if let Some(unit_price) = activity.unit_price {
-                let (normalized_price, _) = normalize_amount(unit_price, &activity.currency);
+                let (normalized_price, _) = normalize_amount(unit_price, &input_currency);
                 activity.unit_price = Some(normalized_price);
             }
             if let Some(amount) = activity.amount {
-                let (normalized_amount, _) = normalize_amount(amount, &activity.currency);
+                let (normalized_amount, _) = normalize_amount(amount, &input_currency);
                 activity.amount = Some(normalized_amount);
             }
             if let Some(fee) = activity.fee {
-                let (normalized_fee, normalized_currency) =
-                    normalize_amount(fee, &activity.currency);
+                let (normalized_fee, currency) = normalize_amount(fee, &input_currency);
                 activity.fee = Some(normalized_fee);
-                activity.currency = normalized_currency.to_string();
-            } else {
-                let (_, normalized_currency) = normalize_amount(Decimal::ZERO, &activity.currency);
-                activity.currency = normalized_currency.to_string();
+                normalized_currency = currency.to_string();
             }
+            if let Some(tax) = activity.tax {
+                let (normalized_tax, currency) = normalize_amount(tax, &input_currency);
+                activity.tax = Some(normalized_tax);
+                normalized_currency = currency.to_string();
+            }
+            if activity.fee.is_none() && activity.tax.is_none() {
+                let (_, currency) = normalize_amount(Decimal::ZERO, &input_currency);
+                normalized_currency = currency.to_string();
+            }
+            activity.currency = normalized_currency;
         }
 
         // Preserve explicit idempotency key when provided (e.g., intentional manual duplicates).
@@ -2277,6 +2297,7 @@ impl ActivityService {
                 activity.quantity,
                 activity.unit_price,
                 activity.amount,
+                activity.fee,
                 &activity.currency,
                 activity.source_record_id.as_deref(),
                 activity.notes.as_deref(),
@@ -2645,6 +2666,7 @@ impl ActivityService {
         activity.unit_price = activity.unit_price.map(|v| v.map(|d| d.abs()));
         activity.amount = activity.amount.map(|v| v.map(|d| d.abs()));
         activity.fee = activity.fee.map(|v| v.map(|d| d.abs()));
+        activity.tax = activity.tax.map(|v| v.map(|d| d.abs()));
 
         // Securities transfers derive value from quantity × unit_price; clear
         // `amount` on update only when the patch carries a unit_price so callers
@@ -2659,24 +2681,31 @@ impl ActivityService {
 
         // Normalize minor currency units
         if get_normalization_rule(&activity.currency).is_some() {
+            let input_currency = activity.currency.clone();
+            let mut normalized_currency = activity.currency.clone();
             if let Some(Some(unit_price)) = activity.unit_price {
-                let (normalized_price, _) = normalize_amount(unit_price, &activity.currency);
+                let (normalized_price, _) = normalize_amount(unit_price, &input_currency);
                 activity.unit_price = Some(Some(normalized_price));
             }
             if let Some(Some(amount)) = activity.amount {
-                let (normalized_amount, _) = normalize_amount(amount, &activity.currency);
+                let (normalized_amount, _) = normalize_amount(amount, &input_currency);
                 activity.amount = Some(Some(normalized_amount));
             }
             if let Some(Some(fee)) = activity.fee {
-                let (normalized_fee, normalized_currency) =
-                    normalize_amount(fee, &activity.currency);
+                let (normalized_fee, currency) = normalize_amount(fee, &input_currency);
                 activity.fee = Some(Some(normalized_fee));
-                activity.currency = normalized_currency.to_string();
-            } else {
-                let (_, normalized_currency) =
-                    normalize_amount(rust_decimal::Decimal::ZERO, &activity.currency);
-                activity.currency = normalized_currency.to_string();
+                normalized_currency = currency.to_string();
             }
+            if let Some(Some(tax)) = activity.tax {
+                let (normalized_tax, currency) = normalize_amount(tax, &input_currency);
+                activity.tax = Some(Some(normalized_tax));
+                normalized_currency = currency.to_string();
+            }
+            if !matches!(activity.fee, Some(Some(_))) && !matches!(activity.tax, Some(Some(_))) {
+                let (_, currency) = normalize_amount(rust_decimal::Decimal::ZERO, &input_currency);
+                normalized_currency = currency.to_string();
+            }
+            activity.currency = normalized_currency;
         }
 
         Ok(activity)
@@ -3824,6 +3853,7 @@ impl ActivityServiceTrait for ActivityService {
                     unit_price: None,
                     currency: updated.currency.clone(),
                     fee: None,
+                    tax: None,
                     amount: Some(updated.amount),
                     status: Some(counterpart.status.clone()),
                     notes: updated.notes.clone(),
@@ -5719,6 +5749,7 @@ impl ActivityService {
             activity.unit_price = activity.unit_price.map(|v| v.abs());
             activity.amount = activity.amount.map(|v| v.abs());
             activity.fee = activity.fee.map(|v| v.abs());
+            activity.tax = activity.tax.map(|v| v.abs());
 
             if let Err(e) = Self::validate_split_ratio(&activity.activity_type, activity.amount) {
                 if mode.is_sync() {
@@ -5750,22 +5781,29 @@ impl ActivityService {
 
             // Normalize minor currency units (e.g., GBp -> GBP) and convert amounts
             if get_normalization_rule(&activity.currency).is_some() {
+                let input_currency = activity.currency.clone();
                 if let Some(unit_price) = activity.unit_price {
-                    let (normalized_price, _) = normalize_amount(unit_price, &activity.currency);
+                    let (normalized_price, _) = normalize_amount(unit_price, &input_currency);
                     activity.unit_price = Some(normalized_price);
                 }
                 if let Some(amount) = activity.amount {
-                    let (normalized_amount, _) = normalize_amount(amount, &activity.currency);
+                    let (normalized_amount, _) = normalize_amount(amount, &input_currency);
                     activity.amount = Some(normalized_amount);
                 }
                 if let Some(fee) = activity.fee {
                     let (normalized_fee, normalized_currency) =
-                        normalize_amount(fee, &activity.currency);
+                        normalize_amount(fee, &input_currency);
                     activity.fee = Some(normalized_fee);
                     activity.currency = normalized_currency.to_string();
-                } else {
-                    let (_, normalized_currency) =
-                        normalize_amount(Decimal::ZERO, &activity.currency);
+                }
+                if let Some(tax) = activity.tax {
+                    let (normalized_tax, normalized_currency) =
+                        normalize_amount(tax, &input_currency);
+                    activity.tax = Some(normalized_tax);
+                    activity.currency = normalized_currency.to_string();
+                }
+                if activity.fee.is_none() && activity.tax.is_none() {
+                    let (_, normalized_currency) = normalize_amount(Decimal::ZERO, &input_currency);
                     activity.currency = normalized_currency.to_string();
                 }
             }
@@ -5794,6 +5832,7 @@ impl ActivityService {
                     activity.quantity,
                     activity.unit_price,
                     activity.amount,
+                    activity.fee,
                     &activity.currency,
                     activity.source_record_id.as_deref(),
                     activity.notes.as_deref(),
@@ -6147,6 +6186,7 @@ mod reviewed_import_metadata_tests {
             unit_price: None,
             currency: "USD".to_string(),
             fee: None,
+            tax: None,
             amount: None,
             comment: None,
             account_id: None,

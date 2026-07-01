@@ -109,6 +109,13 @@ pub struct Lot {
     /// `acquisition_fees` when this field is absent — see [`Lot::original_fees`].
     #[serde(default)]
     pub original_acquisition_fees: Decimal,
+    /// Represents trade-level taxes paid in the Position's currency associated
+    /// with the acquisition. Mutated on partial sells just like fees.
+    #[serde(default)]
+    pub acquisition_taxes: Decimal,
+    /// Immutable original tax allocated to this lot at acquisition.
+    #[serde(default)]
+    pub original_acquisition_taxes: Decimal,
     /// FX rate used to convert from activity currency to position currency.
     /// Stored for audit trail when cross-currency purchases occur.
     /// None when activity currency matches position currency.
@@ -223,6 +230,14 @@ impl Lot {
             self.acquisition_fees
         } else {
             self.original_acquisition_fees
+        }
+    }
+
+    pub fn original_taxes(&self) -> Decimal {
+        if self.original_acquisition_taxes.is_zero() && !self.acquisition_taxes.is_zero() {
+            self.acquisition_taxes
+        } else {
+            self.original_acquisition_taxes
         }
     }
 }
@@ -466,9 +481,10 @@ impl Position {
         let acquisition_price = activity.price();
         let quantity = activity.qty();
         let acquisition_fees = activity.fee_amt(); // Store the fee in activity currency
+        let acquisition_taxes = activity.tax_amt();
 
-        // Cost basis ONLY includes fees for BUY activities
-        let cost_basis = quantity * acquisition_price + acquisition_fees;
+        // Cost basis includes acquisition trade charges for BUY activities.
+        let cost_basis = quantity * acquisition_price + acquisition_fees + acquisition_taxes;
 
         let new_lot = Lot {
             id: activity.id.clone(), // Use activity ID as Lot ID
@@ -481,6 +497,8 @@ impl Position {
             acquisition_price, // Store unrounded in position currency
             acquisition_fees,  // Store unrounded; mutated on partial sells
             original_acquisition_fees: acquisition_fees, // Immutable original
+            acquisition_taxes,
+            original_acquisition_taxes: acquisition_taxes,
             fx_rate_to_position: None, // No currency conversion in this method
             fx_rate_to_account: None,
             account_currency: None,
@@ -528,6 +546,7 @@ impl Position {
         quantity: Decimal,
         unit_price: Decimal,
         fee: Decimal,
+        tax: Decimal,
         acquisition_date: DateTime<Utc>,
         fx_rate_used: Option<Decimal>,
         source_activity_id: Option<String>,
@@ -549,7 +568,7 @@ impl Position {
             );
         }
 
-        let cost_basis = quantity * unit_price + fee;
+        let cost_basis = quantity * unit_price + fee + tax;
 
         let new_lot = Lot {
             id: lot_id,
@@ -562,6 +581,8 @@ impl Position {
             acquisition_price: unit_price,
             acquisition_fees: fee,
             original_acquisition_fees: fee,
+            acquisition_taxes: tax,
+            original_acquisition_taxes: tax,
             fx_rate_to_position: fx_rate_used,
             fx_rate_to_account: book_basis.fx_rate_to_account,
             account_currency: book_basis.account_currency,
@@ -590,6 +611,7 @@ impl Position {
         signed_quantity: Decimal,
         unit_price: Decimal,
         fee: Decimal,
+        tax: Decimal,
         acquisition_date: DateTime<Utc>,
         fx_rate_used: Option<Decimal>,
         source_activity_id: Option<String>,
@@ -619,7 +641,7 @@ impl Position {
             );
         }
 
-        let cost_basis = signed_quantity * unit_price + fee;
+        let cost_basis = signed_quantity * unit_price + fee + tax;
 
         let new_lot = Lot {
             id: lot_id,
@@ -632,6 +654,8 @@ impl Position {
             acquisition_price: unit_price,
             acquisition_fees: fee,
             original_acquisition_fees: fee,
+            acquisition_taxes: tax,
+            original_acquisition_taxes: tax,
             fx_rate_to_position: fx_rate_used,
             fx_rate_to_account: book_basis.fx_rate_to_account,
             account_currency: book_basis.account_currency,
@@ -678,15 +702,17 @@ impl Position {
             }
 
             // Apply FX conversion if needed
-            let (price, fee, cost_basis, rate_used) = if let Some(rate) = fx_rate {
+            let (price, fee, tax, cost_basis, rate_used) = if let Some(rate) = fx_rate {
                 let p = src_lot.acquisition_price * rate;
                 let f = src_lot.acquisition_fees * rate;
+                let t = src_lot.acquisition_taxes * rate;
                 let cb = src_lot.cost_basis * rate;
-                (p, f, cb, Some(rate))
+                (p, f, t, cb, Some(rate))
             } else {
                 (
                     src_lot.acquisition_price,
                     src_lot.acquisition_fees,
+                    src_lot.acquisition_taxes,
                     src_lot.cost_basis,
                     src_lot.fx_rate_to_position,
                 )
@@ -707,6 +733,8 @@ impl Position {
                 acquisition_price: price,
                 acquisition_fees: fee,
                 original_acquisition_fees: fee,
+                acquisition_taxes: tax,
+                original_acquisition_taxes: tax,
                 fx_rate_to_position: rate_used,
                 fx_rate_to_account: if fx_rate.is_some() {
                     None
@@ -819,7 +847,7 @@ impl Position {
         vec_lots.sort_by_key(|lot| lot.acquisition_date); // Ensure FIFO order
 
         let mut lot_indices_to_remove = Vec::new();
-        let mut lot_updates = Vec::new(); // (index, new_quantity, new_cost_basis, new_fees)
+        let mut lot_updates = Vec::new(); // (index, new_quantity, new_cost_basis, new_fees, new_taxes)
         let mut actual_quantity_reduced_effective = Decimal::ZERO;
         // Cost basis sum will be in the Position's currency
         let mut cost_basis_of_sold_lots_asset_currency = Decimal::ZERO;
@@ -868,6 +896,11 @@ impl Position {
             } else {
                 lot.acquisition_fees * qty_from_this_lot / lot.quantity
             };
+            let taxes_removed = if lot.quantity.is_zero() {
+                Decimal::ZERO
+            } else {
+                lot.acquisition_taxes * qty_from_this_lot / lot.quantity
+            };
 
             // Record the removed portion as a lot (preserving original acquisition data)
             // For transfer-out flows, the receiving account inherits the same split ratio
@@ -886,6 +919,8 @@ impl Position {
                 acquisition_price: lot.acquisition_price,
                 acquisition_fees: fees_removed,
                 original_acquisition_fees: fees_removed,
+                acquisition_taxes: taxes_removed,
+                original_acquisition_taxes: taxes_removed,
                 fx_rate_to_position: lot.fx_rate_to_position,
                 fx_rate_to_account: lot.fx_rate_to_account,
                 account_currency: lot.account_currency.clone(),
@@ -909,21 +944,24 @@ impl Position {
                 // Calculate remaining cost basis and fees (asset currency)
                 let remaining_lot_basis = lot.cost_basis - cost_basis_removed;
                 let remaining_fees = lot.acquisition_fees - fees_removed;
+                let remaining_taxes = lot.acquisition_taxes - taxes_removed;
                 lot_updates.push((
                     index,
                     remaining_lot_qty,
                     remaining_lot_basis,
                     remaining_fees,
+                    remaining_taxes,
                 ));
             }
         }
 
         // Apply updates to the Vec
-        for (index, new_quantity, new_cost_basis, new_fees) in lot_updates {
+        for (index, new_quantity, new_cost_basis, new_fees, new_taxes) in lot_updates {
             if let Some(lot) = vec_lots.get_mut(index) {
                 lot.quantity = new_quantity;
                 lot.cost_basis = new_cost_basis; // Update with asset currency value
                 lot.acquisition_fees = new_fees;
+                lot.acquisition_taxes = new_taxes;
             } else {
                 error!(
                     "Failed to get mutable lot at index {} for position {} during update",
@@ -1046,6 +1084,11 @@ impl Position {
             } else {
                 lot.acquisition_fees * qty_from_this_lot_abs / lot.quantity.abs()
             };
+            let taxes_removed = if lot.quantity.is_zero() {
+                Decimal::ZERO
+            } else {
+                lot.acquisition_taxes * qty_from_this_lot_abs / lot.quantity.abs()
+            };
 
             removed_lots.push(Lot {
                 id: lot.id.clone(),
@@ -1058,6 +1101,8 @@ impl Position {
                 acquisition_price: lot.acquisition_price,
                 acquisition_fees: fees_removed,
                 original_acquisition_fees: fees_removed,
+                acquisition_taxes: taxes_removed,
+                original_acquisition_taxes: taxes_removed,
                 fx_rate_to_position: lot.fx_rate_to_position,
                 fx_rate_to_account: lot.fx_rate_to_account,
                 account_currency: lot.account_currency.clone(),
@@ -1082,15 +1127,17 @@ impl Position {
                     remaining_lot_qty,
                     lot.cost_basis - cost_basis_removed,
                     lot.acquisition_fees - fees_removed,
+                    lot.acquisition_taxes - taxes_removed,
                 ));
             }
         }
 
-        for (index, new_quantity, new_cost_basis, new_fees) in lot_updates {
+        for (index, new_quantity, new_cost_basis, new_fees, new_taxes) in lot_updates {
             if let Some(lot) = vec_lots.get_mut(index) {
                 lot.quantity = new_quantity;
                 lot.cost_basis = new_cost_basis;
                 lot.acquisition_fees = new_fees;
+                lot.acquisition_taxes = new_taxes;
             } else {
                 error!(
                     "Failed to get mutable negative lot at index {} for position {} during update",
@@ -1190,6 +1237,7 @@ mod tests {
             dec!(-1),
             dec!(200),
             dec!(1),
+            dec!(0),
             Utc.with_ymd_and_hms(2025, 1, 2, 12, 0, 0).unwrap(),
             None,
             Some("short_open".to_string()),
@@ -1212,6 +1260,7 @@ mod tests {
                 dec!(-1),
                 dec!(200),
                 dec!(1),
+                dec!(0),
                 Utc.with_ymd_and_hms(2025, 1, 2, 12, 0, 0).unwrap(),
                 None,
                 Some("short_open".to_string()),
@@ -1237,6 +1286,7 @@ mod tests {
                 dec!(-3),
                 dec!(200),
                 dec!(3),
+                dec!(0),
                 Utc.with_ymd_and_hms(2025, 1, 2, 12, 0, 0).unwrap(),
                 None,
                 Some("short_open".to_string()),
@@ -1268,6 +1318,7 @@ mod tests {
                 dec!(5),
                 dec!(100),
                 dec!(0),
+                dec!(0),
                 acquisition,
                 None,
                 Some("long_open".to_string()),
@@ -1280,6 +1331,7 @@ mod tests {
                 "short_open".to_string(),
                 dec!(-10),
                 dec!(100),
+                dec!(0),
                 dec!(0),
                 Utc.with_ymd_and_hms(2025, 1, 3, 12, 0, 0).unwrap(),
                 None,
@@ -1309,6 +1361,7 @@ mod tests {
                 "short_open".to_string(),
                 dec!(-1),
                 dec!(200),
+                dec!(0),
                 dec!(0),
                 acquisition,
                 None,

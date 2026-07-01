@@ -23,12 +23,33 @@ describe("Form Schemas Validation", () => {
         quantity: 10,
         unitPrice: 150.5,
         fee: 5,
+        tax: 2,
         comment: "Test purchase",
         currency: "USD",
       };
 
       const result = buyFormSchema.safeParse(validData);
       expect(result.success).toBe(true);
+    });
+
+    it("fails when tax is negative", () => {
+      const result = buyFormSchema.safeParse({
+        accountId: "acc-123",
+        assetId: "AAPL",
+        activityDate: new Date(),
+        quantity: 10,
+        unitPrice: 150.5,
+        fee: 5,
+        tax: -1,
+        currency: "USD",
+      });
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.issues.map((issue) => issue.message)).toContain(
+          "Tax must be non-negative.",
+        );
+      }
     });
 
     it("fails when accountId is empty", () => {
@@ -155,12 +176,33 @@ describe("Form Schemas Validation", () => {
         quantity: 10,
         unitPrice: 150.5,
         fee: 5,
+        tax: 2,
         comment: "Test sale",
         currency: "USD",
       };
 
       const result = sellFormSchema.safeParse(validData);
       expect(result.success).toBe(true);
+    });
+
+    it("fails when tax is negative", () => {
+      const result = sellFormSchema.safeParse({
+        accountId: "acc-123",
+        assetId: "AAPL",
+        activityDate: new Date(),
+        quantity: 10,
+        unitPrice: 150.5,
+        fee: 5,
+        tax: -1,
+        currency: "USD",
+      });
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.issues.map((issue) => issue.message)).toContain(
+          "Tax must be non-negative.",
+        );
+      }
     });
 
     it("fails when required fields are missing", () => {
@@ -685,12 +727,16 @@ describe("Form Schemas Validation", () => {
         accountId: "acc-123",
         activityDate: new Date(),
         amount: 15.5,
+        tax: 1.25,
         comment: "Monthly interest",
         currency: "USD",
       };
 
       const result = interestFormSchema.safeParse(validData);
       expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.tax).toBe(1.25);
+      }
     });
 
     it("fails when amount is not positive", () => {
@@ -705,6 +751,23 @@ describe("Form Schemas Validation", () => {
       expect(result.success).toBe(false);
       if (!result.success) {
         expect(result.error.issues[0].message).toBe("Amount must be greater than 0.");
+      }
+    });
+
+    it("fails when withholding tax is negative", () => {
+      const result = interestFormSchema.safeParse({
+        accountId: "acc-123",
+        activityDate: new Date(),
+        amount: 15.5,
+        tax: -0.01,
+        currency: "USD",
+      });
+
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.issues.map((issue) => issue.message)).toContain(
+          "Withholding tax must be non-negative.",
+        );
       }
     });
   });
@@ -972,6 +1035,7 @@ describe("Form Schemas Validation", () => {
         activityDate: new Date(),
         symbol: "AAPL",
         amount: 12,
+        tax: 1.8,
         quantity: 2,
         unitPrice: 6,
         subtype: null,
@@ -980,7 +1044,7 @@ describe("Form Schemas Validation", () => {
 
       const payload = ACTIVITY_FORM_CONFIG.DIVIDEND.toPayload(formData);
 
-      expect(payload).toMatchObject({ subtype: null, quantity: null, unitPrice: null });
+      expect(payload).toMatchObject({ subtype: null, quantity: null, unitPrice: null, tax: 1.8 });
     });
 
     it("keeps asset-backed values for dividend in kind", () => {
@@ -989,6 +1053,7 @@ describe("Form Schemas Validation", () => {
         activityDate: new Date(),
         symbol: "AAPL",
         amount: 12,
+        tax: 1.8,
         quantity: 2,
         unitPrice: 6,
         subtype: ACTIVITY_SUBTYPES.DIVIDEND_IN_KIND,
@@ -1001,6 +1066,7 @@ describe("Form Schemas Validation", () => {
         subtype: ACTIVITY_SUBTYPES.DIVIDEND_IN_KIND,
         quantity: 2,
         unitPrice: 6,
+        tax: 1.8,
       });
     });
 
@@ -1010,6 +1076,7 @@ describe("Form Schemas Validation", () => {
         activityDate: new Date(),
         symbol: "ETH",
         amount: 12,
+        tax: 1.8,
         quantity: 2,
         unitPrice: 6,
         subtype: null,
@@ -1018,7 +1085,7 @@ describe("Form Schemas Validation", () => {
 
       const payload = ACTIVITY_FORM_CONFIG.INTEREST.toPayload(formData);
 
-      expect(payload).toMatchObject({ subtype: null, quantity: null, unitPrice: null });
+      expect(payload).toMatchObject({ subtype: null, quantity: null, unitPrice: null, tax: 1.8 });
     });
 
     it("keeps asset-backed values for staking rewards", () => {
@@ -1027,6 +1094,7 @@ describe("Form Schemas Validation", () => {
         activityDate: new Date(),
         symbol: "ETH",
         amount: 12,
+        tax: 1.8,
         quantity: 2,
         unitPrice: 6,
         subtype: ACTIVITY_SUBTYPES.STAKING_REWARD,
@@ -1039,6 +1107,7 @@ describe("Form Schemas Validation", () => {
         subtype: ACTIVITY_SUBTYPES.STAKING_REWARD,
         quantity: 2,
         unitPrice: 6,
+        tax: 1.8,
       });
     });
   });
@@ -1089,6 +1158,24 @@ describe("Form Schemas Validation", () => {
       });
 
       expect(result.success).toBe(true);
+    });
+
+    it("strips stale tax values from transfer activities", () => {
+      const result = newActivitySchema.safeParse({
+        accountId: "acc-123",
+        activityType: "TRANSFER_OUT",
+        activityDate: new Date(),
+        transferMode: "cash",
+        direction: "out",
+        amount: 25,
+        tax: 1.25,
+        currency: "USD",
+      });
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect("tax" in result.data).toBe(false);
+      }
     });
 
     it("accepts adjustment activities with zero unit price", () => {

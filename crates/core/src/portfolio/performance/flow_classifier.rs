@@ -277,6 +277,7 @@ mod tests {
             unit_price: None,
             amount: Some(rust_decimal::Decimal::from(100)),
             fee: None,
+            tax: None,
             currency: "USD".to_string(),
             fx_rate: None,
             notes: None,

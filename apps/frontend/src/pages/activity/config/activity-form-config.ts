@@ -116,6 +116,7 @@ export const ACTIVITY_FORM_CONFIG: Record<
         unitPrice: absNum(activity?.unitPrice),
         amount: absNum(activity?.amount),
         fee: absNum(activity?.fee) ?? 0,
+        tax: absNum(activity?.tax) ?? 0,
         subtype: activity?.subtype ?? null,
         quoteMode:
           activity?.assetQuoteMode === QuoteMode.MANUAL ? QuoteMode.MANUAL : QuoteMode.MARKET,
@@ -166,6 +167,7 @@ export const ACTIVITY_FORM_CONFIG: Record<
         quantity: d.quantity,
         unitPrice: d.unitPrice,
         fee: d.fee,
+        tax: d.tax,
         subtype: d.subtype ?? undefined,
         comment: d.comment,
         quoteMode: d.quoteMode,
@@ -204,6 +206,7 @@ export const ACTIVITY_FORM_CONFIG: Record<
         unitPrice: absNum(activity?.unitPrice),
         amount: absNum(activity?.amount),
         fee: absNum(activity?.fee) ?? 0,
+        tax: absNum(activity?.tax) ?? 0,
         subtype: activity?.subtype ?? null,
         quoteMode:
           activity?.assetQuoteMode === QuoteMode.MANUAL ? QuoteMode.MANUAL : QuoteMode.MARKET,
@@ -254,6 +257,7 @@ export const ACTIVITY_FORM_CONFIG: Record<
         quantity: d.quantity,
         unitPrice: d.unitPrice,
         fee: d.fee,
+        tax: d.tax,
         subtype: d.subtype ?? undefined,
         comment: d.comment,
         quoteMode: d.quoteMode,
@@ -334,6 +338,7 @@ export const ACTIVITY_FORM_CONFIG: Record<
       ...getBaseDefaults(activity, accounts),
       symbol: activity?.assetSymbol ?? activity?.assetId ?? "",
       amount: absNum(activity?.amount),
+      tax: absNum(activity?.tax) ?? 0,
       unitPrice: absNum(activity?.unitPrice),
       quantity: absNum(activity?.quantity),
       // Advanced options
@@ -352,6 +357,7 @@ export const ACTIVITY_FORM_CONFIG: Record<
         assetId: d.symbol,
         ...selectedExistingAsset(d.symbol, d.existingAssetId, d.symbolInstrumentType),
         amount: d.amount,
+        tax: d.tax,
         unitPrice: isAssetBackedDividend ? d.unitPrice : null,
         quantity: isAssetBackedDividend ? d.quantity : null,
         comment: d.comment,
@@ -526,6 +532,7 @@ export const ACTIVITY_FORM_CONFIG: Record<
       ...getBaseDefaults(activity, accounts),
       symbol: activity?.assetSymbol ?? activity?.assetId ?? null,
       amount: absNum(activity?.amount),
+      tax: absNum(activity?.tax) ?? 0,
       unitPrice: absNum(activity?.unitPrice),
       quantity: absNum(activity?.quantity),
       // Advanced options
@@ -543,6 +550,7 @@ export const ACTIVITY_FORM_CONFIG: Record<
         assetId: d.symbol?.trim() || undefined,
         ...selectedExistingAsset(d.symbol, d.existingAssetId, d.symbolInstrumentType),
         amount: d.amount,
+        tax: d.tax,
         unitPrice: isStakingReward ? d.unitPrice : null,
         quantity: isStakingReward ? d.quantity : null,
         comment: d.comment,

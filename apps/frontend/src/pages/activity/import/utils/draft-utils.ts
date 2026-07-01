@@ -574,6 +574,7 @@ export function createDraftActivities(
     const rawAmount = getColumnValue(row, ImportFormat.AMOUNT);
     const rawCurrency = getColumnValue(row, ImportFormat.CURRENCY);
     const rawFee = getColumnValue(row, ImportFormat.FEE);
+    const rawTax = getColumnValue(row, ImportFormat.TAX);
     const rawComment = getColumnValue(row, ImportFormat.COMMENT);
     const rawAccount = getColumnValue(row, ImportFormat.ACCOUNT);
     const rawFxRate = getColumnValue(row, ImportFormat.FX_RATE);
@@ -633,9 +634,10 @@ export function createDraftActivities(
       normalizedCsvInstrumentType || prefixInstrumentType || mappedInstrumentType;
     const quantity = parseNumericValue(rawQuantity, decimalSeparator, thousandsSeparator);
     const unitPrice = parseNumericValue(rawUnitPrice, decimalSeparator, thousandsSeparator);
-    const amount = parseNumericValue(rawAmount, decimalSeparator, thousandsSeparator);
+    let amount = parseNumericValue(rawAmount, decimalSeparator, thousandsSeparator);
     const currency = rawCurrency?.trim() || defaultCurrency;
     const fee = parseNumericValue(rawFee, decimalSeparator, thousandsSeparator);
+    let tax = parseNumericValue(rawTax, decimalSeparator, thousandsSeparator);
     const comment = rawComment?.trim();
     const fxRate = parseNumericValue(rawFxRate, decimalSeparator, thousandsSeparator);
     const signedFxSubtype = signedFxTransferType
@@ -671,6 +673,15 @@ export function createDraftActivities(
 
     // For cash-like activities, some brokers (e.g. Schwab) put the dollar value
     // in the Quantity column instead of Amount.
+    if (
+      activityType === ActivityType.TAX &&
+      !hasPositiveValue(amount) &&
+      !hasPositiveValue(fee) &&
+      hasPositiveValue(tax)
+    ) {
+      amount = tax;
+      tax = undefined;
+    }
     const resolved = resolveCashActivityFields(activityType, quantity, amount, unitPrice, subtype);
 
     // Infer isExternal for transfers: external unless the raw CSV label says "INTERNAL"
@@ -714,6 +725,7 @@ export function createDraftActivities(
       amount: resolved.amount,
       currency,
       fee,
+      tax,
       fxRate,
       subtype,
       isExternal,
@@ -755,6 +767,7 @@ export function draftToActivityImport(draft: DraftActivity): ActivityImport {
     quantity: draft.quantity,
     unitPrice: draft.unitPrice,
     fee: draft.fee,
+    tax: draft.tax,
     fxRate: draft.fxRate,
     subtype: subtype && subtype.toUpperCase() !== activityType ? subtype : undefined,
     exchangeMic: draft.exchangeMic,

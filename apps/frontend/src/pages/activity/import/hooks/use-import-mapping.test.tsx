@@ -29,6 +29,14 @@ describe("useImportMapping activity type mappings", () => {
     expect(mapping[ImportFormat.AMOUNT]).toBeUndefined();
   });
 
+  it("auto-maps tax and withholding aliases", () => {
+    const tradeMapping = initializeColumnMapping(["Date", "Stamp Duty", "Amount"]);
+    const incomeMapping = initializeColumnMapping(["Date", "Withholding Tax", "Amount"]);
+
+    expect(tradeMapping[ImportFormat.TAX]).toBe("Stamp Duty");
+    expect(incomeMapping[ImportFormat.TAX]).toBe("Withholding Tax");
+  });
+
   it("starts with exact identity mappings for canonical activity types", () => {
     const { result } = renderHook(() => useImportMapping(), {
       wrapper: createWrapper(),

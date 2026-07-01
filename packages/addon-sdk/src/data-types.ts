@@ -194,6 +194,7 @@ export interface Activity {
   unitPrice?: string | null;
   amount?: string | null;
   fee?: string | null;
+  tax?: string | null;
   currency: string;
   fxRate?: string | null;
 
@@ -243,6 +244,7 @@ export interface ActivityDetails {
   unitPrice: string | null;
   amount: string | null;
   fee: string | null;
+  tax?: string | null;
   currency: string;
   needsReview: boolean;
   comment?: string;
@@ -305,6 +307,7 @@ export interface ActivityCreate {
   amount?: string | number | null;
   currency?: string;
   fee?: string | number | null;
+  tax?: string | number | null;
   comment?: string | null;
   fxRate?: string | number | null;
   metadata?: string | Record<string, unknown>;
@@ -325,6 +328,7 @@ export interface ActivityUpdate {
   amount?: string | number | null;
   currency?: string;
   fee?: string | number | null;
+  tax?: string | number | null;
   comment?: string | null;
   fxRate?: string | number | null;
   metadata?: string | Record<string, unknown>;
@@ -368,6 +372,7 @@ export interface ActivityImport {
   quantity?: number | string | null;
   unitPrice?: number | string | null;
   fee?: number | string | null;
+  tax?: number | string | null;
   fxRate?: number | string | null;
   accountName?: string;
   symbolName?: string;

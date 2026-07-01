@@ -24,6 +24,7 @@ export type ImportReviewColumnId =
   | "amount"
   | "currency"
   | "fee"
+  | "tax"
   | "fxRate"
   | "comment";
 
@@ -72,6 +73,7 @@ const TRANSACTION_MAPPING_FIELDS = [
   ImportFormat.AMOUNT,
   ImportFormat.CURRENCY,
   ImportFormat.FEE,
+  ImportFormat.TAX,
   ImportFormat.COMMENT,
   ImportFormat.FX_RATE,
   ImportFormat.SUBTYPE,
@@ -90,6 +92,7 @@ const INVESTMENT_REVIEW_COLUMNS = [
   "amount",
   "currency",
   "fee",
+  "tax",
   "fxRate",
   "comment",
 ] as const satisfies readonly ImportReviewColumnId[];
@@ -103,6 +106,7 @@ const TRANSACTION_REVIEW_COLUMNS = [
   "amount",
   "currency",
   "fee",
+  "tax",
   "fxRate",
   "comment",
 ] as const satisfies readonly ImportReviewColumnId[];

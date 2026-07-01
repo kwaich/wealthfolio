@@ -6,6 +6,7 @@ use crate::errors::Result;
 use crate::portfolio::snapshot::AccountStateSnapshot;
 use log::warn;
 use rust_decimal::Decimal;
+use std::str::FromStr;
 
 impl HoldingsCalculator {
     /// Handle DEPOSIT activity.
@@ -122,9 +123,13 @@ impl HoldingsCalculator {
 
         let activity_currency = &activity.currency;
         let activity_amount = activity.amt();
+        let withholding_tax = match ActivityType::from_str(activity.effective_type()) {
+            Ok(ActivityType::Dividend | ActivityType::Interest) => activity.tax_amt(),
+            _ => Decimal::ZERO,
+        };
 
-        // Book cash in ACTIVITY currency (amount - fee)
-        let net_amount = activity_amount - activity.fee_amt();
+        // Book cash in ACTIVITY currency (gross income - fees - withholding tax)
+        let net_amount = activity_amount - activity.fee_amt() - withholding_tax;
         add_cash(state, activity_currency, net_amount);
 
         // CREDIT/BONUS is external contribution (new capital entering portfolio)
@@ -183,18 +188,18 @@ impl HoldingsCalculator {
     ) -> Result<()> {
         let activity_currency = &activity.currency;
 
-        // Determine charge amount: prefer fee field, fall back to amount
-        let charge = if activity.fee_amt() != Decimal::ZERO {
-            activity.fee_amt()
-        } else {
-            activity.amt()
-        };
+        let charge = activity.charge_amt_for(activity_type);
 
         if charge == Decimal::ZERO {
+            let expected_fields = match activity_type {
+                ActivityType::Tax => "'tax', 'fee', and 'amount'",
+                _ => "'fee' and 'amount'",
+            };
             warn!(
-                "Activity {} ({}): 'fee' and 'amount' are both zero. No cash change.",
+                "Activity {} ({}): {} are zero. No cash change.",
                 activity.id,
-                activity_type.as_str()
+                activity_type.as_str(),
+                expected_fields
             );
             return Ok(());
         }

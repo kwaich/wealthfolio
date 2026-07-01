@@ -55,6 +55,7 @@ export interface DraftActivity {
   amount?: string | null;
   currency: string;
   fee?: string | null;
+  tax?: string | null;
   accountId: string;
   comment?: string;
   subtype?: string;
@@ -570,6 +571,7 @@ export function ImportProvider({ children, initialAccountId }: ImportProviderPro
                 amount: draft.amount,
                 currency: draft.currency || defaultCurrencyRef.current || "",
                 fee: draft.fee,
+                tax: draft.tax,
                 isDraft: true,
                 isValid: draft.status === "valid" || draft.status === "warning",
                 lineNumber: draft.rowIndex + 1,

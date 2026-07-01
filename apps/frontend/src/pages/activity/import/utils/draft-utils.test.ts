@@ -151,6 +151,34 @@ describe("createDraftActivities explicit activity mapping", () => {
     expect(draft.amount).toBe("1000.00");
   });
 
+  it("uses a tax column as the cash amount for standalone tax activities", () => {
+    const [draft] = createDraftActivities(
+      [["2024-03-15", "TAX", "", "USD", "-58.22"]],
+      [...headers, ImportFormat.TAX],
+      {
+        ...baseMapping,
+        fieldMappings: {
+          ...baseMapping.fieldMappings,
+          [ImportFormat.TAX]: ImportFormat.TAX,
+        },
+        activityMappings: {
+          [ActivityType.TAX]: ["TAX"],
+        },
+      },
+      parseConfig,
+      "account-1",
+    );
+
+    expect(draft.status).toBe("valid");
+    expect(draft.activityType).toBe(ActivityType.TAX);
+    expect(draft.amount).toBe("58.22");
+    expect(draft.tax).toBeUndefined();
+
+    const payload = draftToActivityImport(draft);
+    expect(payload.amount).toBe("58.22");
+    expect(payload.tax).toBeUndefined();
+  });
+
   it("does not infer transfer direction from sign", () => {
     const draft = createSingleDraftWithMapping(["2024-03-15", "TRANSFER", "-250.00", "USD"], {
       [ActivityType.TRANSFER_IN]: ["TRANSFER"],

@@ -249,16 +249,17 @@ impl HoldingsCalculator {
             }))
     }
 
-    /// Converts unit_price and fee to position currency.
-    /// Returns (converted_price, converted_fee, fx_rate_used).
+    /// Converts unit_price, fee, and tax to position currency.
+    /// Returns (converted_price, converted_fee, converted_tax, fx_rate_used).
     pub(super) fn convert_to_position_currency(
         &self,
         unit_price: Decimal,
         fee: Decimal,
+        tax: Decimal,
         activity: &Activity,
         position_currency: &str,
         account_currency: &str,
-    ) -> Result<(Decimal, Decimal, Option<Decimal>)> {
+    ) -> Result<(Decimal, Decimal, Decimal, Option<Decimal>)> {
         let activity_date = self.activity_local_date(activity);
 
         // Determine when we can use the activity's fx_rate for position currency conversion
@@ -271,7 +272,12 @@ impl HoldingsCalculator {
                     "Using activity fx_rate {} for position currency conversion {} -> {} (activity {})",
                     fx_rate, activity.currency, position_currency, activity.id
                 );
-                return Ok((unit_price * fx_rate, fee * fx_rate, Some(fx_rate)));
+                return Ok((
+                    unit_price * fx_rate,
+                    fee * fx_rate,
+                    tax * fx_rate,
+                    Some(fx_rate),
+                ));
             }
         }
 
@@ -300,6 +306,15 @@ impl HoldingsCalculator {
                     activity.currency, position_currency, e
                 ))
             })?;
+        let converted_tax = self
+            .fx_service
+            .convert_currency_for_date(tax, &activity.currency, position_currency, activity_date)
+            .map_err(|e| {
+                CalculatorError::CurrencyConversion(format!(
+                    "Failed to convert tax from {} to {}: {}",
+                    activity.currency, position_currency, e
+                ))
+            })?;
 
         // Calculate implied fx_rate for audit trail
         let fx_rate_used = if unit_price != Decimal::ZERO {
@@ -308,7 +323,7 @@ impl HoldingsCalculator {
             None
         };
 
-        Ok((converted_price, converted_fee, fx_rate_used))
+        Ok((converted_price, converted_fee, converted_tax, fx_rate_used))
     }
 
     /// Computes cash totals in account and base currencies.

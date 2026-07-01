@@ -1349,6 +1349,7 @@ mod tests {
                 unit_price: new_activity.unit_price,
                 amount: new_activity.amount,
                 fee: new_activity.fee,
+                tax: new_activity.tax,
                 currency: new_activity.currency,
                 fx_rate: new_activity.fx_rate,
                 notes: new_activity.notes,
@@ -1526,6 +1527,7 @@ mod tests {
                     unit_price: new_activity.unit_price,
                     amount: new_activity.amount,
                     fee: new_activity.fee,
+                    tax: new_activity.tax,
                     currency: new_activity.currency,
                     fx_rate: new_activity.fx_rate,
                     notes: new_activity.notes,
@@ -2002,6 +2004,7 @@ mod tests {
             unit_price: Some(dec!(100)),
             amount: Some(dec!(100)),
             fee: Some(dec!(0)),
+            tax: None,
             currency: "USD".to_string(),
             fx_rate: None,
             notes: None,
@@ -2046,6 +2049,7 @@ mod tests {
             unit_price: seed.unit_price,
             amount: seed.amount,
             fee: Some(dec!(0)),
+            tax: None,
             currency: seed.currency.to_string(),
             fx_rate: None,
             notes: None,
@@ -2122,6 +2126,7 @@ mod tests {
             unit_price: Some(Some(dec!(100))),
             currency: currency.to_string(),
             fee: Some(Some(dec!(0))),
+            tax: None,
             amount: Some(Some(dec!(100))),
             status: None,
             notes: None,
@@ -2172,6 +2177,7 @@ mod tests {
                 unit_price: Some(dec!(8)),
                 currency: "USD".to_string(),
                 fee: Some(dec!(0)),
+                tax: None,
                 amount: Some(dec!(999)),
                 status: None,
                 notes: None,
@@ -2246,6 +2252,7 @@ mod tests {
                 unit_price: Some(Some(dec!(70))),
                 currency: "CAD".to_string(),
                 fee: Some(Some(dec!(0))),
+                tax: None,
                 amount: None,
                 status: None,
                 notes: None,
@@ -2311,6 +2318,7 @@ mod tests {
                 unit_price: Some(Some(dec!(98))),
                 currency: "USD".to_string(),
                 fee: Some(Some(dec!(0))),
+                tax: None,
                 amount: None,
                 status: None,
                 notes: None,
@@ -2357,6 +2365,7 @@ mod tests {
             unit_price: None,
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: None,
             status: None,
             notes: None,
@@ -2411,6 +2420,7 @@ mod tests {
             unit_price: None,
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(-2)),
             status: None,
             notes: None,
@@ -2553,6 +2563,7 @@ mod tests {
             unit_price: Some(dec!(100)),
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(100)),
             status: None,
             notes: None,
@@ -2657,6 +2668,7 @@ mod tests {
                     unit_price: Some(dec!(100)),
                     currency: "USD".to_string(),
                     fee: Some(dec!(0)),
+                    tax: None,
                     amount: Some(dec!(100)),
                     status: Some(ActivityStatus::Posted),
                     notes: None,
@@ -2731,6 +2743,7 @@ mod tests {
             unit_price: Some(dec!(100)),
             currency: "USD".to_string(), // Same as account currency
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(1000)),
             status: None,
             notes: None,
@@ -2804,6 +2817,7 @@ mod tests {
             unit_price: Some(dec!(100)),
             currency: "EUR".to_string(), // Different from account currency
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(1000)),
             status: None,
             notes: None,
@@ -2868,6 +2882,7 @@ mod tests {
             unit_price: Some(dec!(51.90)),
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: None,
             status: None,
             notes: None,
@@ -2890,6 +2905,76 @@ mod tests {
             .await
             .expect_err("second identical create should be rejected as duplicate");
 
+        assert!(
+            err.to_string().contains("Duplicate activity detected"),
+            "error should clearly explain duplicate detection: {}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn test_create_rejects_same_trade_with_different_tax() {
+        let account_service = Arc::new(MockAccountService::new());
+        let asset_service = Arc::new(MockAssetService::new());
+        let fx_service = Arc::new(MockFxService::new());
+        let activity_repository = Arc::new(MockActivityRepository::new());
+
+        account_service.add_account(create_test_account("acc-1", "USD"));
+        asset_service.add_asset(create_test_asset("AAPL", "USD"));
+
+        let quote_service = Arc::new(MockQuoteService);
+        let activity_service = ActivityService::new(
+            activity_repository.clone(),
+            account_service,
+            asset_service,
+            fx_service,
+            quote_service,
+        );
+
+        let taxable_activity = NewActivity {
+            id: None,
+            account_id: "acc-1".to_string(),
+            asset: Some(AssetResolutionInput {
+                id: Some("AAPL".to_string()),
+                ..Default::default()
+            }),
+            activity_type: "BUY".to_string(),
+            subtype: None,
+            activity_date: "2026-02-27T21:32:00Z".to_string(),
+            quantity: Some(dec!(25)),
+            unit_price: Some(dec!(51.90)),
+            currency: "USD".to_string(),
+            fee: Some(dec!(0)),
+            tax: Some(dec!(1)),
+            amount: None,
+            status: None,
+            notes: None,
+            fx_rate: None,
+            metadata: None,
+            needs_review: None,
+            source_system: None,
+            source_record_id: None,
+            source_group_id: None,
+            idempotency_key: None,
+            import_run_id: None,
+        };
+
+        activity_service
+            .create_activity(taxable_activity.clone())
+            .await
+            .expect("first create should succeed");
+
+        let mut different_tax_activity = taxable_activity;
+        different_tax_activity.tax = Some(dec!(2));
+        let err = activity_service
+            .create_activity(different_tax_activity)
+            .await
+            .expect_err("same trade with different tax should still be a duplicate");
+
+        let stored = activity_repository
+            .get_activities()
+            .expect("stored activities should be readable");
+        assert_eq!(stored.len(), 1);
         assert!(
             err.to_string().contains("Duplicate activity detected"),
             "error should clearly explain duplicate detection: {}",
@@ -2930,6 +3015,7 @@ mod tests {
             unit_price: Some(dec!(51.90)),
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: None,
             status: None,
             notes: None,
@@ -2990,6 +3076,7 @@ mod tests {
                 unit_price: Some(dec!(51.90)),
                 currency: "USD".to_string(),
                 fee: Some(dec!(0)),
+                tax: None,
                 amount: None,
                 status: None,
                 notes: None,
@@ -3317,6 +3404,7 @@ mod tests {
             unit_price: Some(dec!(150)),
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(1500)),
             status: None,
             notes: None,
@@ -3394,6 +3482,7 @@ mod tests {
             unit_price: Some(dec!(150)),
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(1500)),
             status: None,
             notes: None,
@@ -3461,6 +3550,7 @@ mod tests {
             unit_price: Some(dec!(200)),
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(1000)),
             status: None,
             notes: None,
@@ -3521,6 +3611,7 @@ mod tests {
             unit_price: Some(dec!(500)),
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(500)),
             status: None,
             notes: None,
@@ -3572,6 +3663,7 @@ mod tests {
             unit_price: Some(dec!(4000)),
             currency: "CAD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(1000)),
             status: None,
             notes: None,
@@ -3634,6 +3726,7 @@ mod tests {
                 unit_price: Some(dec!(4000)),
                 currency: "USD".to_string(),
                 fee: Some(dec!(0)),
+                tax: None,
                 amount: Some(dec!(1000)),
                 status: None,
                 notes: None,
@@ -3692,6 +3785,7 @@ mod tests {
                 unit_price: Some(dec!(-4000)),
                 currency: "USD".to_string(),
                 fee: Some(dec!(0)),
+                tax: None,
                 amount: Some(dec!(-1000)),
                 status: None,
                 notes: None,
@@ -3747,6 +3841,7 @@ mod tests {
                     unit_price: Some(dec!(100)),
                     currency: "USD".to_string(),
                     fee: Some(dec!(0)),
+                    tax: None,
                     amount: Some(dec!(100)),
                     status: None,
                     notes: None,
@@ -3770,6 +3865,70 @@ mod tests {
             result.prepared[0].activity.subtype.as_deref(),
             Some("POSITION_OPEN")
         );
+    }
+
+    #[tokio::test]
+    async fn test_import_prepare_normalizes_minor_currency_tax() {
+        let account_service = Arc::new(MockAccountService::new());
+        let asset_service = Arc::new(MockAssetService::new());
+        let fx_service = Arc::new(MockFxService::new());
+        let activity_repository = Arc::new(MockActivityRepository::new());
+
+        let account = create_test_account("acc-1", "GBP");
+        account_service.add_account(account.clone());
+        asset_service.add_asset(create_test_asset("SEC:AZN:XLON", "GBp"));
+
+        let activity_service = ActivityService::new(
+            activity_repository,
+            account_service,
+            asset_service,
+            fx_service,
+            Arc::new(MockQuoteService),
+        );
+
+        let result = activity_service
+            .prepare_activities_for_import(
+                vec![NewActivity {
+                    id: Some("gbp-tax-import".to_string()),
+                    account_id: "acc-1".to_string(),
+                    asset: Some(AssetResolutionInput {
+                        id: Some("SEC:AZN:XLON".to_string()),
+                        ..Default::default()
+                    }),
+                    activity_type: "BUY".to_string(),
+                    subtype: None,
+                    activity_date: "2024-01-15".to_string(),
+                    quantity: Some(dec!(10)),
+                    unit_price: Some(dec!(14082)),
+                    currency: "GBp".to_string(),
+                    fee: Some(dec!(999)),
+                    tax: Some(dec!(150)),
+                    amount: Some(dec!(140820)),
+                    status: None,
+                    notes: None,
+                    fx_rate: None,
+                    metadata: None,
+                    needs_review: None,
+                    source_system: None,
+                    source_record_id: None,
+                    source_group_id: None,
+                    idempotency_key: None,
+                    import_run_id: None,
+                }],
+                &account,
+            )
+            .await
+            .expect("import preparation should normalize minor currency values");
+
+        assert!(result.errors.is_empty(), "{:?}", result.errors);
+        assert_eq!(result.prepared.len(), 1);
+
+        let prepared = &result.prepared[0].activity;
+        assert_eq!(prepared.currency, "GBP");
+        assert_eq!(prepared.unit_price, Some(dec!(140.82)));
+        assert_eq!(prepared.amount, Some(dec!(1408.20)));
+        assert_eq!(prepared.fee, Some(dec!(9.99)));
+        assert_eq!(prepared.tax, Some(dec!(1.50)));
     }
 
     #[tokio::test]
@@ -3803,6 +3962,7 @@ mod tests {
                     unit_price: None,
                     currency: "USD".to_string(),
                     fee: Some(dec!(0)),
+                    tax: None,
                     amount: Some(dec!(25)),
                     status: None,
                     notes: None,
@@ -3865,6 +4025,7 @@ mod tests {
                     unit_price: Some(dec!(12.50)),
                     currency: "USD".to_string(),
                     fee: Some(dec!(0)),
+                    tax: None,
                     amount: None,
                     status: None,
                     notes: None,
@@ -3923,6 +4084,7 @@ mod tests {
                     unit_price: None,
                     currency: "USD".to_string(),
                     fee: Some(dec!(0)),
+                    tax: None,
                     amount: Some(dec!(25)),
                     status: None,
                     notes: None,
@@ -3978,6 +4140,7 @@ mod tests {
                     unit_price: None,
                     currency: "USD".to_string(),
                     fee: Some(dec!(0)),
+                    tax: None,
                     amount: Some(dec!(25)),
                     status: None,
                     notes: None,
@@ -4042,6 +4205,7 @@ mod tests {
                 unit_price: Some(dec!(100)),
                 currency: "USD".to_string(),
                 fee: Some(dec!(0)),
+                tax: None,
                 amount: Some(dec!(100)),
                 status: None,
                 notes: None,
@@ -4119,6 +4283,7 @@ mod tests {
             unit_price: Some(dec!(150)),
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(1500)),
             status: None,
             notes: None,
@@ -4291,6 +4456,7 @@ mod tests {
             unit_price: Some(dec!(100)),
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(100)),
             status: None,
             notes: None,
@@ -4359,6 +4525,7 @@ mod tests {
             unit_price: Some(dec!(100)),
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(100)),
             status: None,
             notes: None,
@@ -4420,6 +4587,7 @@ mod tests {
             unit_price: Some(dec!(100)),
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(100)),
             status: None,
             notes: None,
@@ -4476,6 +4644,7 @@ mod tests {
             unit_price: None,
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(1000)),
             status: None,
             notes: None,
@@ -4530,6 +4699,7 @@ mod tests {
             unit_price: None,
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(500)),
             status: None,
             notes: None,
@@ -4584,6 +4754,7 @@ mod tests {
             unit_price: Some(dec!(150)),
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(1500)),
             status: None,
             notes: None,
@@ -4648,6 +4819,7 @@ mod tests {
             unit_price: Some(dec!(50000)),
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(50000)),
             status: None,
             notes: None,
@@ -4716,6 +4888,7 @@ mod tests {
             unit_price: Some(dec!(50000)),
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(50000)),
             status: None,
             notes: None,
@@ -4787,6 +4960,7 @@ mod tests {
             unit_price: Some(dec!(50)),
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(5000)),
             status: None,
             notes: None,
@@ -4856,6 +5030,7 @@ mod tests {
             unit_price: Some(dec!(30)),
             currency: "CAD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(3000)),
             status: None,
             notes: None,
@@ -4922,6 +5097,7 @@ mod tests {
                 unit_price: None,
                 currency: "USD".to_string(),
                 fee: Some(dec!(0)),
+                tax: None,
                 amount: Some(dec!(100)),
                 status: None,
                 notes: None,
@@ -4994,6 +5170,7 @@ mod tests {
                 unit_price: Some(dec!(100)),
                 currency: "USD".to_string(), // Same as account, different from asset
                 fee: Some(dec!(0)),
+                tax: None,
                 amount: Some(dec!(1000)),
                 status: None,
                 notes: None,
@@ -5065,6 +5242,7 @@ mod tests {
             unit_price: Some(dec!(120)),
             currency: "GBP".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(1200)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -5131,6 +5309,7 @@ mod tests {
             unit_price: Some(dec!(120)),
             currency: "CAD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(1200)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -5226,6 +5405,7 @@ mod tests {
                 unit_price: Some(dec!(100)),
                 currency: "USD".to_string(),
                 fee: Some(dec!(0)),
+                tax: None,
                 amount: Some(dec!(100)),
                 comment: None,
                 account_id: Some("acc-1".to_string()),
@@ -5260,6 +5440,7 @@ mod tests {
                 unit_price: Some(dec!(100)),
                 currency: "USD".to_string(),
                 fee: Some(dec!(0)),
+                tax: None,
                 amount: Some(dec!(100)),
                 comment: None,
                 account_id: Some("acc-1".to_string()),
@@ -5342,6 +5523,7 @@ mod tests {
             unit_price: Some(dec!(100)),
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(100)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -5411,6 +5593,7 @@ mod tests {
             unit_price: Some(dec!(100)),
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(100)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -5658,6 +5841,7 @@ mod tests {
             unit_price: Some(dec!(120)),
             currency: "CAD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(1200)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -5731,6 +5915,7 @@ mod tests {
             unit_price: Some(dec!(120)),
             currency: "EUR".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(1200)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -5797,6 +5982,7 @@ mod tests {
             unit_price: Some(dec!(70)),
             currency: "GBp".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(700)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -5870,6 +6056,7 @@ mod tests {
             unit_price: Some(dec!(440)),
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(1320)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -5940,6 +6127,7 @@ mod tests {
             unit_price: Some(dec!(120)),
             currency: "CAD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(1200)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -6007,6 +6195,7 @@ mod tests {
             unit_price: Some(dec!(132)),
             currency: "GBP".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(132)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -6080,6 +6269,7 @@ mod tests {
             unit_price: Some(dec!(120)),
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(1200)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -6161,6 +6351,7 @@ mod tests {
             unit_price: Some(dec!(120)),
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(1200)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -6232,6 +6423,7 @@ mod tests {
             unit_price: Some(dec!(65000)),
             currency: "CAD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(65000)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -6299,6 +6491,7 @@ mod tests {
             unit_price: Some(dec!(132)),
             currency: "GBP".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(132)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -6372,6 +6565,7 @@ mod tests {
             unit_price: Some(dec!(132)),
             currency: "GBP".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(132)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -6441,6 +6635,7 @@ mod tests {
             unit_price: Some(dec!(132)),
             currency: "GBP".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(132)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -6510,6 +6705,7 @@ mod tests {
             unit_price: Some(dec!(4000)),
             currency: "CAD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(1000)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -6579,6 +6775,7 @@ mod tests {
             unit_price: Some(dec!(100)),
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(100)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -6645,6 +6842,7 @@ mod tests {
             unit_price: Some(dec!(5)),
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(500)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -6712,6 +6910,7 @@ mod tests {
             unit_price: None,
             currency: "CAD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(42)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -6781,6 +6980,7 @@ mod tests {
             unit_price: None,
             currency: "CAD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(42)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -6859,6 +7059,7 @@ mod tests {
             unit_price: Some(dec!(132)),
             currency: "GBP".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(132)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -6933,6 +7134,7 @@ mod tests {
                     unit_price: None,
                     currency: "USD".to_string(),
                     fee: Some(dec!(0)),
+                    tax: None,
                     amount: Some(dec!(1000)),
                     comment: Some("Funding".to_string()),
                     account_id: Some("acc-1".to_string()),
@@ -6967,6 +7169,7 @@ mod tests {
                     unit_price: Some(dec!(100)),
                     currency: "USD".to_string(),
                     fee: Some(dec!(0)),
+                    tax: None,
                     amount: Some(dec!(1000)),
                     comment: Some("Buy AAPL".to_string()),
                     account_id: Some("acc-1".to_string()),
@@ -7254,6 +7457,7 @@ mod tests {
             unit_price: Some(dec!(132)),
             currency: "GBP".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(132)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -7327,6 +7531,7 @@ mod tests {
             unit_price: Some(dec!(132)),
             currency: "GBP".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(132)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -7398,6 +7603,7 @@ mod tests {
             unit_price: None,
             currency: "GBP".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(500)),
             comment: Some("Cash top up".to_string()),
             account_id: Some("acc-1".to_string()),
@@ -7468,6 +7674,7 @@ mod tests {
             unit_price: None,
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(100)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -7546,6 +7753,7 @@ mod tests {
             unit_price: None,
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(500)),
             comment: Some("Internal transfer out".to_string()),
             account_id: Some("acc-2".to_string()),
@@ -7581,6 +7789,7 @@ mod tests {
             unit_price: None,
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(500)),
             comment: Some("Internal transfer in".to_string()),
             account_id: Some("acc-1".to_string()),
@@ -7687,6 +7896,7 @@ mod tests {
             unit_price: None,
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(500)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -7722,6 +7932,7 @@ mod tests {
             unit_price: None,
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(500)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -7807,6 +8018,7 @@ mod tests {
             unit_price: None,
             currency: "CAD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(32.93)),
             comment: Some("FxExchange".to_string()),
             account_id: Some("acc-1".to_string()),
@@ -7842,6 +8054,7 @@ mod tests {
             unit_price: None,
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(24.33)),
             comment: Some("FxExchange".to_string()),
             account_id: Some("acc-1".to_string()),
@@ -7963,6 +8176,7 @@ mod tests {
             unit_price: None,
             currency: currency.to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(amount),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -8037,6 +8251,7 @@ mod tests {
             None,
             None,
             Some(dec!(500)),
+            None,
             "USD",
             None,
             None,
@@ -8060,6 +8275,7 @@ mod tests {
                 unit_price: None,
                 amount: Some(dec!(500)),
                 fee: Some(dec!(0)),
+                tax: None,
                 currency: "USD".to_string(),
                 fx_rate: None,
                 notes: None,
@@ -8093,6 +8309,7 @@ mod tests {
             unit_price: None,
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(500)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -8128,6 +8345,7 @@ mod tests {
             unit_price: None,
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(500)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -8465,6 +8683,7 @@ mod tests {
                 unit_price: None,
                 amount: Some(dec!(100)),
                 fee: Some(dec!(0)),
+                tax: None,
                 currency: "CAD".to_string(),
                 fx_rate: None,
                 notes: None,
@@ -8494,6 +8713,7 @@ mod tests {
                 unit_price: None,
                 amount: Some(dec!(100)),
                 fee: Some(dec!(0)),
+                tax: None,
                 currency: "USD".to_string(),
                 fx_rate: None,
                 notes: None,
@@ -8968,6 +9188,7 @@ mod tests {
                     unit_price: Some(None),
                     currency: "USD".to_string(),
                     fee: Some(Some(dec!(0))),
+                    tax: None,
                     amount: Some(Some(dec!(125))),
                     status: None,
                     notes: None,
@@ -9011,6 +9232,7 @@ mod tests {
             Some(dec!(1)),
             Some(dec!(100)),
             Some(dec!(100)),
+            None,
             "GBP",
             None,
             None,
@@ -9034,6 +9256,7 @@ mod tests {
                 unit_price: Some(dec!(100)),
                 amount: Some(dec!(100)),
                 fee: Some(dec!(0)),
+                tax: None,
                 currency: "GBP".to_string(),
                 fx_rate: None,
                 notes: None,
@@ -9067,6 +9290,7 @@ mod tests {
             unit_price: Some(dec!(100)),
             currency: "GBP".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(100)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -9141,6 +9365,7 @@ mod tests {
             unit_price: Some(dec!(100)),
             currency: "GBP".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(100)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -9221,6 +9446,7 @@ mod tests {
             Some(dec!(1)),
             Some(dec!(100)),
             Some(dec!(100)),
+            None,
             "GBP",
             None,
             None,
@@ -9244,6 +9470,7 @@ mod tests {
                 unit_price: Some(dec!(100)),
                 amount: Some(dec!(100)),
                 fee: Some(dec!(0)),
+                tax: None,
                 currency: "GBP".to_string(),
                 fx_rate: None,
                 notes: None,
@@ -9277,6 +9504,7 @@ mod tests {
             unit_price: Some(dec!(100)),
             currency: "GBP".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(100)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -9368,6 +9596,7 @@ mod tests {
             unit_price: Some(dec!(100)),
             currency: "GBP".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(100)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -9465,6 +9694,7 @@ mod tests {
             unit_price: Some(dec!(100)),
             currency: "GBP".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(100)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -9559,7 +9789,8 @@ mod tests {
             unit_price: Some(dec!(14082)), // 14082 pence
             currency: "GBp".to_string(),   // Pence currency
             fee: Some(dec!(999)),          // 999 pence fee
-            amount: Some(dec!(140820)),    // 140820 pence total
+            tax: None,
+            amount: Some(dec!(140820)), // 140820 pence total
             status: None,
             notes: None,
             fx_rate: None,
@@ -9649,6 +9880,7 @@ mod tests {
             unit_price: Some(dec!(7500)), // 7500 pence
             currency: "GBX".to_string(),  // Alternative pence code
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(750000)), // 750000 pence
             status: None,
             notes: None,
@@ -9712,6 +9944,7 @@ mod tests {
             unit_price: Some(dec!(200000)), // 200000 cents = 2000 ZAR
             currency: "ZAc".to_string(),
             fee: Some(dec!(1000)), // 1000 cents = 10 ZAR
+            tax: None,
             amount: Some(dec!(10000000)),
             status: None,
             notes: None,
@@ -9775,6 +10008,7 @@ mod tests {
             unit_price: Some(dec!(0.45)), // Already in GBP
             currency: "GBP".to_string(),  // Major currency
             fee: Some(dec!(5)),
+            tax: None,
             amount: Some(dec!(450)),
             status: None,
             notes: None,
@@ -9836,6 +10070,7 @@ mod tests {
             unit_price: Some(dec!(99.5)),
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(995)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -9904,6 +10139,7 @@ mod tests {
             unit_price: Some(dec!(99.5)),
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(995)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -9972,6 +10208,7 @@ mod tests {
                 unit_price: Some(dec!(99.5)),
                 currency: "USD".to_string(),
                 fee: Some(dec!(0)),
+                tax: None,
                 amount: Some(dec!(995)),
                 comment: None,
                 account_id: Some("acc-1".to_string()),
@@ -10052,6 +10289,7 @@ mod tests {
             unit_price: Some(dec!(100)),
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(500)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -10133,6 +10371,7 @@ mod tests {
             unit_price: Some(dec!(5.50)),
             currency: "USD".to_string(),
             fee: Some(dec!(0.65)),
+            tax: None,
             amount: Some(dec!(550)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -10202,6 +10441,7 @@ mod tests {
             unit_price: Some(dec!(8.35)),
             currency: "USD".to_string(),
             fee: Some(dec!(1.30)),
+            tax: None,
             amount: Some(dec!(1670)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -10280,6 +10520,7 @@ mod tests {
             unit_price: Some(dec!(8.00)),
             currency: "USD".to_string(),
             fee: Some(dec!(0.65)),
+            tax: None,
             amount: Some(dec!(800)),
             comment: None,
             account_id: Some("acc-1".to_string()),
@@ -10371,6 +10612,7 @@ mod tests {
             unit_price: Some(dec!(5)),
             currency: "USD".to_string(),
             fee: Some(dec!(0)),
+            tax: None,
             amount: Some(dec!(10)),
             status: None,
             notes: None,
@@ -10439,6 +10681,7 @@ mod tests {
                 unit_price: None,
                 amount: Some(dec!(500)),
                 fee: Some(dec!(0)),
+                tax: None,
                 currency: "USD".to_string(),
                 fx_rate: None,
                 notes: None,
@@ -10468,6 +10711,7 @@ mod tests {
                 unit_price: None,
                 amount: Some(dec!(500)),
                 fee: Some(dec!(0)),
+                tax: None,
                 currency: "USD".to_string(),
                 fx_rate: None,
                 notes: None,
@@ -10495,6 +10739,7 @@ mod tests {
             unit_price: None,
             currency: "USD".to_string(),
             fee: None,
+            tax: None,
             amount: Some(Some(dec!(750))),
             status: Some(ActivityStatus::Posted),
             notes: Some("moved funds".to_string()),
@@ -10565,6 +10810,7 @@ mod tests {
                 unit_price: None,
                 amount: Some(dec!(100)),
                 fee: Some(dec!(0)),
+                tax: None,
                 currency: "USD".to_string(),
                 fx_rate: None,
                 notes: None,
@@ -10594,6 +10840,7 @@ mod tests {
                 unit_price: None,
                 amount: Some(dec!(100)),
                 fee: Some(dec!(0)),
+                tax: None,
                 currency: "USD".to_string(),
                 fx_rate: None,
                 notes: None,

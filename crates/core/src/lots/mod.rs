@@ -65,6 +65,10 @@ pub struct LotClosure {
     pub fee_allocated: String,
     /// Transaction fees converted to base currency at acquisition date.
     pub fee_allocated_base: String,
+    /// Trade-level taxes allocated to this lot.
+    pub tax_allocated: String,
+    /// Trade-level taxes converted to base currency at acquisition date.
+    pub tax_allocated_base: String,
     /// Lot currency, normally the asset quote currency.
     pub currency: String,
     /// User base currency used by the base fields.
@@ -279,6 +283,10 @@ pub struct LotRecord {
     pub fee_allocated: String,
     /// Transaction fees converted to base currency at acquisition date.
     pub fee_allocated_base: String,
+    /// Trade-level taxes allocated to this lot. Immutable.
+    pub tax_allocated: String,
+    /// Trade-level taxes converted to base currency at acquisition date.
+    pub tax_allocated_base: String,
     /// Lot currency, normally the asset quote currency.
     pub currency: String,
     /// User base currency used by the base fields.
@@ -340,6 +348,8 @@ pub struct AssetLotView {
     pub cost_basis_base: Option<Decimal>,
     pub unit_cost: Decimal,
     pub fees: Decimal,
+    pub taxes: Decimal,
+    pub taxes_base: Option<Decimal>,
     pub fx_rate_to_base: Option<Decimal>,
     pub split_ratio: Decimal,
     pub contract_multiplier: Decimal,
@@ -399,7 +409,8 @@ pub fn extract_lot_records_with_cost_basis_method(
             // partially consumed yet). `lot.cost_basis` is mutated on partial
             // sells and represents the remaining open cost basis.
             let orig_fees = lot.original_fees();
-            let original_cost_basis = lot.acquisition_price * orig_qty + orig_fees;
+            let orig_taxes = lot.original_taxes();
+            let original_cost_basis = lot.acquisition_price * orig_qty + orig_fees + orig_taxes;
             records.push(LotRecord {
                 id: lot.id.clone(),
                 account_id: snapshot.account_id.clone(),
@@ -415,6 +426,8 @@ pub fn extract_lot_records_with_cost_basis_method(
                 remaining_cost_basis_base: lot.cost_basis.to_string(),
                 fee_allocated: orig_fees.to_string(),
                 fee_allocated_base: orig_fees.to_string(),
+                tax_allocated: orig_taxes.to_string(),
+                tax_allocated_base: orig_taxes.to_string(),
                 currency: position.currency.clone(),
                 base_currency: snapshot.currency.clone(),
                 fx_rate_to_base: Decimal::ONE.to_string(),
@@ -509,6 +522,8 @@ mod tests {
             acquisition_price: price,
             acquisition_fees: fee,
             original_acquisition_fees: fee,
+            acquisition_taxes: Decimal::ZERO,
+            original_acquisition_taxes: Decimal::ZERO,
             fx_rate_to_position: None,
             fx_rate_to_account: None,
             account_currency: None,
@@ -915,6 +930,8 @@ mod tests {
             remaining_cost_basis_base: "9250".to_string(),
             fee_allocated: "0".to_string(),
             fee_allocated_base: "0".to_string(),
+            tax_allocated: "0".to_string(),
+            tax_allocated_base: "0".to_string(),
             currency: "USD".to_string(),
             base_currency: "USD".to_string(),
             fx_rate_to_base: "1".to_string(),

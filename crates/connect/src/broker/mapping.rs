@@ -566,6 +566,7 @@ pub fn map_broker_activity(
         unit_price,
         currency: currency_code,
         fee,
+        tax: None,
         amount,
         status: Some(status),
         notes: activity
@@ -704,6 +705,7 @@ mod tests {
 
         assert_eq!(mapped.amount.unwrap().round_dp(4), decimal("997.6000"));
         assert_eq!(mapped.fee.unwrap().round_dp(4), decimal("4.9000"));
+        assert_eq!(mapped.tax, None);
     }
 
     #[test]

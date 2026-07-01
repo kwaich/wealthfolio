@@ -3701,6 +3701,7 @@ mod tests {
                 unit_price: Some(Decimal::new(5, 0)),
                 currency: "USD".to_string(),
                 fee: Some(Decimal::new(1, 0)),
+                tax: None,
                 amount: Some(Decimal::new(50, 0)),
                 status: None,
                 notes: Some("Broker note".to_string()),

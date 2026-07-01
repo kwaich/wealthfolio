@@ -549,6 +549,7 @@ impl ActivityRepository {
                 activities::unit_price,
                 activities::currency,
                 activities::fee,
+                activities::tax,
                 activities::amount,
                 activities::notes,
                 activities::fx_rate,
@@ -775,6 +776,7 @@ impl ActivityRepositoryTrait for ActivityRepository {
                     unit_price,
                     amount,
                     fee,
+                    tax,
                     ..
                 } = existing;
 
@@ -786,6 +788,7 @@ impl ActivityRepositoryTrait for ActivityRepository {
                 activity_to_update.amount =
                     apply_decimal_patch(amount, activity_update_owned.amount);
                 activity_to_update.fee = apply_decimal_patch(fee, activity_update_owned.fee);
+                activity_to_update.tax = apply_decimal_patch(tax, activity_update_owned.tax);
                 activity_to_update.fx_rate =
                     apply_decimal_patch(fx_rate, activity_update_owned.fx_rate);
                 // Preserve source identity fields
@@ -1185,6 +1188,7 @@ impl ActivityRepositoryTrait for ActivityRepository {
                         unit_price,
                         amount,
                         fee,
+                        tax,
                         fx_rate,
                         ..
                     } = existing;
@@ -1195,6 +1199,7 @@ impl ActivityRepositoryTrait for ActivityRepository {
                         apply_decimal_patch(unit_price, update_owned.unit_price);
                     activity_db.amount = apply_decimal_patch(amount, update_owned.amount);
                     activity_db.fee = apply_decimal_patch(fee, update_owned.fee);
+                    activity_db.tax = apply_decimal_patch(tax, update_owned.tax);
                     activity_db.fx_rate = apply_decimal_patch(fx_rate, update_owned.fx_rate);
                     if activity_db.source_system.is_none() {
                         activity_db.source_system = source_system;
@@ -2543,6 +2548,7 @@ impl ActivityRepositoryTrait for ActivityRepository {
                             activities::unit_price.eq(excluded(activities::unit_price)),
                             activities::currency.eq(excluded(activities::currency)),
                             activities::fee.eq(excluded(activities::fee)),
+                            activities::tax.eq(excluded(activities::tax)),
                             activities::amount.eq(excluded(activities::amount)),
                             activities::status.eq(excluded(activities::status)),
                             activities::notes.eq(excluded(activities::notes)),
@@ -2889,6 +2895,7 @@ mod tests {
             unit_price: None,
             amount: Some("100".to_string()),
             fee: Some("0".to_string()),
+            tax: None,
             currency: currency.to_string(),
             fx_rate: None,
             notes: None,
@@ -2969,6 +2976,7 @@ mod tests {
             unit_price: None,
             currency: "USD".to_string(),
             fee: None,
+            tax: None,
             amount: None,
             status: Some(ActivityStatus::Posted),
             notes: Some("User note".to_string()),
@@ -3214,6 +3222,7 @@ mod tests {
             unit_price: None,
             currency: "USD".to_string(),
             fee: None,
+            tax: None,
             amount: None,
             status: Some(ActivityStatus::Posted),
             notes: Some("New note".to_string()),
@@ -3248,6 +3257,7 @@ mod tests {
             unit_price: None,
             currency: "USD".to_string(),
             fee: None,
+            tax: None,
             amount: None,
             status: Some(ActivityStatus::Posted),
             notes: Some("New note".to_string()),
@@ -3299,6 +3309,7 @@ mod tests {
             unit_price: None,
             currency: "USD".to_string(),
             fee: None,
+            tax: None,
             amount: Some(Some(Decimal::new(6000, 2))),
             status: Some(ActivityStatus::Posted),
             notes: Some("Broker note".to_string()),
@@ -3342,6 +3353,7 @@ mod tests {
             unit_price: Some("100".to_string()),
             amount: Some("100".to_string()),
             fee: Some("0".to_string()),
+            tax: None,
             currency: "USD".to_string(),
             fx_rate: None,
             notes: None,
@@ -3526,6 +3538,7 @@ mod tests {
                 unit_price: None,
                 currency: "USD".to_string(),
                 fee: None,
+                tax: None,
                 amount: None,
                 status: None,
                 notes: None,
@@ -3567,6 +3580,7 @@ mod tests {
             unit_price: None,
             currency: "USD".to_string(),
             fee: None,
+            tax: None,
             amount: Some(Some(Decimal::new(125, 0))),
             status: None,
             notes: None,
@@ -3877,6 +3891,7 @@ mod tests {
                 unit_price: Some(None),
                 currency: "USD".to_string(),
                 fee: Some(None),
+                tax: None,
                 amount: Some(Some(Decimal::new(100, 0))),
                 status: Some(ActivityStatus::Posted),
                 notes: None,
@@ -4371,6 +4386,7 @@ mod tests {
             unit_price: Some(Decimal::from(100)),
             currency: "USD".to_string(),
             fee: Some(Decimal::ZERO),
+            tax: None,
             amount: Some(Decimal::from(100)),
             status: None,
             notes: Some("first import".to_string()),
@@ -4395,6 +4411,7 @@ mod tests {
             unit_price: Some(Decimal::from(101)),
             currency: "USD".to_string(),
             fee: Some(Decimal::ZERO),
+            tax: None,
             amount: Some(Decimal::from(101)),
             status: None,
             notes: Some("updated import".to_string()),
@@ -4479,6 +4496,7 @@ mod tests {
             unit_price: Some(Decimal::from(100)),
             currency: "USD".to_string(),
             fee: Some(Decimal::ZERO),
+            tax: None,
             amount: Some(Decimal::from(100)),
             status: None,
             notes: Some("first import".to_string()),
@@ -4503,6 +4521,7 @@ mod tests {
             unit_price: Some(Decimal::from(101)),
             currency: "USD".to_string(),
             fee: Some(Decimal::ZERO),
+            tax: None,
             amount: Some(Decimal::from(101)),
             status: None,
             notes: Some("updated import".to_string()),

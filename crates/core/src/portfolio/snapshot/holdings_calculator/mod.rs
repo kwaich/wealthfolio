@@ -225,6 +225,7 @@ impl HoldingsCalculator {
             let original_cost_basis = parse_decimal_lossy(&record.original_cost_basis);
             let remaining_cost_basis = parse_decimal_lossy(&record.remaining_cost_basis);
             let fee_allocated = parse_decimal_lossy(&record.fee_allocated);
+            let tax_allocated = parse_decimal_lossy(&record.tax_allocated);
 
             record.currency = lot_currency.to_string();
             record.base_currency = base_currency.clone();
@@ -232,6 +233,7 @@ impl HoldingsCalculator {
             record.original_cost_basis_base = (original_cost_basis * fx_rate_to_base).to_string();
             record.remaining_cost_basis_base = (remaining_cost_basis * fx_rate_to_base).to_string();
             record.fee_allocated_base = (fee_allocated * fx_rate_to_base).to_string();
+            record.tax_allocated_base = (tax_allocated * fx_rate_to_base).to_string();
         }
 
         records
@@ -349,7 +351,7 @@ impl HoldingsCalculator {
                 warnings.push(warning);
                 continue;
             }
-            let activity_type = ActivityType::from_str(&activity.activity_type).ok();
+            let activity_type = ActivityType::from_str(activity.effective_type()).ok();
             let requires_atomic_scratch = activity_type
                 .as_ref()
                 .is_some_and(Self::activity_requires_atomic_scratch);
@@ -454,8 +456,8 @@ impl HoldingsCalculator {
         run: &ProjectionRun,
         buffer: &mut SideEffectBuffer,
     ) -> Result<()> {
-        let activity_type = ActivityType::from_str(&activity.activity_type).map_err(|_| {
-            CalculatorError::UnsupportedActivityType(activity.activity_type.clone())
+        let activity_type = ActivityType::from_str(activity.effective_type()).map_err(|_| {
+            CalculatorError::UnsupportedActivityType(activity.effective_type().to_string())
         })?;
 
         // Dispatch to Specific Handlers

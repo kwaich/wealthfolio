@@ -334,6 +334,7 @@ export function MobileActivityForm({
             ? Number(activity.unitPrice)
             : undefined,
       fee: activity?.fee ? Number(activity.fee) : 0,
+      tax: activity?.tax ? Number(activity.tax) : 0,
       comment: activity?.comment ?? null,
       subtype: activity?.subtype ?? null,
       fxRate,
@@ -759,9 +760,9 @@ export function MobileActivityForm({
         if (TRADE_ACTIVITY_TYPES.includes(activityType ?? "")) {
           // Options: validate underlying instead of assetId (OCC built at submit)
           if (assetType === "option") {
-            return [...baseFields, "underlyingSymbol", "quantity", "unitPrice", "fee"];
+            return [...baseFields, "underlyingSymbol", "quantity", "unitPrice", "fee", "tax"];
           }
-          return [...baseFields, "assetId", "quantity", "unitPrice", "fee"];
+          return [...baseFields, "assetId", "quantity", "unitPrice", "fee", "tax"];
         }
         if (CASH_AMOUNT_ACTIVITY_TYPES.includes(activityType ?? "")) {
           if (
@@ -780,11 +781,11 @@ export function MobileActivityForm({
         if (INCOME_ACTIVITY_TYPES.includes(activityType ?? "")) {
           const subtype = form.getValues("subtype");
           if (isAssetBackedIncomeSubtype(activityType ?? "", subtype)) {
-            return [...baseFields, "assetId", "quantity", "unitPrice", "amount"];
+            return [...baseFields, "assetId", "quantity", "unitPrice", "amount", "tax"];
           }
           return activityType === ActivityType.DIVIDEND
-            ? [...baseFields, "assetId", "amount"]
-            : [...baseFields, "amount"];
+            ? [...baseFields, "assetId", "amount", "tax"]
+            : [...baseFields, "amount", "tax"];
         }
         if (activityType === ActivityType.ADJUSTMENT) {
           return [...baseFields, "assetId"];

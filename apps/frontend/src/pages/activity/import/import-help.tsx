@@ -61,7 +61,7 @@ function ActivitiesHelpContent() {
           </p>
           <p className="mt-2 text-sm font-semibold">Optional fields:</p>
           <p className="text-muted-foreground mt-1 text-xs">
-            account, currency, fee, comment, fxRate, subtype, instrumentType, isin
+            account, currency, fee, tax, comment, fxRate, subtype, instrumentType, isin
           </p>
         </div>
 
@@ -111,15 +111,15 @@ function ActivitiesHelpContent() {
           <pre className="bg-muted mt-2 select-all overflow-x-auto p-3 text-xs leading-relaxed">
             <span className="text-muted-foreground"># Standard format:</span>
             <br />
-            date,symbol,instrumentType,quantity,activityType,unitPrice,currency,fee,amount,fxRate,subtype
+            date,symbol,instrumentType,quantity,activityType,unitPrice,currency,fee,tax,amount,fxRate,subtype
             <br />
-            2024-01-15,MSFT,EQUITY,10,BUY,380.50,USD,4.95,,,
+            2024-01-15,MSFT,EQUITY,10,BUY,380.50,USD,4.95,0,,,
             <br />
-            2024-02-01,MSFT,EQUITY,1,DIVIDEND,0.75,USD,0,0.75,,QUALIFIED
+            2024-02-01,MSFT,EQUITY,1,DIVIDEND,0.75,USD,0,0.11,0.75,,QUALIFIED
             <br />
-            2024-02-15,,,1,DEPOSIT,1,USD,0,1000.00,,
+            2024-02-15,,,1,DEPOSIT,1,USD,0,0,1000.00,,
             <br />
-            2024-06-01,TD.TO,EQUITY,10,BUY,85.00,CAD,9.99,,1.36,
+            2024-06-01,TD.TO,EQUITY,10,BUY,85.00,CAD,9.99,0,,1.36,
             <br />
             <br />
             <span className="text-muted-foreground"># With currency symbols (auto-parsed):</span>

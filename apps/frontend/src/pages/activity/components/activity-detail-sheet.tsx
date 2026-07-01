@@ -1,4 +1,9 @@
-import { ActivityStatus, ActivityTypeNames, SUBTYPE_DISPLAY_NAMES } from "@/lib/constants";
+import {
+  ActivityStatus,
+  ActivityType,
+  ActivityTypeNames,
+  SUBTYPE_DISPLAY_NAMES,
+} from "@/lib/constants";
 import { parseOccSymbol } from "@/lib/occ-symbol";
 import type { ActivityDetails } from "@/lib/types";
 import {
@@ -230,6 +235,14 @@ export function ActivityDetailSheet({ activity, open, onOpenChange }: ActivityDe
               <DetailRow
                 label="Fee"
                 value={<AmountDisplay value={Number(activity.fee)} currency={activity.currency} />}
+              />
+            )}
+            {Number(activity.tax ?? 0) !== 0 && (
+              <DetailRow
+                label={activity.activityType === ActivityType.DIVIDEND ? "Withholding tax" : "Tax"}
+                value={
+                  <AmountDisplay value={Number(activity.tax ?? 0)} currency={activity.currency} />
+                }
               />
             )}
             {activity.fxRate && (

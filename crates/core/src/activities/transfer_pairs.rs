@@ -271,6 +271,7 @@ mod tests {
             unit_price: None,
             amount: Some(Decimal::ONE),
             fee: None,
+            tax: None,
             currency: currency.to_string(),
             fx_rate: None,
             notes: None,

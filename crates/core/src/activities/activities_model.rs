@@ -134,6 +134,9 @@ pub struct Activity {
     #[serde(default)]
     #[serde(with = "optional_decimal_format")]
     pub fee: Option<Decimal>,
+    #[serde(default)]
+    #[serde(with = "optional_decimal_format")]
+    pub tax: Option<Decimal>,
     pub currency: String,
     #[serde(default)]
     #[serde(with = "optional_decimal_format")]
@@ -213,6 +216,25 @@ impl Activity {
         self.fee.unwrap_or(Decimal::ZERO).abs()
     }
 
+    /// Get tax or withholding amount, defaulting to zero if not set.
+    /// Always returns absolute value.
+    pub fn tax_amt(&self) -> Decimal {
+        self.tax.unwrap_or(Decimal::ZERO).abs()
+    }
+
+    /// Get the charge amount for standalone charge handling.
+    pub(crate) fn charge_amt_for(&self, activity_type: &ActivityType) -> Decimal {
+        if matches!(activity_type, ActivityType::Tax) && !self.tax_amt().is_zero() {
+            return self.tax_amt();
+        }
+
+        if !self.fee_amt().is_zero() {
+            return self.fee_amt();
+        }
+
+        self.amt()
+    }
+
     /// Get typed metadata value
     pub fn get_meta<T: serde::de::DeserializeOwned>(&self, key: &str) -> Option<T> {
         self.metadata
@@ -280,6 +302,11 @@ pub struct NewActivity {
         deserialize_with = "decimal_input_format::deserialize_option_decimal"
     )]
     pub fee: Option<Decimal>,
+    #[serde(
+        default,
+        deserialize_with = "decimal_input_format::deserialize_option_decimal"
+    )]
+    pub tax: Option<Decimal>,
     #[serde(
         default,
         deserialize_with = "decimal_input_format::deserialize_option_decimal"
@@ -556,6 +583,11 @@ pub struct ActivityUpdate {
         default,
         deserialize_with = "decimal_input_format::deserialize_patch_decimal"
     )]
+    pub tax: Option<Option<Decimal>>,
+    #[serde(
+        default,
+        deserialize_with = "decimal_input_format::deserialize_patch_decimal"
+    )]
     pub amount: Option<Option<Decimal>>,
     pub status: Option<ActivityStatus>,
     #[serde(alias = "comment")]
@@ -762,6 +794,7 @@ pub struct ActivityDetails {
     pub unit_price: Option<String>,
     pub currency: String,
     pub fee: Option<String>,
+    pub tax: Option<String>,
     pub amount: Option<String>,
     pub needs_review: bool,
     pub comment: Option<String>,
@@ -804,6 +837,13 @@ impl ActivityDetails {
         self.fee
             .as_ref()
             .map(|s| parse_decimal_string_tolerant(s, "fee"))
+            .unwrap_or(Decimal::ZERO)
+    }
+
+    pub fn get_tax(&self) -> Decimal {
+        self.tax
+            .as_ref()
+            .map(|s| parse_decimal_string_tolerant(s, "tax"))
             .unwrap_or(Decimal::ZERO)
     }
 
@@ -868,6 +908,11 @@ pub struct ActivityImport {
         deserialize_with = "decimal_input_format::deserialize_option_decimal"
     )]
     pub fee: Option<Decimal>,
+    #[serde(
+        default,
+        deserialize_with = "decimal_input_format::deserialize_option_decimal"
+    )]
+    pub tax: Option<Decimal>,
     #[serde(
         default,
         deserialize_with = "decimal_input_format::deserialize_option_decimal"
@@ -1723,6 +1768,7 @@ pub struct ActivityUpsert {
     pub unit_price: Option<Decimal>,
     pub currency: String,
     pub fee: Option<Decimal>,
+    pub tax: Option<Decimal>,
     pub amount: Option<Decimal>,
     pub status: Option<ActivityStatus>,
     pub notes: Option<String>,
@@ -1827,6 +1873,7 @@ impl From<ActivityImport> for NewActivity {
             unit_price: import.unit_price,
             currency: import.currency,
             fee: import.fee,
+            tax: import.tax,
             amount: import.amount,
             status,
             notes: import.comment,

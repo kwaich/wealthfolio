@@ -147,6 +147,7 @@ impl RecordActivities {
                             unit_price: None,
                             amount: None,
                             fee: None,
+                            tax: None,
                             currency: env.base_currency(),
                             account_id: None,
                             account_name: None,

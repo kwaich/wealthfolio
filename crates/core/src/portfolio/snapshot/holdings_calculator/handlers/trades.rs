@@ -94,17 +94,19 @@ impl HoldingsCalculator {
 
         // Get values for lot, converting if needed.
         let lot_unit_price = effective_unit_price(activity, &asset_info);
-        let (unit_price_for_lot, fee_for_lot, fx_rate_used) = if needs_conversion {
-            let (converted_price, converted_fee, fx_rate) = self.convert_to_position_currency(
-                lot_unit_price,
-                activity.fee_amt(),
-                activity,
-                &position_currency,
-                account_currency,
-            )?;
-            (converted_price, converted_fee, fx_rate)
+        let (unit_price_for_lot, fee_for_lot, tax_for_lot, fx_rate_used) = if needs_conversion {
+            let (converted_price, converted_fee, converted_tax, fx_rate) = self
+                .convert_to_position_currency(
+                    lot_unit_price,
+                    activity.fee_amt(),
+                    activity.tax_amt(),
+                    activity,
+                    &position_currency,
+                    account_currency,
+                )?;
+            (converted_price, converted_fee, converted_tax, fx_rate)
         } else {
-            (lot_unit_price, activity.fee_amt(), None)
+            (lot_unit_price, activity.fee_amt(), activity.tax_amt(), None)
         };
 
         // Use add_lot_values to avoid cloning Activity
@@ -126,7 +128,8 @@ impl HoldingsCalculator {
 
             if close_quantity > Decimal::ZERO {
                 let close_fee = proportional_amount(fee_for_lot, close_quantity, quantity);
-                let close_cost = close_quantity * unit_price_for_lot + close_fee;
+                let close_tax = proportional_amount(tax_for_lot, close_quantity, quantity);
+                let close_cost = close_quantity * unit_price_for_lot + close_fee + close_tax;
                 let reduction = position.reduce_negative_lots_fifo(close_quantity)?;
                 self.record_reduction(
                     &account_id,
@@ -155,6 +158,7 @@ impl HoldingsCalculator {
                     }
                 } else {
                     let open_fee = proportional_amount(fee_for_lot, open_quantity, quantity);
+                    let open_tax = proportional_amount(tax_for_lot, open_quantity, quantity);
                     let lot_id = if close_quantity > Decimal::ZERO {
                         format!("{}:open", activity.id)
                     } else {
@@ -165,6 +169,7 @@ impl HoldingsCalculator {
                         open_quantity,
                         unit_price_for_lot,
                         open_fee,
+                        open_tax,
                         activity.activity_date,
                         fx_rate_used,
                         Some(activity.id.clone()),
@@ -179,6 +184,7 @@ impl HoldingsCalculator {
                 quantity,
                 unit_price_for_lot,
                 fee_for_lot,
+                tax_for_lot,
                 activity.activity_date,
                 fx_rate_used,
                 Some(activity.id.clone()),
@@ -192,7 +198,8 @@ impl HoldingsCalculator {
             quantity,
         );
         let cash_fee = proportional_amount(activity.fee_amt(), cash_quantity, quantity);
-        let total_cost = gross_cost + cash_fee;
+        let cash_tax = proportional_amount(activity.tax_amt(), cash_quantity, quantity);
+        let total_cost = gross_cost + cash_fee + cash_tax;
         if activity_currency != account_currency {
             if let Some(fx_rate) = activity.fx_rate.filter(|r| *r != Decimal::ZERO) {
                 // Broker converted at transaction time — book in account currency
@@ -283,7 +290,8 @@ impl HoldingsCalculator {
             }
         }
 
-        let total_proceeds = gross_trade_amount(activity, &asset_info) - activity.fee_amt();
+        let total_proceeds =
+            gross_trade_amount(activity, &asset_info) - activity.fee_amt() - activity.tax_amt();
         if activity_currency != account_currency {
             if let Some(fx_rate) = activity.fx_rate.filter(|r| *r != Decimal::ZERO) {
                 // Broker converted at transaction time — book in account currency
@@ -310,17 +318,19 @@ impl HoldingsCalculator {
             let needs_conversion =
                 !position_currency.is_empty() && position_currency != activity.currency;
             let lot_unit_price = effective_unit_price(activity, &asset_info);
-            let (unit_price_for_lot, fee_for_lot, fx_rate_used) = if needs_conversion {
-                let (converted_price, converted_fee, fx_rate) = self.convert_to_position_currency(
-                    lot_unit_price,
-                    activity.fee_amt(),
-                    activity,
-                    &position_currency,
-                    account_currency,
-                )?;
-                (converted_price, converted_fee, fx_rate)
+            let (unit_price_for_lot, fee_for_lot, tax_for_lot, fx_rate_used) = if needs_conversion {
+                let (converted_price, converted_fee, converted_tax, fx_rate) = self
+                    .convert_to_position_currency(
+                        lot_unit_price,
+                        activity.fee_amt(),
+                        activity.tax_amt(),
+                        activity,
+                        &position_currency,
+                        account_currency,
+                    )?;
+                (converted_price, converted_fee, converted_tax, fx_rate)
             } else {
-                (lot_unit_price, activity.fee_amt(), None)
+                (lot_unit_price, activity.fee_amt(), activity.tax_amt(), None)
             };
 
             let long_quantity = positive_lot_effective_quantity(position);
@@ -329,7 +339,8 @@ impl HoldingsCalculator {
 
             if close_quantity > Decimal::ZERO {
                 let close_fee = proportional_amount(fee_for_lot, close_quantity, quantity);
-                let close_proceeds = close_quantity * unit_price_for_lot - close_fee;
+                let close_tax = proportional_amount(tax_for_lot, close_quantity, quantity);
+                let close_proceeds = close_quantity * unit_price_for_lot - close_fee - close_tax;
                 let reduction = position.reduce_positive_lots_fifo(close_quantity)?;
                 self.record_reduction(
                     &account_id,
@@ -351,6 +362,7 @@ impl HoldingsCalculator {
                     );
                 } else {
                     let open_fee = proportional_amount(fee_for_lot, open_quantity, quantity);
+                    let open_tax = proportional_amount(tax_for_lot, open_quantity, quantity);
                     let lot_id = if close_quantity > Decimal::ZERO {
                         format!("{}:open", activity.id)
                     } else {
@@ -366,6 +378,7 @@ impl HoldingsCalculator {
                         -open_quantity,
                         unit_price_for_lot,
                         open_fee,
+                        open_tax,
                         activity.activity_date,
                         fx_rate_used,
                         Some(activity.id.clone()),

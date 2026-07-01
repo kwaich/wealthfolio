@@ -381,6 +381,33 @@ export const ActivityTable = ({
         },
       },
       {
+        id: "tax",
+        accessorKey: "tax",
+        enableHiding: true,
+        enableSorting: false,
+        meta: {
+          label: "Tax",
+        },
+        header: ({ column }) => (
+          <DataTableColumnHeader className="justify-end text-right" column={column} title="Tax" />
+        ),
+        cell: ({ row }) => {
+          const activityType = String(row.getValue("activityType"));
+          const tax = Number(row.getValue("tax") ?? 0);
+          const currencyVal = row.getValue("currency");
+          const currency =
+            typeof currencyVal === "string" && currencyVal
+              ? currencyVal
+              : row.original.accountCurrency || "USD";
+
+          return (
+            <div className="text-right">
+              {activityType === "SPLIT" ? "-" : formatAmount(tax, currency)}
+            </div>
+          );
+        },
+      },
+      {
         id: "value",
         accessorKey: "value",
         enableSorting: false,

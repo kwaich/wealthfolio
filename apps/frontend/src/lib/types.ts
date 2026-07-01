@@ -105,6 +105,7 @@ export interface ActivityLegacy {
   unitPrice: number;
   currency: string;
   fee: number;
+  tax?: number;
   isDraft: boolean;
   comment?: string | null;
   accountId?: string | null;
@@ -139,6 +140,7 @@ export interface Activity {
   unitPrice?: string | null;
   amount?: string | null;
   fee?: string | null;
+  tax?: string | null;
   currency: string;
   fxRate?: string | null;
 
@@ -208,6 +210,7 @@ export interface ActivityDetails {
   unitPrice: string | null;
   amount: string | null;
   fee: string | null;
+  tax?: string | null;
   currency: string;
   needsReview: boolean;
   comment?: string;
@@ -285,6 +288,7 @@ export interface ActivityCreate {
   amount?: string | number | null;
   currency?: string;
   fee?: string | number | null;
+  tax?: string | number | null;
   comment?: string | null;
   fxRate?: string | number | null;
   metadata?: string | Record<string, unknown>; // Metadata (serialized to JSON string before sending)
@@ -309,6 +313,7 @@ export interface ActivityUpdate {
   amount?: string | number | null;
   currency?: string;
   fee?: string | number | null;
+  tax?: string | number | null;
   comment?: string | null;
   fxRate?: string | number | null;
   metadata?: string | Record<string, unknown>; // Metadata (serialized to JSON string before sending)
@@ -652,6 +657,8 @@ export interface AssetLotView {
   costBasisBase?: number | null;
   unitCost: number;
   fees: number;
+  taxes: number;
+  taxesBase?: number | null;
   fxRateToBase?: number | null;
   splitRatio: number;
   contractMultiplier: number;

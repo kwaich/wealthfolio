@@ -40,6 +40,7 @@ export interface ImportRowData {
   amount?: string | number | null;
   currency?: string;
   fee?: string | number | null;
+  tax?: string | number | null;
   fxRate?: string | number | null;
   accountId?: string;
   comment?: string;
@@ -351,7 +352,17 @@ export function useImportColumns<T extends ImportRowData>({
       meta: { cell: { variant: "number", step: 0.000001, valueType: "string" } },
     });
 
-    // 14. FX Rate
+    // 14. Tax
+    columns.push({
+      id: "tax",
+      accessorKey: "tax",
+      header: "Tax",
+      size: 100,
+      enableSorting: false,
+      meta: { cell: { variant: "number", step: 0.000001, valueType: "string" } },
+    });
+
+    // 15. FX Rate
     columns.push({
       id: "fxRate",
       accessorKey: "fxRate",

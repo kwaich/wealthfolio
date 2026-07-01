@@ -548,6 +548,35 @@ function getColumns(accounts: Account[], baseCurrency: string): ColumnDef<Activi
         );
       },
     },
+    {
+      id: "tax",
+      accessorKey: "tax",
+      enableHiding: false,
+      enableSorting: false,
+      header: ({ column }) => (
+        <DataTableColumnHeader className="justify-end text-right" column={column} title="Tax" />
+      ),
+      cell: ({ row }) => {
+        const activityType = row.getValue("activityType");
+        const tax = row.getValue("tax") as string | number | null | undefined;
+        const currencyValue = row.getValue("currency");
+        const accountCurrency = accountCurrencyLookup.get(row.original.accountId);
+        const currency =
+          typeof currencyValue === "string" && currencyValue
+            ? currencyValue
+            : accountCurrency || baseCurrency;
+        const hasError = hasFieldError(row.original, "tax");
+        const errorMessages = getFieldErrorMessage(row.original, "tax");
+
+        return (
+          <ErrorCell hasError={hasError} errorMessages={errorMessages}>
+            <div className="text-muted-foreground text-right tabular-nums">
+              {activityType === "SPLIT" ? "-" : safeFormatAmount(tax, currency)}
+            </div>
+          </ErrorCell>
+        );
+      },
+    },
 
     {
       id: "currency",

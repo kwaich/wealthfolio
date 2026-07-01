@@ -385,7 +385,15 @@ export function useActivityColumns({
         enableSorting: false,
         meta: { cell: { variant: "number", step: 0.000001, valueType: "string" } },
       },
-      // 13. FX Rate (lowest priority; often hidden)
+      // 13. Tax
+      {
+        accessorKey: "tax",
+        header: "Tax",
+        size: 100,
+        enableSorting: false,
+        meta: { cell: { variant: "number", step: 0.000001, valueType: "string" } },
+      },
+      // 14. FX Rate (lowest priority; often hidden)
       {
         accessorKey: "fxRate",
         header: "FX Rate",

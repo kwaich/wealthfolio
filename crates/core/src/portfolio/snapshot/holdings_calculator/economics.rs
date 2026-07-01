@@ -56,7 +56,7 @@ fn should_use_activity_amount(activity: &Activity, asset_info: &AssetPositionInf
         return false;
     }
 
-    let activity_type = ActivityType::from_str(&activity.activity_type);
+    let activity_type = ActivityType::from_str(activity.effective_type());
     let has_qty = activity.quantity.is_some_and(|qty| !qty.is_zero());
     let has_unit_price = activity.unit_price.is_some_and(|price| !price.is_zero());
     let is_buy_or_sell = matches!(activity_type, Ok(ActivityType::Buy | ActivityType::Sell));

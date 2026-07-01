@@ -187,6 +187,7 @@ export const importActivitySchema = z
     quantity: decimalLikeSchema.nullable().optional(),
     unitPrice: decimalLikeSchema.nullable().optional(),
     fee: decimalLikeSchema.nullable().optional(),
+    tax: decimalLikeSchema.nullable().optional(),
     accountName: z.string().optional(),
     symbolName: z.string().optional(),
     /** Resolved exchange MIC for the symbol (populated during validation) */
@@ -247,6 +248,16 @@ export const importActivitySchema = z
     {
       message: "Fee must be a non-negative number.",
       path: ["fee"],
+    },
+  )
+  .refine(
+    (data) => {
+      const tax = parseNumberLike(data.tax);
+      return tax === undefined || tax >= 0;
+    },
+    {
+      message: "Tax must be a non-negative number.",
+      path: ["tax"],
     },
   )
   .refine(

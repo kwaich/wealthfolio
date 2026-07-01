@@ -444,6 +444,7 @@ function transformRowToActivity(
   const rawQuantity = parseAndAbsoluteValue(getMappedValue(ImportFormat.QUANTITY));
   const rawUnitPrice = parseAndAbsoluteValue(getMappedValue(ImportFormat.UNIT_PRICE));
   const rawFee = parseAndAbsoluteValue(getMappedValue(ImportFormat.FEE));
+  const rawTax = parseAndAbsoluteValue(getMappedValue(ImportFormat.TAX));
   const rawAmount = parseAndAbsoluteValue(getMappedValue(ImportFormat.AMOUNT));
 
   // Assign potentially NaN values first, they will be cleaned up later
@@ -451,6 +452,7 @@ function transformRowToActivity(
   activity.unitPrice = rawUnitPrice;
   activity.currency = getMappedValue(ImportFormat.CURRENCY) || accountCurrency;
   activity.fee = rawFee;
+  activity.tax = rawTax;
   activity.amount = rawAmount;
   activity.lineNumber = parseInt(row.lineNumber);
   activity.comment = getMappedValue(ImportFormat.COMMENT)?.trim() || undefined;
@@ -514,7 +516,19 @@ function transformRowToActivity(
   if (activity.quantity !== undefined && isNaN(activity.quantity)) activity.quantity = undefined;
   if (activity.unitPrice !== undefined && isNaN(activity.unitPrice)) activity.unitPrice = undefined;
   if (activity.fee !== undefined && isNaN(activity.fee)) activity.fee = 0; // Ensure fee is 0 if NaN
+  if (activity.tax !== undefined && isNaN(activity.tax)) activity.tax = 0;
   if (activity.amount !== undefined && isNaN(activity.amount)) activity.amount = undefined;
+
+  const standaloneTaxAmount = toNum(activity.tax);
+  if (
+    activity.activityType === ActivityType.TAX &&
+    !toNum(activity.amount) &&
+    !toNum(activity.fee) &&
+    standaloneTaxAmount
+  ) {
+    activity.amount = Math.abs(standaloneTaxAmount);
+    activity.tax = undefined;
+  }
 
   if (activity.activityType === ActivityType.SPLIT) {
     activity.quantity = undefined;
@@ -536,6 +550,7 @@ function transformRowToActivity(
 
   // Ensure fee is always a number (default to 0 if undefined)
   activity.fee = activity.fee ?? 0;
+  activity.tax = activity.tax ?? 0;
 
   return activity;
 }

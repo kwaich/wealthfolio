@@ -175,10 +175,11 @@ describe("Activity Utilities", () => {
         quantity: "10",
         unitPrice: "100",
         fee: "10",
+        tax: "2",
       });
 
-      // (10 * 100) + 10 = 1010
-      expect(calculateActivityValue(activity)).toBe(1010);
+      // (10 * 100) + 10 + 2 = 1012
+      expect(calculateActivityValue(activity)).toBe(1012);
     });
 
     it("should calculate SELL activity value correctly", () => {
@@ -187,10 +188,11 @@ describe("Activity Utilities", () => {
         quantity: "10",
         unitPrice: "100",
         fee: "10",
+        tax: "2",
       });
 
-      // (10 * 100) - 10 = 990
-      expect(calculateActivityValue(activity)).toBe(990);
+      // (10 * 100) - 10 - 2 = 988
+      expect(calculateActivityValue(activity)).toBe(988);
     });
 
     it("should apply the contract multiplier for option BUY activities", () => {
@@ -412,9 +414,10 @@ describe("Activity Utilities", () => {
             quantity: "10",
             unitPrice: "100",
             fee: "10",
+            tax: "2",
           }),
         ),
-      ).toBe(-1010);
+      ).toBe(-1012);
 
       expect(
         calculateActivityCashImpact(
@@ -423,9 +426,10 @@ describe("Activity Utilities", () => {
             quantity: "10",
             unitPrice: "100",
             fee: "10",
+            tax: "2",
           }),
         ),
-      ).toBe(990);
+      ).toBe(988);
 
       expect(
         calculateActivityCashImpact(
@@ -446,6 +450,17 @@ describe("Activity Utilities", () => {
           }),
         ),
       ).toBe(-105);
+
+      expect(
+        calculateActivityCashImpact(
+          createActivity({
+            activityType: ActivityType.DIVIDEND,
+            amount: "100",
+            fee: "1",
+            tax: "15",
+          }),
+        ),
+      ).toBe(84);
     });
 
     it("does not treat securities transfers or asset-backed income as cash impact", () => {

@@ -390,6 +390,7 @@ mod tests {
             unit_price: None,
             amount: None,
             fee: None,
+            tax: None,
             currency: "USD".to_string(),
             fx_rate: None,
             notes: None,
