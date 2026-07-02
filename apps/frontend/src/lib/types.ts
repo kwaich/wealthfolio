@@ -2459,6 +2459,7 @@ export interface AllocationTarget {
   minTradeAmount: string;
   wholeSharesOnly: boolean;
   allowSells: boolean;
+  maxTurnoverBps?: number | null;
   createdAt: string;
   updatedAt: string;
   archivedAt?: string | null;
@@ -2477,6 +2478,7 @@ export interface NewAllocationTarget {
   minTradeAmount?: string;
   wholeSharesOnly?: boolean;
   allowSells?: boolean;
+  maxTurnoverBps?: number | null;
 }
 
 export interface AllocationTargetWeight {
@@ -2501,6 +2503,23 @@ export interface NewAllocationTargetWeight {
 export interface SaveAllocationTargetResult {
   target: AllocationTarget;
   weights: AllocationTargetWeight[];
+}
+
+export type ConstraintSubjectType = "asset" | "account" | "category";
+export type ConstraintAction = "buy" | "sell" | "trade";
+export type ConstraintEffect = "block" | "avoid";
+
+export interface AllocationTargetConstraint {
+  id: string;
+  targetId: string;
+  subjectType: ConstraintSubjectType;
+  subjectId: string;
+  action: ConstraintAction;
+  effect: ConstraintEffect;
+  reason?: string | null;
+  metadataJson?: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface DriftRow {
@@ -2564,7 +2583,9 @@ export type RebalanceWarningKind =
   | "no_buy_candidate"
   | "tagged_cash"
   | "unclassified_asset"
-  | "partial_classification";
+  | "partial_classification"
+  | "constraint_skipped_sell"
+  | "turnover_cap_reached";
 
 export interface RebalanceWarning {
   kind: RebalanceWarningKind;
@@ -2577,6 +2598,8 @@ export interface SuggestedManualTrade {
   categoryId: string;
   categoryName: string;
   assetId?: string | null;
+  accountId?: string | null;
+  holdingId?: string | null;
   symbol?: string | null;
   name?: string | null;
   quantity?: number | null;

@@ -348,8 +348,10 @@ export {
   getAllocationTarget,
   listAllocationTargetWeights,
   listAllocationTargets,
+  listTargetConstraints,
   saveAllocationTargetWeights,
   saveAllocationTargetWithWeights,
+  saveTargetConstraints,
   updateAllocationTarget,
 } from "../shared/allocation-targets";
 

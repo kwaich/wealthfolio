@@ -157,6 +157,7 @@ pub struct AllocationTarget {
     pub min_trade_amount: String,
     pub whole_shares_only: bool,
     pub allow_sells: bool,
+    pub max_turnover_bps: Option<i32>,
     pub created_at: String,
     pub updated_at: String,
     pub archived_at: Option<String>,
@@ -177,6 +178,7 @@ pub struct NewAllocationTarget {
     pub min_trade_amount: Option<String>,
     pub whole_shares_only: Option<bool>,
     pub allow_sells: Option<bool>,
+    pub max_turnover_bps: Option<i32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -290,6 +292,110 @@ pub struct DriftHoldingsReport {
     pub rows: Vec<DriftHoldingRow>,
 }
 
+// ── Allocation target constraints ────────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConstraintSubjectType {
+    Asset,
+    Account,
+    Category,
+}
+
+impl ConstraintSubjectType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Asset => "asset",
+            Self::Account => "account",
+            Self::Category => "category",
+        }
+    }
+}
+
+impl TryFrom<&str> for ConstraintSubjectType {
+    type Error = String;
+    fn try_from(s: &str) -> Result<Self, Self::Error> {
+        match s {
+            "asset" => Ok(Self::Asset),
+            "account" => Ok(Self::Account),
+            "category" => Ok(Self::Category),
+            _ => Err(format!("unknown constraint subject type: {s}")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConstraintAction {
+    Buy,
+    Sell,
+    Trade,
+}
+
+impl ConstraintAction {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Buy => "buy",
+            Self::Sell => "sell",
+            Self::Trade => "trade",
+        }
+    }
+}
+
+impl TryFrom<&str> for ConstraintAction {
+    type Error = String;
+    fn try_from(s: &str) -> Result<Self, Self::Error> {
+        match s {
+            "buy" => Ok(Self::Buy),
+            "sell" => Ok(Self::Sell),
+            "trade" => Ok(Self::Trade),
+            _ => Err(format!("unknown constraint action: {s}")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ConstraintEffect {
+    Block,
+    Avoid,
+}
+
+impl ConstraintEffect {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Block => "block",
+            Self::Avoid => "avoid",
+        }
+    }
+}
+
+impl TryFrom<&str> for ConstraintEffect {
+    type Error = String;
+    fn try_from(s: &str) -> Result<Self, Self::Error> {
+        match s {
+            "block" => Ok(Self::Block),
+            "avoid" => Ok(Self::Avoid),
+            _ => Err(format!("unknown constraint effect: {s}")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AllocationTargetConstraint {
+    pub id: String,
+    pub target_id: String,
+    pub subject_type: ConstraintSubjectType,
+    pub subject_id: String,
+    pub action: ConstraintAction,
+    pub effect: ConstraintEffect,
+    pub reason: Option<String>,
+    pub metadata_json: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
 // ── Rebalance types ──────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -314,6 +420,10 @@ pub enum RebalanceWarningKind {
     UnclassifiedAsset,
     /// Asset has partial taxonomy weights (<100%) — known exposure used, remainder ignored.
     PartialClassification,
+    /// A sell candidate was skipped due to a do-not-sell or avoid-selling constraint.
+    ConstraintSkippedSell,
+    /// The sell phase stopped because the turnover cap was reached.
+    TurnoverCapReached,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -331,6 +441,8 @@ pub struct SuggestedManualTrade {
     pub category_id: String,
     pub category_name: String,
     pub asset_id: Option<String>,
+    pub account_id: Option<String>,
+    pub holding_id: Option<String>,
     pub symbol: Option<String>,
     pub name: Option<String>,
     pub quantity: Option<Decimal>,

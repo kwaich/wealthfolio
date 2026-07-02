@@ -72,6 +72,8 @@ pub const APP_SYNC_TABLES: &[&str] = &[
     "allocation_targets",
     // Depends on: allocation_targets, taxonomy_categories.
     "allocation_target_weights",
+    // Depends on: allocation_targets.
+    "allocation_target_constraints",
 ];
 
 /// Entity names used by incremental sync events.
@@ -102,6 +104,7 @@ pub enum SyncEntity {
     PortfolioAccount,
     AllocationTarget,
     AllocationTargetWeight,
+    AllocationTargetConstraint,
     // Spending module (wealthfolio-spending crate). Prefixed with `Spending*`
     // because the bare names (`Event`, `EventType`, `CategorizationRule`)
     // would clash with the codebase's existing event-system vocabulary
@@ -345,6 +348,7 @@ mod tests {
             SyncEntity::PortfolioAccount,
             SyncEntity::AllocationTarget,
             SyncEntity::AllocationTargetWeight,
+            SyncEntity::AllocationTargetConstraint,
             SyncEntity::SpendingSetting,
             SyncEntity::ActivityTaxonomyAssignment,
             SyncEntity::SpendingActivitySplit,
@@ -386,6 +390,7 @@ mod tests {
             "\"portfolio_account\"",
             "\"allocation_target\"",
             "\"allocation_target_weight\"",
+            "\"allocation_target_constraint\"",
             "\"spending_setting\"",
             "\"activity_taxonomy_assignment\"",
             "\"spending_activity_split\"",

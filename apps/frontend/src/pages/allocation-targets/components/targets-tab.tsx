@@ -14,8 +14,10 @@ import {
   Skeleton,
 } from "@wealthfolio/ui";
 
+import { Popover, PopoverContent, PopoverTrigger } from "@wealthfolio/ui/components/ui/popover";
 import { AccountScopeSelector } from "@/components/account-filter-selector";
 import { useAccounts } from "@/hooks/use-accounts";
+import { useHoldings } from "@/hooks/use-holdings";
 import { usePortfolioAllocations } from "@/hooks/use-portfolio-allocations";
 import { usePortfolios } from "@/hooks/use-portfolios";
 import { useTaxonomies, useTaxonomy } from "@/hooks/use-taxonomies";
@@ -29,6 +31,8 @@ import type {
   CategoryAllocation,
   PortfolioAllocations,
   AllocationTarget,
+  AllocationTargetConstraint,
+  ConstraintSubjectType,
   AccountScope,
   RebalanceGoal,
   TargetScopeType,
@@ -39,6 +43,7 @@ import { toast } from "sonner";
 import { BUILT_IN_PRESETS, ModelPresetPicker, type ModelPreset } from "./model-preset-picker";
 import { TargetWeightEditor, type WeightDraft } from "./target-weight-editor";
 import { DriftBandSlider } from "./drift-band-slider";
+import { useTargetConstraints } from "../hooks/use-target-constraints";
 import { accountScopeFromTarget, accountScopeKey } from "./target-scope";
 
 type EditorMode =
@@ -240,6 +245,232 @@ function isSameEditorMode(left: EditorMode, right: EditorMode): boolean {
   return left.targetId === right.targetId;
 }
 
+function SellProtectionSection({
+  constraints,
+  onToggle,
+  holdings,
+  accounts,
+}: {
+  constraints: AllocationTargetConstraint[];
+  onToggle: (subjectType: ConstraintSubjectType, subjectId: string) => void;
+  holdings: {
+    id: string;
+    instrument?: { id: string; symbol: string; name?: string | null } | null;
+    marketValue: { base: number };
+  }[];
+  accounts: { id: string; name: string }[];
+}) {
+  const [assetPopoverOpen, setAssetPopoverOpen] = useState(false);
+  const [accountPopoverOpen, setAccountPopoverOpen] = useState(false);
+  const [assetSearch, setAssetSearch] = useState("");
+
+  const protectedAssetIds = new Set(
+    constraints
+      .filter((c) => c.subjectType === "asset" && c.action === "sell" && c.effect === "block")
+      .map((c) => c.subjectId),
+  );
+  const protectedAccountIds = new Set(
+    constraints
+      .filter((c) => c.subjectType === "account" && c.action === "sell" && c.effect === "block")
+      .map((c) => c.subjectId),
+  );
+
+  const uniqueAssets = holdings.reduce<
+    { assetId: string; symbol: string; name: string; value: number }[]
+  >((acc, h) => {
+    if (!h.instrument) return acc;
+    if (acc.some((a) => a.assetId === h.instrument!.id)) return acc;
+    acc.push({
+      assetId: h.instrument.id,
+      symbol: h.instrument.symbol,
+      name: h.instrument.name ?? h.instrument.symbol,
+      value: h.marketValue.base,
+    });
+    return acc;
+  }, []);
+
+  const availableAssets = uniqueAssets
+    .filter((a) => !protectedAssetIds.has(a.assetId))
+    .filter(
+      (a) =>
+        !assetSearch ||
+        a.symbol.toLowerCase().includes(assetSearch.toLowerCase()) ||
+        a.name.toLowerCase().includes(assetSearch.toLowerCase()),
+    )
+    .sort((a, b) => b.value - a.value);
+
+  const protectedAssets = uniqueAssets.filter((a) => protectedAssetIds.has(a.assetId));
+  const availableAccounts = accounts.filter((a) => !protectedAccountIds.has(a.id));
+  const protectedAccounts = accounts.filter((a) => protectedAccountIds.has(a.id));
+
+  return (
+    <section className="bg-card/80 rounded-lg border p-5 shadow-sm">
+      <div className="mb-1">
+        <h3 className="text-foreground text-[13px] font-semibold">Sell protection</h3>
+      </div>
+
+      <div className="border-border border-b py-4">
+        <div className="mb-1 flex items-center gap-2">
+          <span className="text-foreground text-[12.5px] font-medium">Protected assets</span>
+          {protectedAssets.length > 0 && (
+            <span className="bg-muted text-muted-foreground inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full px-1.5 font-mono text-[10.5px] font-semibold">
+              {protectedAssets.length}
+            </span>
+          )}
+        </div>
+        <p className="text-muted-foreground mb-3 text-[11px] leading-relaxed">
+          These holdings are never sold, even when overweight.
+        </p>
+
+        <div className="flex flex-wrap items-center gap-2">
+          {protectedAssets.map((a) => (
+            <span
+              key={a.assetId}
+              className="border-border bg-background inline-flex items-center gap-1.5 rounded-full border py-1 pl-2 pr-1 font-mono text-[11.5px]"
+            >
+              <span className="bg-muted text-muted-foreground flex h-5 w-5 items-center justify-center rounded-full text-[8.5px] font-bold uppercase">
+                {a.symbol.slice(0, 2)}
+              </span>
+              <span className="text-foreground font-semibold">{a.symbol}</span>
+              <span className="text-muted-foreground max-w-[120px] truncate">{a.name}</span>
+              <button
+                type="button"
+                onClick={() => onToggle("asset", a.assetId)}
+                className="text-muted-foreground hover:text-foreground hover:bg-muted ml-0.5 flex h-[17px] w-[17px] items-center justify-center rounded-full"
+              >
+                <Icons.X className="h-3 w-3" />
+              </button>
+            </span>
+          ))}
+
+          <Popover open={assetPopoverOpen} onOpenChange={setAssetPopoverOpen}>
+            <PopoverTrigger asChild>
+              <button
+                type="button"
+                className="border-border text-muted-foreground hover:text-foreground hover:border-foreground/40 inline-flex items-center gap-1.5 rounded-full border border-dashed px-3 py-1 text-[11.5px] font-medium"
+              >
+                <Icons.Plus className="h-3.5 w-3.5" />
+                Add asset
+              </button>
+            </PopoverTrigger>
+            <PopoverContent className="w-72 p-0" align="start">
+              <div className="border-border flex items-center gap-2 border-b px-3 py-2">
+                <Icons.Search className="text-muted-foreground h-3.5 w-3.5 shrink-0" />
+                <input
+                  value={assetSearch}
+                  onChange={(e) => setAssetSearch(e.target.value)}
+                  placeholder="Search holdings…"
+                  className="text-foreground placeholder:text-muted-foreground/60 w-full bg-transparent text-[12.5px] outline-none"
+                  autoFocus
+                />
+              </div>
+              <div className="max-h-[228px] overflow-auto p-1">
+                {availableAssets.length === 0 ? (
+                  <p className="text-muted-foreground px-3 py-4 text-center text-[11px]">
+                    {assetSearch ? "No matching holdings" : "All holdings are protected"}
+                  </p>
+                ) : (
+                  availableAssets.map((a) => (
+                    <button
+                      key={a.assetId}
+                      type="button"
+                      onClick={() => {
+                        onToggle("asset", a.assetId);
+                        setAssetPopoverOpen(false);
+                        setAssetSearch("");
+                      }}
+                      className="hover:bg-muted flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left"
+                    >
+                      <span className="bg-muted text-muted-foreground flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-full font-mono text-[8.5px] font-bold uppercase">
+                        {a.symbol.slice(0, 2)}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="text-foreground block font-mono text-[12px] font-semibold">
+                          {a.symbol}
+                        </span>
+                        <span className="text-muted-foreground block truncate text-[11px]">
+                          {a.name}
+                        </span>
+                      </span>
+                    </button>
+                  ))
+                )}
+              </div>
+            </PopoverContent>
+          </Popover>
+        </div>
+      </div>
+
+      <div className="pt-4">
+        <div className="mb-1 flex items-center gap-2">
+          <span className="text-foreground text-[12.5px] font-medium">Protected accounts</span>
+          {protectedAccounts.length > 0 && (
+            <span className="bg-muted text-muted-foreground inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full px-1.5 font-mono text-[10.5px] font-semibold">
+              {protectedAccounts.length}
+            </span>
+          )}
+        </div>
+        <p className="text-muted-foreground mb-3 text-[11px] leading-relaxed">
+          No sells are generated from these accounts.
+        </p>
+
+        <div className="flex flex-wrap items-center gap-2">
+          {protectedAccounts.map((a) => (
+            <span
+              key={a.id}
+              className="border-border bg-background inline-flex items-center gap-1.5 rounded-full border py-1 pl-2.5 pr-1 text-[11.5px]"
+            >
+              <Icons.Wallet className="text-muted-foreground h-3.5 w-3.5" />
+              <span className="text-foreground font-medium">{a.name}</span>
+              <button
+                type="button"
+                onClick={() => onToggle("account", a.id)}
+                className="text-muted-foreground hover:text-foreground hover:bg-muted ml-0.5 flex h-[17px] w-[17px] items-center justify-center rounded-full"
+              >
+                <Icons.X className="h-3 w-3" />
+              </button>
+            </span>
+          ))}
+
+          <Popover open={accountPopoverOpen} onOpenChange={setAccountPopoverOpen}>
+            <PopoverTrigger asChild>
+              <button
+                type="button"
+                className="border-border text-muted-foreground hover:text-foreground hover:border-foreground/40 inline-flex items-center gap-1.5 rounded-full border border-dashed px-3 py-1 text-[11.5px] font-medium"
+              >
+                <Icons.Plus className="h-3.5 w-3.5" />
+                Add account
+              </button>
+            </PopoverTrigger>
+            <PopoverContent className="w-64 p-1" align="start">
+              {availableAccounts.length === 0 ? (
+                <p className="text-muted-foreground px-3 py-4 text-center text-[11px]">
+                  All accounts are protected
+                </p>
+              ) : (
+                availableAccounts.map((a) => (
+                  <button
+                    key={a.id}
+                    type="button"
+                    onClick={() => {
+                      onToggle("account", a.id);
+                      setAccountPopoverOpen(false);
+                    }}
+                    className="hover:bg-muted flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left"
+                  >
+                    <Icons.Wallet className="text-muted-foreground h-4 w-4 shrink-0" />
+                    <span className="text-foreground text-[12px] font-medium">{a.name}</span>
+                  </button>
+                ))
+              )}
+            </PopoverContent>
+          </Popover>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function TargetEditor({
   target,
   accountScope,
@@ -268,6 +499,55 @@ function TargetEditor({
   const saveTarget = useSaveAllocationTargetWithWeights();
   const { data: existingWeightsData, isLoading: existingWeightsLoading } =
     useAllocationTargetWeights(target?.id ?? null);
+  const targetConstraintsQuery = useTargetConstraints(target?.id);
+  const { holdings } = useHoldings(accountScope);
+  const [constraintsDraft, setConstraintsDraft] = useState<AllocationTargetConstraint[]>([]);
+  const constraintsDraftLoaded = React.useRef(false);
+
+  useEffect(() => {
+    if (targetConstraintsQuery.constraints.length > 0 && !constraintsDraftLoaded.current) {
+      setConstraintsDraft(targetConstraintsQuery.constraints);
+      constraintsDraftLoaded.current = true;
+    } else if (
+      targetConstraintsQuery.constraints.length === 0 &&
+      !targetConstraintsQuery.isLoading &&
+      !constraintsDraftLoaded.current
+    ) {
+      constraintsDraftLoaded.current = true;
+    }
+  }, [targetConstraintsQuery.constraints, targetConstraintsQuery.isLoading]);
+
+  function toggleConstraint(subjectType: ConstraintSubjectType, subjectId: string) {
+    const existing = constraintsDraft.find(
+      (c) =>
+        c.subjectType === subjectType &&
+        c.subjectId === subjectId &&
+        c.action === "sell" &&
+        c.effect === "block",
+    );
+    const now = new Date().toISOString();
+    setConstraintsDraft(
+      existing
+        ? constraintsDraft.filter((c) => c.id !== existing.id)
+        : [
+            ...constraintsDraft,
+            {
+              id: crypto.randomUUID(),
+              targetId: target?.id ?? "",
+              subjectType,
+              subjectId,
+              action: "sell" as const,
+              effect: "block" as const,
+              reason: null,
+              metadataJson: null,
+              createdAt: now,
+              updatedAt: now,
+            },
+          ],
+    );
+    markDirty();
+  }
+
   const [taxonomyId, setTaxonomyId] = useState(target?.taxonomyId ?? "asset_classes");
   const [startId, setStartId] = useState<string>(target ? "saved" : "current");
   const [targetName, setTargetName] = useState(target?.name ?? "");
@@ -285,6 +565,9 @@ function TargetEditor({
   );
   const [minTradeAmount, setMinTradeAmount] = useState(target?.minTradeAmount ?? "0");
   const [wholeSharesOnly, setWholeSharesOnly] = useState(target?.wholeSharesOnly ?? false);
+  const [maxTurnoverPctDisplay, setMaxTurnoverPctDisplay] = useState(
+    target?.maxTurnoverBps != null ? String(target.maxTurnoverBps / 100) : "",
+  );
   const [weights, setWeights] = useState<WeightDraft[]>([]);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -365,6 +648,9 @@ function TargetEditor({
       setRebalanceGoal(target?.rebalanceGoal ?? "nearest_band");
       setMinTradeAmount(target?.minTradeAmount ?? "0");
       setWholeSharesOnly(target?.wholeSharesOnly ?? false);
+      setMaxTurnoverPctDisplay(
+        target?.maxTurnoverBps != null ? String(target.maxTurnoverBps / 100) : "",
+      );
     } else {
       setTaxonomyId("asset_classes");
       setStartId("current");
@@ -377,6 +663,7 @@ function TargetEditor({
       setRebalanceGoal("nearest_band");
       setMinTradeAmount("0");
       setWholeSharesOnly(false);
+      setMaxTurnoverPctDisplay("");
     }
     setWeights([]);
     setHasUnsavedChanges(false);
@@ -471,6 +758,8 @@ function TargetEditor({
         rebalanceGoal,
         minTradeAmount: minTradeAmount === "" ? "0" : minTradeAmount,
         wholeSharesOnly,
+        maxTurnoverBps:
+          maxTurnoverPctDisplay === "" ? null : Math.round(parseFloat(maxTurnoverPctDisplay) * 100),
       } as const;
 
       const saved = await saveTarget.mutateAsync({
@@ -483,6 +772,20 @@ function TargetEditor({
           isRequired: true,
         })),
       });
+
+      if (saved.target.id && constraintsDraft.length > 0) {
+        const constraintsWithTargetId = constraintsDraft.map((c) => ({
+          ...c,
+          targetId: saved.target.id,
+        }));
+        await targetConstraintsQuery.saveConstraints(constraintsWithTargetId);
+      } else if (
+        saved.target.id &&
+        constraintsDraft.length === 0 &&
+        targetConstraintsQuery.constraints.length > 0
+      ) {
+        await targetConstraintsQuery.saveConstraints([]);
+      }
 
       setHasUnsavedChanges(false);
       onUnsavedChange?.(false);
@@ -507,6 +810,9 @@ function TargetEditor({
       setRebalanceGoal(target.rebalanceGoal ?? "nearest_band");
       setMinTradeAmount(target.minTradeAmount ?? "0");
       setWholeSharesOnly(target.wholeSharesOnly ?? false);
+      setMaxTurnoverPctDisplay(
+        target.maxTurnoverBps != null ? String(target.maxTurnoverBps / 100) : "",
+      );
       if (savedWeightDrafts) setWeights(savedWeightDrafts);
     } else {
       setTaxonomyId("asset_classes");
@@ -785,6 +1091,30 @@ function TargetEditor({
                   Trades below this amount are excluded from the plan.
                 </p>
               </label>
+
+              <label className="mt-4 block">
+                <div className="text-foreground mb-2 text-[12.5px] font-medium">Max turnover %</div>
+                <div className="border-input bg-background focus-within:ring-ring flex h-9 items-center rounded-md border px-3 focus-within:ring-2">
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="0.1"
+                    value={maxTurnoverPctDisplay}
+                    onChange={(e) => {
+                      setMaxTurnoverPctDisplay(e.target.value);
+                      markDirty();
+                    }}
+                    placeholder="No limit"
+                    className="text-foreground placeholder:text-muted-foreground/60 w-full bg-transparent text-[13px] outline-none"
+                  />
+                  <span className="text-muted-foreground ml-1 text-[13px]">%</span>
+                </div>
+                <p className="text-muted-foreground mt-2 text-[11px] leading-relaxed">
+                  Cap the total portfolio value that can be sold in one plan. Leave empty for no
+                  limit.
+                </p>
+              </label>
             </div>
           </section>
         </div>
@@ -851,6 +1181,15 @@ function TargetEditor({
               </p>
             )}
           </section>
+
+          {target && allowSells && (
+            <SellProtectionSection
+              constraints={constraintsDraft}
+              onToggle={toggleConstraint}
+              holdings={holdings.filter((h) => h.holdingType !== "cash" && h.quantity > 0)}
+              accounts={accounts.filter((a) => a.isActive)}
+            />
+          )}
         </div>
       </div>
 

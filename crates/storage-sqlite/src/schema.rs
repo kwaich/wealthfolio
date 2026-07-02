@@ -753,6 +753,7 @@ diesel::table! {
         created_at -> Text,
         updated_at -> Text,
         archived_at -> Nullable<Text>,
+        max_turnover_bps -> Nullable<Integer>,
     }
 }
 
@@ -800,6 +801,23 @@ diesel::table! {
 }
 
 diesel::joinable!(allocation_target_weights -> allocation_targets (target_id));
+
+diesel::table! {
+    allocation_target_constraints (id) {
+        id -> Text,
+        target_id -> Text,
+        subject_type -> Text,
+        subject_id -> Text,
+        action -> Text,
+        effect -> Text,
+        reason -> Nullable<Text>,
+        metadata_json -> Nullable<Text>,
+        created_at -> Text,
+        updated_at -> Text,
+    }
+}
+
+diesel::joinable!(allocation_target_constraints -> allocation_targets (target_id));
 
 diesel::joinable!(accounts -> platforms (platform_id));
 diesel::joinable!(activities -> accounts (account_id));
@@ -896,4 +914,5 @@ diesel::allow_tables_to_appear_in_same_query!(
     allocation_target_weights,
     personal_access_tokens,
     mcp_audit_log,
+    allocation_target_constraints,
 );

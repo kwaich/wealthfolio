@@ -388,6 +388,8 @@ export const COMMANDS: CommandMap = {
     path: "/allocation-targets/save-with-weights",
   },
   get_allocation_target_drift: { method: "POST", path: "/allocation-targets" },
+  list_target_constraints: { method: "GET", path: "/allocation-targets" },
+  save_target_constraints: { method: "POST", path: "/allocation-targets" },
   calculate_rebalance_plan: { method: "POST", path: "/allocation-targets/rebalance/calculate" },
   // Alternative Assets
   create_alternative_asset: { method: "POST", path: "/alternative-assets" },
@@ -1910,6 +1912,20 @@ export const invoke = async <T>(command: string, payload?: Record<string, unknow
       body = JSON.stringify({ filter, includeHoldings: includeHoldings ?? false });
       break;
     }
+    case "list_target_constraints": {
+      const { targetId } = payload as { targetId: string };
+      url += `/${encodeURIComponent(targetId)}/constraints`;
+      break;
+    }
+    case "save_target_constraints": {
+      const { targetId, constraints } = payload as {
+        targetId: string;
+        constraints: unknown[];
+      };
+      url += `/${encodeURIComponent(targetId)}/constraints`;
+      body = JSON.stringify(constraints);
+      break;
+    }
     case "calculate_rebalance_plan": {
       const { targetId, availableCash, filter, scenarioMode } = payload as {
         targetId: string;
@@ -1917,7 +1933,12 @@ export const invoke = async <T>(command: string, payload?: Record<string, unknow
         filter: unknown;
         scenarioMode: string;
       };
-      body = JSON.stringify({ targetId, availableCash, filter, scenarioMode });
+      body = JSON.stringify({
+        targetId,
+        availableCash,
+        filter,
+        scenarioMode,
+      });
       break;
     }
     // AI Providers

@@ -1575,9 +1575,9 @@ impl ActivityRepositoryTrait for ActivityRepository {
                     .map_err(StorageError::from)?;
 
                 let now = Utc::now().naive_utc();
-                // Preserve the existing row id so the sync entity_id stays stable across
+                // Preserve the existing row id so the sync subject_id stays stable across
                 // updates. Generating a new UUID on every upsert would cause the outbox to
-                // emit a different entity_id than the row that already lives on remote devices,
+                // emit a different subject_id than the row that already lives on remote devices,
                 // making their replay INSERT collide on UNIQUE(account_id, context_kind, source_system).
                 let existing_link_id = existing_link.as_ref().map(|l| l.id.clone());
                 let account_local_id = if mapping.context_kind == import_type::HOLDINGS {
@@ -1664,7 +1664,7 @@ impl ActivityRepositoryTrait for ActivityRepository {
             .exec_tx(move |tx| -> Result<()> {
                 use chrono::Utc;
                 let now = Utc::now().naive_utc();
-                // Reuse the existing row id to keep the sync entity_id stable across updates.
+                // Reuse the existing row id to keep the sync subject_id stable across updates.
                 let existing_id: Option<String> = import_account_templates::table
                     .filter(import_account_templates::account_id.eq(&account_id))
                     .filter(import_account_templates::context_kind.eq(&context_kind))
@@ -3648,8 +3648,8 @@ mod tests {
     }
 
     /// Regression: re-linking the same (account_id, context_kind, source_system) must preserve the row `id`
-    /// so that sync outbox events keep a stable entity_id across updates. Generating a new UUID
-    /// on every upsert causes remote devices to receive a different entity_id and fail with a
+    /// so that sync outbox events keep a stable subject_id across updates. Generating a new UUID
+    /// on every upsert causes remote devices to receive a different subject_id and fail with a
     /// UNIQUE(account_id, context_kind, source_system) constraint error on replay.
     #[tokio::test]
     async fn relink_preserves_row_id() {
@@ -3688,7 +3688,7 @@ mod tests {
         // id must be stable — changing the linked template must not rotate the sync identity
         assert_eq!(
             id_after_first, id_after_relink,
-            "row id changed on relink; sync entity_id would diverge from remote devices"
+            "row id changed on relink; sync subject_id would diverge from remote devices"
         );
 
         // template_id must have been updated

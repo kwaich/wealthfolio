@@ -194,7 +194,7 @@ impl AccountRepositoryTrait for AccountRepository {
     /// Deletes an account by its ID and returns the number of deleted records
     async fn delete(&self, account_id_param: &str) -> Result<usize> {
         let id_to_delete_owned = account_id_param.to_string();
-        let event_entity_id = id_to_delete_owned.clone();
+        let event_subject_id = id_to_delete_owned.clone();
         self.writer
             .exec_tx(move |tx| {
                 let affected_rows = diesel::delete(accounts.find(id_to_delete_owned))
@@ -202,7 +202,7 @@ impl AccountRepositoryTrait for AccountRepository {
                     .map_err(StorageError::from)?;
 
                 if affected_rows > 0 {
-                    tx.delete::<AccountDB>(event_entity_id.clone());
+                    tx.delete::<AccountDB>(event_subject_id.clone());
                 }
                 Ok(affected_rows)
             })
