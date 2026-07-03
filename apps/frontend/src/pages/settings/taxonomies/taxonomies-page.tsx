@@ -10,8 +10,10 @@ import { SettingsHeader } from "../settings-header";
 import { CategoryForm } from "./components/category-form";
 import { MigrationBanner } from "./migration-banner";
 import { toast } from "sonner";
+import { useSearchParams } from "react-router-dom";
 
 export default function TaxonomiesPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
   // Settings → Classifications is asset-only. Spending categories live at /settings/spending/categories.
   const { data: taxonomies = [], isLoading: isLoadingTaxonomies } = useTaxonomies({
     scope: "asset",
@@ -75,6 +77,7 @@ export default function TaxonomiesPage() {
   };
 
   const isLoading = isLoadingTaxonomies || isLoadingCategories;
+  const showHealthBanner = searchParams.get("healthContext") === "classification";
 
   return (
     <div className="space-y-6">
@@ -82,6 +85,31 @@ export default function TaxonomiesPage() {
         heading="Classifications"
         text="Manage asset classification hierarchies like sectors, regions, and asset classes."
       />
+
+      {showHealthBanner && (
+        <div className="border-border bg-muted/30 flex items-center justify-between gap-3 rounded-md border px-3 py-2">
+          <div className="flex min-w-0 items-center gap-2">
+            <Icons.Info className="text-muted-foreground h-4 w-4 shrink-0" />
+            <p className="text-sm">Showing classifications flagged by Health Center</p>
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() =>
+              setSearchParams(
+                (prev) => {
+                  const next = new URLSearchParams(prev);
+                  next.delete("healthContext");
+                  return next;
+                },
+                { replace: true },
+              )
+            }
+          >
+            Clear
+          </Button>
+        </div>
+      )}
 
       <MigrationBanner />
 

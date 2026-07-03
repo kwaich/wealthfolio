@@ -1196,6 +1196,7 @@ mod tests {
             _: Option<chrono::NaiveDate>,
             _: Option<chrono::NaiveDate>,
             _: Option<Vec<String>>,
+            _: Option<Vec<String>>,
         ) -> wealthfolio_core::Result<ActivitySearchResponse> {
             unimplemented!()
         }

@@ -86,6 +86,9 @@ function HealthIssueRow({
 }) {
   const categoryConfig = getCategoryConfig(issue);
   const CategoryIcon = Icons[categoryConfig.icon];
+  const hasDiagnosticActions =
+    issue.diagnostics?.some((diagnostic) => diagnostic.actions.length > 0) ?? false;
+  const showQuickFix = Boolean(issue.fixAction && !hasDiagnosticActions);
 
   return (
     <div
@@ -120,7 +123,7 @@ function HealthIssueRow({
           <TooltipContent side="top">{categoryConfig.label}</TooltipContent>
         </Tooltip>
 
-        {issue.fixAction && (
+        {showQuickFix && (
           <Button
             size="sm"
             variant="secondary"
@@ -382,6 +385,7 @@ export default function HealthPage() {
             fixMutation.mutate(selectedIssue.fixAction);
           }
         }}
+        onRunFixAction={(action) => fixMutation.mutate(action)}
         isDismissing={dismissMutation.isPending}
         isFixing={fixMutation.isPending}
       />

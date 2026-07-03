@@ -3678,6 +3678,7 @@ impl ActivityServiceTrait for ActivityService {
         date_from: Option<NaiveDate>,
         date_to: Option<NaiveDate>,
         instrument_type_filter: Option<Vec<String>>,
+        activity_id_filter: Option<Vec<String>>,
     ) -> Result<ActivitySearchResponse> {
         self.activity_repository.search_activities(
             page,
@@ -3690,6 +3691,7 @@ impl ActivityServiceTrait for ActivityService {
             date_from,
             date_to,
             instrument_type_filter,
+            activity_id_filter,
         )
     }
 
@@ -3707,6 +3709,7 @@ impl ActivityServiceTrait for ActivityService {
         date_from_utc: Option<DateTime<Utc>>,
         date_to_utc_exclusive: Option<DateTime<Utc>>,
         instrument_type_filter: Option<Vec<String>>,
+        activity_id_filter: Option<Vec<String>>,
     ) -> Result<ActivitySearchResponse> {
         self.activity_repository.search_activities_in_utc_range(
             page,
@@ -3719,6 +3722,7 @@ impl ActivityServiceTrait for ActivityService {
             date_from_utc,
             date_to_utc_exclusive,
             instrument_type_filter,
+            activity_id_filter,
         )
     }
 

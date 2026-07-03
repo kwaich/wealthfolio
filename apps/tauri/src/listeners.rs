@@ -357,6 +357,8 @@ fn handle_portfolio_calculation(
             }
         }
 
+        context.health_service().clear_cache().await;
+
         if let Err(e) = app_handle.emit(PORTFOLIO_UPDATE_COMPLETE, ()) {
             error!("Failed to emit {} event: {}", PORTFOLIO_UPDATE_COMPLETE, e);
         }

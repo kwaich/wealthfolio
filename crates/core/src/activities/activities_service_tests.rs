@@ -1315,6 +1315,7 @@ mod tests {
             _date_from: Option<chrono::NaiveDate>,
             _date_to: Option<chrono::NaiveDate>,
             _instrument_type_filter: Option<Vec<String>>,
+            _activity_id_filter: Option<Vec<String>>,
         ) -> Result<ActivitySearchResponse> {
             unimplemented!()
         }

@@ -54,6 +54,7 @@ async fn build_data_export_content(
                     None,
                     None,
                     None,
+                    None,
                 )?
                 .data;
             Ok(format_records(&records, format)?)

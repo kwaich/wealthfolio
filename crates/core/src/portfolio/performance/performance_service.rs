@@ -5990,6 +5990,7 @@ mod tests {
             _date_from: Option<NaiveDate>,
             _date_to: Option<NaiveDate>,
             _instrument_type_filter: Option<Vec<String>>,
+            _activity_id_filter: Option<Vec<String>>,
         ) -> Result<crate::activities::ActivitySearchResponse> {
             Err(errors::Error::Unexpected(
                 "TestActivityRepository::search_activities should not be called".to_string(),

@@ -283,6 +283,7 @@ async fn build_data_export_content(
                     None,
                     None,
                     None,
+                    None,
                 )
                 .map_err(|e| format!("Failed to load activities for export: {}", e))?
                 .data;

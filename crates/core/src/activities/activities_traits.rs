@@ -138,6 +138,7 @@ pub trait ActivityRepositoryTrait: Send + Sync {
         date_from: Option<NaiveDate>,
         date_to: Option<NaiveDate>,
         instrument_type_filter: Option<Vec<String>>,
+        activity_id_filter: Option<Vec<String>>,
     ) -> Result<ActivitySearchResponse>;
     #[allow(clippy::too_many_arguments)]
     fn search_activities_in_utc_range(
@@ -152,6 +153,7 @@ pub trait ActivityRepositoryTrait: Send + Sync {
         date_from_utc: Option<DateTime<Utc>>,
         date_to_utc_exclusive: Option<DateTime<Utc>>,
         instrument_type_filter: Option<Vec<String>>,
+        activity_id_filter: Option<Vec<String>>,
     ) -> Result<ActivitySearchResponse> {
         let date_from = date_from_utc.map(|dt| dt.date_naive());
         let date_to =
@@ -168,6 +170,7 @@ pub trait ActivityRepositoryTrait: Send + Sync {
             date_from,
             date_to,
             instrument_type_filter,
+            activity_id_filter,
         )
     }
     async fn create_activity(&self, new_activity: NewActivity) -> Result<Activity>;
@@ -311,6 +314,7 @@ pub trait ActivityServiceTrait: Send + Sync {
         date_from: Option<NaiveDate>,
         date_to: Option<NaiveDate>,
         instrument_type_filter: Option<Vec<String>>,
+        activity_id_filter: Option<Vec<String>>,
     ) -> Result<ActivitySearchResponse>;
     #[allow(clippy::too_many_arguments)]
     fn search_activities_in_utc_range(
@@ -325,6 +329,7 @@ pub trait ActivityServiceTrait: Send + Sync {
         date_from_utc: Option<DateTime<Utc>>,
         date_to_utc_exclusive: Option<DateTime<Utc>>,
         instrument_type_filter: Option<Vec<String>>,
+        activity_id_filter: Option<Vec<String>>,
     ) -> Result<ActivitySearchResponse> {
         let date_from = date_from_utc.map(|dt| dt.date_naive());
         let date_to =
@@ -341,6 +346,7 @@ pub trait ActivityServiceTrait: Send + Sync {
             date_from,
             date_to,
             instrument_type_filter,
+            activity_id_filter,
         )
     }
     fn get_first_activity_date(

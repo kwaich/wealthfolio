@@ -215,6 +215,7 @@ impl AgentTool for SearchActivities {
                 date_from,
                 date_to,
                 None, // instrument_type_filter
+                None, // activity_id_filter
             )
             .map_err(|e| AgentToolError::ExecutionFailed(e.to_string()))?;
 

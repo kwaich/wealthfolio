@@ -15,6 +15,7 @@ import { generateId } from "@/lib/id";
 import { QueryKeys } from "@/lib/query-keys";
 import { useSettingsContext } from "@/lib/settings-provider";
 import type { ActivityDetails, AssetKind, AssetLotView, Holding, Quote } from "@/lib/types";
+import { normalizeCurrency } from "@/lib/utils";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AnimatedToggleGroup, Page, PageContent, PageHeader, SwipableView } from "@wealthfolio/ui";
 import { Badge } from "@wealthfolio/ui/components/ui/badge";
@@ -125,6 +126,7 @@ interface AssetDetailData {
 
 type AssetTab = "overview" | "history";
 type OverviewSubTab = "about" | "holdings" | "activities" | "snapshots" | "quotes";
+type AssetHealthContext = "price" | "basis" | "activity";
 
 const REGULAR_SUB_TAB_VALUES: OverviewSubTab[] = [
   "about",
@@ -144,6 +146,107 @@ const parseSubTabParam = (param: string | null): OverviewSubTab => {
   return "about";
 };
 
+const parseHealthContext = (value: string | null): AssetHealthContext | null => {
+  if (value === "price" || value === "basis" || value === "activity") {
+    return value;
+  }
+  return null;
+};
+
+const formatHealthDate = (value: string | null): string | null => {
+  if (!value) return null;
+  const date = new Date(`${value}T00:00:00Z`);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(date);
+};
+
+function AssetHealthBanner({
+  context,
+  isManualPricingMode,
+  date,
+  canRefreshPrices,
+  isRefreshingPrices,
+  onRefreshPrices,
+  onClear,
+}: {
+  context: AssetHealthContext | null;
+  isManualPricingMode: boolean;
+  date: string | null;
+  canRefreshPrices: boolean;
+  isRefreshingPrices: boolean;
+  onRefreshPrices: () => void;
+  onClear: () => void;
+}) {
+  if (!context) return null;
+
+  const dateLabel = formatHealthDate(date);
+  const copy =
+    context === "price"
+      ? isManualPricingMode
+        ? {
+            title: dateLabel ? `Add a price for ${dateLabel}` : "Manual prices need review",
+            description: dateLabel
+              ? "Wealthfolio is carrying forward the last price. Add this date only if it needs its own value."
+              : "Review the missing dates. Add prices that need their own value; carried-forward prices are still used between entries.",
+          }
+        : {
+            title: dateLabel ? `Price missing for ${dateLabel}` : "Price history needs review",
+            description: dateLabel
+              ? "Wealthfolio is carrying forward the last available price. Refetch prices if this was a trading day."
+              : "Refetch provider history to restore missing or stale prices. Carried-forward prices are used until exact prices are available.",
+          }
+      : context === "basis"
+        ? {
+            title: "Cost basis needs review",
+            description:
+              "Update what you paid for this holding so Wealthfolio can calculate gain/loss.",
+          }
+        : {
+            title: "Transactions need review",
+            description: "Review the transactions Health Center flagged for this investment.",
+          };
+
+  return (
+    <div className="border-warning/30 bg-warning/10 mb-4 rounded-md border px-3 py-3">
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div className="flex min-w-0 items-start gap-2">
+          <Icons.AlertTriangle className="text-warning mt-0.5 h-4 w-4 shrink-0" />
+          <div className="min-w-0 space-y-1">
+            <p className="text-sm font-medium">{copy.title}</p>
+            <p className="text-muted-foreground text-sm leading-relaxed">{copy.description}</p>
+          </div>
+        </div>
+        <div className="flex shrink-0 flex-wrap items-center gap-2 md:justify-end">
+          {context === "price" && !isManualPricingMode && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={!canRefreshPrices || isRefreshingPrices}
+              onClick={onRefreshPrices}
+            >
+              {isRefreshingPrices ? (
+                <Icons.Spinner className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Icons.Refresh className="mr-2 h-4 w-4" />
+              )}
+              Refetch Prices
+            </Button>
+          )}
+          <Button type="button" variant="ghost" size="sm" onClick={onClear}>
+            Clear
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export const AssetProfilePage = () => {
   const { settings } = useSettingsContext();
   const baseCurrency = settings?.baseCurrency ?? "USD";
@@ -153,6 +256,8 @@ export const AssetProfilePage = () => {
   const navigate = useNavigate();
   const queryParams = new URLSearchParams(location.search);
   const tabParam = queryParams.get("tab");
+  const healthContext = parseHealthContext(queryParams.get("healthContext"));
+  const healthDate = queryParams.get("date");
   // activeTab is only used by alternative assets (Overview | Values).
   const defaultTab: AssetTab = tabParam === "history" ? "history" : "overview";
   const [activeTab, setActiveTab] = useState<AssetTab>(defaultTab);
@@ -531,6 +636,10 @@ export const AssetProfilePage = () => {
     const totalGainAmount = holding?.totalGain?.local ?? 0;
     const totalGainPercent = holding?.totalGainPct ?? 0;
     const calculatedAt = holding?.asOfDate;
+    const valuationMarketPrice =
+      asset?.valuationMarketPrice != null ? Number(asset.valuationMarketPrice) : 0;
+    const valuationMarketCurrency =
+      asset?.valuationMarketCurrency ?? instrument?.currency ?? asset?.quoteCcy ?? baseCurrency;
 
     // Legacy data is in asset.metadata.legacy (for migration purposes)
     // New data should come from taxonomies
@@ -555,15 +664,15 @@ export const AssetProfilePage = () => {
       attributes: null,
       createdAt: holding?.openDate ? new Date(holding.openDate) : new Date(),
       updatedAt: new Date(),
-      currency: instrument?.currency ?? asset?.quoteCcy ?? baseCurrency,
+      currency: holding?.localCurrency ?? valuationMarketCurrency,
       sectors: JSON.stringify(parseJsonField(legacy?.sectors) ?? []),
       url: null,
-      marketPrice: holding?.price ?? quote?.close ?? 0,
+      marketPrice: holding?.price ?? valuationMarketPrice,
       totalGainAmount,
       totalGainPercent,
       calculatedAt,
     };
-  }, [holding, assetProfile, quote, assetId, baseCurrency]);
+  }, [holding, assetProfile, assetId, baseCurrency]);
 
   const symbolHolding = useMemo((): AssetDetailData | null => {
     const instrument = holding?.instrument;
@@ -572,11 +681,14 @@ export const AssetProfilePage = () => {
     if (!holding && !hasAssetHistory) return null;
 
     const displayCurrency =
-      holding?.localCurrency ??
-      quote?.currency ??
-      instrument?.currency ??
-      asset?.quoteCcy ??
-      baseCurrency;
+      normalizeCurrency(
+        holding?.localCurrency ??
+          asset?.valuationMarketCurrency ??
+          quote?.currency ??
+          instrument?.currency ??
+          asset?.quoteCcy ??
+          baseCurrency,
+      ) ?? baseCurrency;
     const quantity = Number(holding?.quantity ?? 0);
 
     const contractMultiplier = Number(holding?.contractMultiplier ?? 1);
@@ -621,28 +733,24 @@ export const AssetProfilePage = () => {
         (activity.activityType === ActivityType.DIVIDEND ||
           activity.activityType === ActivityType.INTEREST),
     );
-    const fallbackIncome = incomeActivities.some(
-      (activity) => activity.currency.toUpperCase() !== displayCurrency.toUpperCase(),
-    )
-      ? null
-      : incomeActivities.reduce((sum, activity) => {
-          const amount = Number(activity.amount ?? 0);
-          return Number.isFinite(amount) ? sum + amount : sum;
-        }, 0);
+    const fallbackIncome = incomeActivities.reduce<number | null>((sum, activity) => {
+      if (sum == null) return null;
+      if (activity.currency.trim().toUpperCase() !== displayCurrency.trim().toUpperCase()) {
+        return null;
+      }
+      const amount = Number(activity.amount ?? 0);
+      return Number.isFinite(amount) ? sum + amount : sum;
+    }, 0);
     const income = holding?.income?.local != null ? Number(holding.income.local) : fallbackIncome;
     const realizedLots = assetLots.filter(
-      (lot) => lot.source === "TRANSACTION_LOT" && lot.realizedPnl != null,
+      (lot) => lot.source === "TRANSACTION_LOT" && lot.valuationRealizedPnl != null,
     );
     const realizedPnlFromLots = realizedLots.reduce(
-      (sum, lot) => sum + Number(lot.realizedPnl ?? 0),
+      (sum, lot) => sum + Number(lot.valuationRealizedPnl ?? 0),
       0,
     );
-    const realizedPnlBaseFromLots = realizedLots.reduce(
-      (sum, lot) => sum + Number(lot.realizedPnlBase ?? 0),
-      0,
-    );
-    const realizedCostBasisBaseFromLots = realizedLots.reduce(
-      (sum, lot) => sum + Number(lot.disposalCostBasisBase ?? 0),
+    const realizedCostBasisFromLots = realizedLots.reduce(
+      (sum, lot) => sum + Number(lot.valuationDisposalCostBasis ?? 0),
       0,
     );
     const realizedPnl =
@@ -654,8 +762,8 @@ export const AssetProfilePage = () => {
     const realizedPnlPercent =
       holding?.realizedGainPct != null
         ? Number(holding.realizedGainPct)
-        : realizedLots.length > 0 && realizedCostBasisBaseFromLots > 0
-          ? realizedPnlBaseFromLots / realizedCostBasisBaseFromLots
+        : realizedLots.length > 0 && realizedCostBasisFromLots > 0
+          ? realizedPnlFromLots / realizedCostBasisFromLots
           : null;
     const hasOpenTransactionLotWithBase = assetLots.some(
       (lot) => lot.source === "TRANSACTION_LOT" && !lot.isClosed && lot.costBasisBase != null,
@@ -678,17 +786,17 @@ export const AssetProfilePage = () => {
         : totalPnl != null && income != null
           ? totalPnl + income
           : null;
-    const fallbackReturnBasisBase =
+    const fallbackReturnBasis =
       holding?.returnBasis?.base != null
         ? Number(holding.returnBasis.base)
-        : realizedCostBasisBaseFromLots;
+        : realizedCostBasisFromLots;
     const canUseFallbackTotalReturnPercent =
       holding == null && displayCurrency.toUpperCase() === baseCurrency.toUpperCase();
     const totalReturnPercent =
       holding?.totalReturnPct != null
         ? Number(holding.totalReturnPct)
-        : totalReturn != null && fallbackReturnBasisBase > 0 && canUseFallbackTotalReturnPercent
-          ? totalReturn / fallbackReturnBasisBase
+        : totalReturn != null && fallbackReturnBasis > 0 && canUseFallbackTotalReturnPercent
+          ? totalReturn / fallbackReturnBasis
           : null;
 
     return {
@@ -817,7 +925,9 @@ export const AssetProfilePage = () => {
       profile && assetLots.length > 0 ? (
         <AssetLotsTable
           lots={assetLots}
-          currency={symbolHolding?.currency ?? profile.currency ?? baseCurrency}
+          currency={
+            holding?.localCurrency ?? symbolHolding?.currency ?? profile.currency ?? baseCurrency
+          }
           marketPrice={Number(holding?.price ?? profile.marketPrice)}
           contractMultiplier={Number(holding?.contractMultiplier ?? 1)}
           dayChangeAmount={
@@ -930,6 +1040,14 @@ export const AssetProfilePage = () => {
     navigate(-1);
   }, [navigate]);
 
+  const clearHealthContext = useCallback(() => {
+    const next = new URLSearchParams(location.search);
+    next.delete("healthContext");
+    next.delete("date");
+    const query = next.toString();
+    navigate(`${location.pathname}${query ? `?${query}` : ""}`, { replace: true });
+  }, [location.pathname, location.search, navigate]);
+
   // Alternative asset actions hook (only used when isAltAsset && altHolding)
   const altAssetActions = useAlternativeAssetActions({
     holding: altHolding,
@@ -1009,6 +1127,16 @@ export const AssetProfilePage = () => {
           }
         />
         <PageContent>
+          <AssetHealthBanner
+            context={healthContext}
+            isManualPricingMode={isManualPricingMode}
+            date={healthDate}
+            canRefreshPrices={Boolean(profile?.id)}
+            isRefreshingPrices={syncMarketDataMutation.isPending}
+            onRefreshPrices={handleRefreshQuotesWithConfirm}
+            onClear={clearHealthContext}
+          />
+
           {fxActiveTab === "overview" && (
             <div className="space-y-4">
               <AssetHistoryCard
@@ -1275,6 +1403,16 @@ export const AssetProfilePage = () => {
         </div>
       </PageHeader>
       <PageContent>
+        <AssetHealthBanner
+          context={healthContext}
+          isManualPricingMode={isManualPricingMode}
+          date={healthDate}
+          canRefreshPrices={Boolean(profile?.id)}
+          isRefreshingPrices={syncMarketDataMutation.isPending}
+          onRefreshPrices={handleRefreshQuotesWithConfirm}
+          onClear={clearHealthContext}
+        />
+
         {/* Alternative Asset Content */}
         {isAltAsset && altHolding && assetProfile ? (
           isMobile ? (
@@ -1347,8 +1485,8 @@ export const AssetProfilePage = () => {
               <div className="grid grid-cols-1 gap-4 pt-0 md:grid-cols-3">
                 <AssetHistoryCard
                   assetId={profile.id ?? ""}
-                  currency={quote?.currency ?? profile.currency ?? baseCurrency}
-                  marketPrice={quote?.close ?? profile.marketPrice}
+                  currency={profile.currency ?? baseCurrency}
+                  marketPrice={profile.marketPrice}
                   totalGainAmount={profile.totalGainAmount}
                   totalGainPercent={profile.totalGainPercent}
                   quoteHistory={quoteHistory ?? []}
@@ -1375,8 +1513,8 @@ export const AssetProfilePage = () => {
               <div className="grid grid-cols-1 gap-4 pt-0 md:grid-cols-3">
                 <AssetHistoryCard
                   assetId={profile.id ?? ""}
-                  currency={quote?.currency ?? profile.currency ?? baseCurrency}
-                  marketPrice={quote?.close ?? profile.marketPrice}
+                  currency={profile.currency ?? baseCurrency}
+                  marketPrice={profile.marketPrice}
                   totalGainAmount={profile.totalGainAmount}
                   totalGainPercent={profile.totalGainPercent}
                   quoteHistory={quoteHistory ?? []}

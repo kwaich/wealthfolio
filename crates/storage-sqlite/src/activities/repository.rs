@@ -415,6 +415,7 @@ impl ActivityRepository {
         date_from_utc: Option<DateTime<Utc>>,
         date_to_utc_exclusive: Option<DateTime<Utc>>,
         instrument_type_filter: Option<Vec<String>>,
+        activity_id_filter: Option<Vec<String>>,
     ) -> Result<ActivitySearchResponse> {
         let mut conn = get_connection(&self.pool)?;
 
@@ -427,6 +428,9 @@ impl ActivityRepository {
                 .filter(accounts::is_archived.eq(false))
                 .into_boxed();
 
+            if let Some(ref activity_ids) = activity_id_filter {
+                query = query.filter(activities::id.eq_any(activity_ids));
+            }
             if let Some(ref account_ids) = account_id_filter {
                 query = query.filter(activities::account_id.eq_any(account_ids));
             }
@@ -671,6 +675,7 @@ impl ActivityRepositoryTrait for ActivityRepository {
         date_from: Option<NaiveDate>,      // Optional start date filter (inclusive)
         date_to: Option<NaiveDate>,        // Optional end date filter (inclusive)
         instrument_type_filter: Option<Vec<String>>, // Optional instrument_type filter
+        activity_id_filter: Option<Vec<String>>, // Optional exact activity-id filter
     ) -> Result<ActivitySearchResponse> {
         let date_from_utc = date_from.map(Self::naive_date_start_utc);
         let date_to_utc_exclusive = date_to
@@ -688,6 +693,7 @@ impl ActivityRepositoryTrait for ActivityRepository {
             date_from_utc,
             date_to_utc_exclusive,
             instrument_type_filter,
+            activity_id_filter,
         )
     }
 
@@ -704,6 +710,7 @@ impl ActivityRepositoryTrait for ActivityRepository {
         date_from_utc: Option<DateTime<Utc>>,
         date_to_utc_exclusive: Option<DateTime<Utc>>,
         instrument_type_filter: Option<Vec<String>>,
+        activity_id_filter: Option<Vec<String>>,
     ) -> Result<ActivitySearchResponse> {
         self.search_activities_with_utc_bounds(
             page,
@@ -716,6 +723,7 @@ impl ActivityRepositoryTrait for ActivityRepository {
             date_from_utc,
             date_to_utc_exclusive,
             instrument_type_filter,
+            activity_id_filter,
         )
     }
 
@@ -3081,11 +3089,32 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
             )
             .expect("search by effective type");
         assert_eq!(filtered.data.len(), 1);
         assert_eq!(filtered.data[0].id, "broker-buy-override");
         assert_eq!(filtered.data[0].activity_type, "SELL");
+
+        // Server-side filter by exact activity id returns just that activity,
+        // regardless of other rows or paging.
+        let by_id = repo
+            .search_activities(
+                0,
+                10,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(vec!["broker-dividend".to_string()]),
+            )
+            .expect("search by activity id");
+        assert_eq!(by_id.data.len(), 1);
+        assert_eq!(by_id.data[0].id, "broker-dividend");
 
         let sorted = repo
             .search_activities(
@@ -3098,6 +3127,7 @@ mod tests {
                     id: "activityType".to_string(),
                     desc: false,
                 }),
+                None,
                 None,
                 None,
                 None,
@@ -3118,6 +3148,7 @@ mod tests {
                 None,
                 None,
                 Some("InternalSecurityTransfer".to_string()),
+                None,
                 None,
                 None,
                 None,
@@ -3180,6 +3211,7 @@ mod tests {
                 None,
                 Some(date_from_utc),
                 Some(date_to_utc_exclusive),
+                None,
                 None,
             )
             .expect("search by utc range");

@@ -7,7 +7,7 @@ import { Separator } from "@wealthfolio/ui/components/ui/separator";
 import { Skeleton } from "@wealthfolio/ui/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@wealthfolio/ui/components/ui/tabs";
 import { useMemo, useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 
 import { SettingsHeader } from "../settings-header";
 
@@ -563,6 +563,7 @@ function CustomProviderCard({
 }
 
 export default function MarketDataSettingsPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const { data: providers, isLoading, error } = useMarketDataProviderSettings();
   const { mutate: updateSettings } = useUpdateMarketDataProviderSettings();
   const { mutate: updatePortfolio, isPending: isUpdating } = useUpdatePortfolioMutation();
@@ -577,6 +578,7 @@ export default function MarketDataSettingsPage() {
   const [editingProvider, setEditingProvider] = useState<CustomProviderWithSources | undefined>();
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [togglingId, setTogglingId] = useState<string | null>(null);
+  const showHealthBanner = searchParams.get("healthContext") === "marketData";
 
   // Split providers into built-in providers and the CUSTOM_SCRAPER aggregate
   const { builtinProviders, customScraperErrors } = useMemo(() => {
@@ -806,6 +808,30 @@ export default function MarketDataSettingsPage() {
         </div>
       </SettingsHeader>
       <Separator />
+      {showHealthBanner && (
+        <div className="border-border bg-muted/30 flex items-center justify-between gap-3 rounded-md border px-3 py-2">
+          <div className="flex min-w-0 items-center gap-2">
+            <Icons.Info className="text-muted-foreground h-4 w-4 shrink-0" />
+            <p className="text-sm">Showing market data settings flagged by Health Center</p>
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() =>
+              setSearchParams(
+                (prev) => {
+                  const next = new URLSearchParams(prev);
+                  next.delete("healthContext");
+                  return next;
+                },
+                { replace: true },
+              )
+            }
+          >
+            Clear
+          </Button>
+        </div>
+      )}
 
       <Tabs defaultValue="builtin" className="w-full">
         <TabsList className="grid w-full grid-cols-2">
