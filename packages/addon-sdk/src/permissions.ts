@@ -167,7 +167,7 @@ export const PERMISSION_CATEGORIES: PermissionCategory[] = [
     id: 'secrets',
     name: 'Secrets Management',
     description: 'Access to secure storage for addon secrets',
-    functions: ['set', 'get', 'delete'],
+    functions: ['set', 'get', 'use', 'delete'],
     riskLevel: 'high',
   },
   {
@@ -201,10 +201,25 @@ export const PERMISSION_CATEGORIES: PermissionCategory[] = [
     riskLevel: 'low',
   },
   {
+    id: 'query',
+    name: 'Query Cache',
+    description: 'Access to refresh host application data',
+    functions: ['invalidateQueries', 'refetchQueries'],
+    riskLevel: 'low',
+  },
+  {
+    id: 'network',
+    name: 'Network Access',
+    description:
+      'Access to declared external HTTPS hosts through the host network broker',
+    functions: ['request'],
+    riskLevel: 'high',
+  },
+  {
     id: 'ui',
     name: 'User Interface',
     description: 'Access to modify navigation and add UI components',
-    functions: ['sidebar.addItem', 'router.add'],
+    functions: ['sidebar.addItem', 'router.add', 'navigation.navigate', 'onDisable'],
     riskLevel: 'low',
   },
 ];

@@ -6,7 +6,6 @@ import { UpdateDialog } from "@/components/update-dialog";
 import { PortfolioSyncProvider } from "@/context/portfolio-sync-context";
 import { useActiveAppSyncTrigger } from "@/features/devices-sync/hooks/use-active-app-sync-trigger";
 import { usePostLoginConnectSync } from "@/features/wealthfolio-connect/hooks";
-import useNavigationEventListener from "@/hooks/use-navigation-event-listener";
 import { useIsMobileViewport, usePlatform } from "@/hooks/use-platform";
 import { useSettings } from "@/hooks/use-settings";
 import { cn } from "@/lib/utils";
@@ -44,9 +43,12 @@ const AppLayoutContent = () => {
   const launchBarHeight =
     !shouldUseMobileNavigation && isLaunchBar && !isFocusMode ? "56px" : undefined;
   const isAppShellReady = isSettingsReady && !!settings?.onboardingCompleted;
+  const pageScrollKey =
+    location.pathname.startsWith("/addon/") || location.pathname.startsWith("/addons/")
+      ? "/addons"
+      : location.pathname;
 
   const areGlobalEventsReady = useGlobalEventListener();
-  useNavigationEventListener();
   useActiveAppSyncTrigger({ enabled: isTauri, requireWindowFocusForInterval: !isMobile });
   usePostLoginConnectSync({ enabled: areGlobalEventsReady && isAppShellReady });
 
@@ -104,10 +106,10 @@ const AppLayoutContent = () => {
               className="draggable pointer-events-auto absolute inset-x-0 top-0 z-50 h-6 cursor-grab opacity-0"
             ></div>
             {shouldUseMobileNavigation ? (
-              <MobileNavigationContainer key={location.pathname} />
+              <MobileNavigationContainer key={pageScrollKey} />
             ) : (
               <PageScrollContainer
-                key={location.pathname}
+                key={pageScrollKey}
                 withMobileNavOffset={shouldUseBottomNavigation}
               >
                 <Outlet />

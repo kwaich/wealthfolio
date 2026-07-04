@@ -1,137 +1,141 @@
 import { ApplicationShell } from "@wealthfolio/ui";
 import { Icons } from "@wealthfolio/ui/components/ui/icons";
 import { Separator } from "@wealthfolio/ui/components/ui/separator";
+import { useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { SidebarNav } from "./sidebar-nav";
 
-const settingsSections = [
-  {
-    title: "Preferences",
-    items: [
-      {
-        title: "General",
-        href: "general",
-        subtitle: "Currency, exchange rates, and updates",
-        icon: <Icons.Settings2 className="size-5" />,
-      },
-      {
-        title: "Appearance",
-        href: "appearance",
-        subtitle: "Theme, font, and menu bar",
-        icon: <Icons.Monitor className="size-5" />,
-      },
-    ],
-  },
-  {
-    title: "Finance",
-    items: [
-      {
-        title: "Accounts",
-        href: "accounts",
-        subtitle: "Investment and savings accounts",
-        icon: <Icons.CreditCard className="size-5" />,
-      },
-      {
-        title: "Portfolios",
-        href: "portfolios",
-        subtitle: "Named reporting scopes",
-        icon: <Icons.Folder className="size-5" />,
-      },
-      {
-        title: "Contribution Limits",
-        href: "contribution-limits",
-        subtitle: "Limits by year and account",
-        icon: <Icons.TrendingUp className="size-5" />,
-      },
-      {
-        title: "Spending Tracker",
-        href: "spending",
-        subtitle: "Enable + pick spending accounts",
-        icon: <Icons.Wallet className="size-5" />,
-      },
-    ],
-  },
-  {
-    title: "Data",
-    items: [
-      {
-        title: "Securities",
-        href: "securities",
-        subtitle: "Manage security definitions",
-        icon: <Icons.BadgeDollarSign className="size-5" />,
-      },
-      {
-        title: "Classifications",
-        href: "taxonomies",
-        subtitle: "Asset classification hierarchies",
-        icon: <Icons.Blocks className="size-5" />,
-      },
-      {
-        title: "Backup & Export",
-        href: "exports",
-        subtitle: "Backups and data exports",
-        icon: <Icons.Download className="size-5" />,
-      },
-    ],
-  },
-  {
-    title: "Connections",
-    items: [
-      {
-        title: "Wealthfolio Connect",
-        href: "connect",
-        subtitle: "Broker and device linking",
-        icon: <Icons.CloudSync2 className="size-6 text-blue-400" />,
-      },
-      {
-        title: "Market Data",
-        href: "market-data",
-        subtitle: "Providers, sync, and imports",
-        icon: <Icons.BarChart className="size-5" />,
-      },
-      {
-        title: "AI Providers",
-        href: "ai-providers",
-        subtitle: "Configure AI for portfolio insights",
-        icon: <Icons.SparklesOutline className="size-5" />,
-      },
-      {
-        title: "AI Agent Access",
-        href: "agent-access",
-        subtitle: "MCP server and agent tokens",
-        icon: <Icons.Brain className="size-5" />,
-      },
-    ],
-  },
-  {
-    title: "Extensions",
-    items: [
-      {
-        title: "Add-ons",
-        href: "addons",
-        subtitle: "Extend Wealthfolio with features",
-        icon: <Icons.Package className="size-5" />,
-      },
-    ],
-  },
-  {
-    title: "About",
-    items: [
-      {
-        title: "About",
-        href: "about",
-        subtitle: "Application information",
-        icon: <Icons.InfoCircle className="size-5" />,
-      },
-    ],
-  },
-];
-
 export default function SettingsLayout() {
+  const { t } = useTranslation();
   const location = useLocation();
   const navigate = useNavigate();
 
-  const sections = settingsSections;
+  const sections = useMemo(
+    () => [
+      {
+        title: t("settings:nav.sections.preferences"),
+        items: [
+          {
+            title: t("settings:nav.items.general"),
+            href: "general",
+            subtitle: t("settings:nav.subtitles.general"),
+            icon: <Icons.Settings2 className="size-5" />,
+          },
+          {
+            title: t("settings:nav.items.appearance"),
+            href: "appearance",
+            subtitle: t("settings:nav.subtitles.appearance"),
+            icon: <Icons.Monitor className="size-5" />,
+          },
+        ],
+      },
+      {
+        title: t("settings:nav.sections.finance"),
+        items: [
+          {
+            title: t("settings:nav.items.accounts"),
+            href: "accounts",
+            subtitle: t("settings:nav.subtitles.accounts"),
+            icon: <Icons.CreditCard className="size-5" />,
+          },
+          {
+            title: t("settings:nav.items.portfolios"),
+            href: "portfolios",
+            subtitle: t("settings:nav.subtitles.portfolios"),
+            icon: <Icons.Folder className="size-5" />,
+          },
+          {
+            title: t("settings:nav.items.contribution_limits"),
+            href: "contribution-limits",
+            subtitle: t("settings:nav.subtitles.contribution_limits"),
+            icon: <Icons.TrendingUp className="size-5" />,
+          },
+          {
+            title: t("settings:nav.items.spending"),
+            href: "spending",
+            subtitle: t("settings:nav.subtitles.spending"),
+            icon: <Icons.Wallet className="size-5" />,
+          },
+        ],
+      },
+      {
+        title: t("settings:nav.sections.data"),
+        items: [
+          {
+            title: t("settings:nav.items.securities"),
+            href: "securities",
+            subtitle: t("settings:nav.subtitles.securities"),
+            icon: <Icons.BadgeDollarSign className="size-5" />,
+          },
+          {
+            title: t("settings:nav.items.classifications"),
+            href: "taxonomies",
+            subtitle: t("settings:nav.subtitles.classifications"),
+            icon: <Icons.Blocks className="size-5" />,
+          },
+          {
+            title: t("settings:nav.items.backup_export"),
+            href: "exports",
+            subtitle: t("settings:nav.subtitles.backup_export"),
+            icon: <Icons.Download className="size-5" />,
+          },
+        ],
+      },
+      {
+        title: t("settings:nav.sections.connections"),
+        items: [
+          {
+            title: t("settings:nav.items.connect"),
+            href: "connect",
+            subtitle: t("settings:nav.subtitles.connect"),
+            icon: <Icons.CloudSync2 className="size-6 text-blue-400" />,
+          },
+          {
+            title: t("settings:nav.items.market_data"),
+            href: "market-data",
+            subtitle: t("settings:nav.subtitles.market_data"),
+            icon: <Icons.BarChart className="size-5" />,
+          },
+          {
+            title: t("settings:nav.items.ai_providers"),
+            href: "ai-providers",
+            subtitle: t("settings:nav.subtitles.ai_providers"),
+            icon: <Icons.SparklesOutline className="size-5" />,
+          },
+          {
+            title: t("settings:nav.items.agent_access"),
+            href: "agent-access",
+            subtitle: t("settings:nav.subtitles.agent_access"),
+            icon: <Icons.Brain className="size-5" />,
+          },
+        ],
+      },
+      {
+        title: t("settings:nav.sections.extensions"),
+        items: [
+          {
+            title: t("settings:nav.items.addons"),
+            href: "addons",
+            subtitle: t("settings:nav.subtitles.addons"),
+            icon: <Icons.Package className="size-5" />,
+          },
+        ],
+      },
+      {
+        title: t("settings:nav.sections.about"),
+        items: [
+          {
+            title: t("settings:nav.items.about"),
+            href: "about",
+            subtitle: t("settings:nav.subtitles.about"),
+            icon: <Icons.InfoCircle className="size-5" />,
+          },
+        ],
+      },
+    ],
+    [t],
+  );
 
   // Check if we're on the main settings page (mobile) or a specific setting page
   const isMainSettingsPage =
@@ -147,7 +151,7 @@ export default function SettingsLayout() {
           <div className="scan-hide-target w-full max-w-full overflow-x-hidden">
             <div className="bg-background/95 supports-backdrop-filter:bg-background/60 pt-safe sticky top-0 z-10 border-b backdrop-blur">
               <div className="flex min-h-[60px] items-center justify-center px-4">
-                <h1 className="text-lg font-semibold">Settings</h1>
+                <h1 className="text-lg font-semibold">{t("settings:title")}</h1>
               </div>
             </div>
             <div className="space-y-6 p-3 pb-[var(--mobile-nav-total-offset)] lg:p-4 lg:pb-4">
@@ -200,7 +204,7 @@ export default function SettingsLayout() {
       <div className="hidden lg:flex lg:w-full lg:justify-start">
         <div className="flex w-full max-w-6xl flex-col px-2 py-8">
           <div className="space-y-0.5">
-            <h2 className="text-2xl font-bold tracking-tight">Settings</h2>
+            <h2 className="text-2xl font-bold tracking-tight">{t("settings:title")}</h2>
           </div>
           <Separator className="my-6" />
           <div className="flex gap-10">

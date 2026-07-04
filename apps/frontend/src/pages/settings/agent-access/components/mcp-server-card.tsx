@@ -1,4 +1,5 @@
 import { type ReactNode, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 import { Button } from "@wealthfolio/ui/components/ui/button";
 import {
@@ -19,6 +20,7 @@ import { useMcpServer } from "../hooks/use-mcp-server";
 
 /** Icon button that copies `value` and briefly shows a check. */
 function CopyIconButton({ value, label }: { value: string; label: string }) {
+  const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
   const handleCopy = async () => {
     if (!value) return;
@@ -28,8 +30,8 @@ function CopyIconButton({ value, label }: { value: string; label: string }) {
       setTimeout(() => setCopied(false), 2000);
     } catch (error) {
       toast({
-        title: "Copy failed",
-        description: `Could not copy ${label.toLowerCase()}.`,
+        title: t("settings:agentAccess.copy_failed_title"),
+        description: t("settings:agentAccess.copy_failed_generic", { label: label.toLowerCase() }),
         variant: "destructive",
       });
       console.error("Failed to copy to clipboard:", error);
@@ -47,24 +49,28 @@ function CopyIconButton({ value, label }: { value: string; label: string }) {
       ) : (
         <Icons.Copy className="h-3.5 w-3.5" />
       )}
-      <span className="sr-only">Copy {label}</span>
+      <span className="sr-only">{t("settings:agentAccess.copy_aria", { label })}</span>
     </Button>
   );
 }
 
 /** Labeled button that copies the standard client config JSON (token placeholder). */
 function CopyConfigButton({ serverUrl }: { serverUrl: string }) {
+  const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
   const handleCopy = async () => {
     try {
       await navigator.clipboard.writeText(buildClientConfig(STANDARD_PRESET_ID, serverUrl));
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-      toast({ title: "Copied", description: "Client config copied to clipboard." });
+      toast({
+        title: t("settings:agentAccess.copied_title"),
+        description: t("settings:agentAccess.copied_config"),
+      });
     } catch (error) {
       toast({
-        title: "Copy failed",
-        description: "Could not copy client config.",
+        title: t("settings:agentAccess.copy_failed_title"),
+        description: t("settings:agentAccess.copy_failed_config"),
         variant: "destructive",
       });
       console.error("Failed to copy to clipboard:", error);
@@ -77,58 +83,56 @@ function CopyConfigButton({ serverUrl }: { serverUrl: string }) {
       ) : (
         <Icons.Copy className="h-3.5 w-3.5" />
       )}
-      Copy config
+      {t("settings:agentAccess.copy_config")}
     </Button>
   );
 }
 
 /** Help popover: how to connect, the standard config, and the clients that differ. */
 function ConnectHelp({ serverUrl }: { serverUrl: string }) {
+  const { t } = useTranslation();
   return (
     <Popover>
       <PopoverTrigger asChild>
         <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0">
           <Icons.HelpCircle className="text-muted-foreground h-4 w-4" />
-          <span className="sr-only">How to connect a client</span>
+          <span className="sr-only">{t("settings:agentAccess.help_aria")}</span>
         </Button>
       </PopoverTrigger>
       <PopoverContent align="end" className="max-h-[70vh] w-96 space-y-3 overflow-auto text-sm">
         <div className="space-y-1">
-          <p className="font-medium">Connect an MCP client</p>
+          <p className="font-medium">{t("settings:agentAccess.help_title")}</p>
           <ol className="text-muted-foreground list-decimal space-y-1 pl-4 text-xs">
-            <li>Enable the server above.</li>
+            <li>{t("settings:agentAccess.help_step_enable")}</li>
+            <li>{t("settings:agentAccess.help_step_token")}</li>
             <li>
-              Create an access token below and choose its scopes — copy it once; it is shown only at
-              creation.
-            </li>
-            <li>
-              Add the config to your agent, replacing{" "}
-              <span className="font-mono">{TOKEN_PLACEHOLDER}</span> with that token.
+              {t("settings:agentAccess.help_step_add_prefix")}{" "}
+              <span className="font-mono">{TOKEN_PLACEHOLDER}</span>{" "}
+              {t("settings:agentAccess.help_step_add_suffix")}
             </li>
           </ol>
         </div>
         <div className="space-y-1.5">
-          <p className="text-xs font-medium">
-            Standard config — Claude Desktop, Claude Code, Cursor, Windsurf, Cline
-          </p>
+          <p className="text-xs font-medium">{t("settings:agentAccess.help_standard_config")}</p>
           <pre className="bg-muted text-muted-foreground overflow-auto rounded-md p-2 font-mono text-[11px] leading-snug">
             {buildClientConfig(STANDARD_PRESET_ID, serverUrl)}
           </pre>
         </div>
         <div className="space-y-1.5">
-          <p className="text-xs font-medium">VS Code — uses a top-level `servers` key</p>
+          <p className="text-xs font-medium">{t("settings:agentAccess.help_vscode")}</p>
           <pre className="bg-muted text-muted-foreground overflow-auto rounded-md p-2 font-mono text-[11px] leading-snug">
             {buildClientConfig("vscode", serverUrl)}
           </pre>
         </div>
         <p className="text-muted-foreground text-xs">
-          Jan and other HTTP clients: point them at the URL above with an{" "}
-          <span className="font-mono">Authorization: Bearer {TOKEN_PLACEHOLDER}</span> header.
+          {t("settings:agentAccess.help_http_prefix")}{" "}
+          <span className="font-mono">Authorization: Bearer {TOKEN_PLACEHOLDER}</span>{" "}
+          {t("settings:agentAccess.help_http_suffix")}
         </p>
         <div className="space-y-1">
-          <p className="text-xs font-medium">Config file locations</p>
+          <p className="text-xs font-medium">{t("settings:agentAccess.help_locations_title")}</p>
           <ul className="text-muted-foreground space-y-0.5 text-xs">
-            <li>Claude Desktop — Settings → Developer → Edit Config</li>
+            <li>{t("settings:agentAccess.help_location_claude_desktop")}</li>
             <li>
               Cursor — <span className="font-mono">~/.cursor/mcp.json</span>
             </li>
@@ -139,7 +143,8 @@ function ConnectHelp({ serverUrl }: { serverUrl: string }) {
               Windsurf — <span className="font-mono">~/.codeium/windsurf/mcp_config.json</span>
             </li>
             <li>
-              Claude Code — <span className="font-mono">.mcp.json</span> in your project
+              Claude Code — <span className="font-mono">.mcp.json</span>{" "}
+              {t("settings:agentAccess.mcp_in_project")}
             </li>
           </ul>
         </div>
@@ -190,6 +195,7 @@ function SettingRow({
 }
 
 export function McpServerCard() {
+  const { t } = useTranslation();
   const {
     status,
     isLoading,
@@ -205,15 +211,17 @@ export function McpServerCard() {
     return (
       <Card>
         <CardHeader>
-          <CardTitle>MCP server</CardTitle>
+          <CardTitle>{t("settings:agentAccess.server_card_title")}</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="flex items-start gap-3">
             <Icons.AlertTriangle className="text-destructive mt-0.5 h-4 w-4 shrink-0" />
-            <p className="text-muted-foreground text-sm">Failed to load the MCP server status.</p>
+            <p className="text-muted-foreground text-sm">
+              {t("settings:agentAccess.server_load_error")}
+            </p>
           </div>
           <Button variant="outline" size="sm" onClick={() => void refetchStatus()}>
-            Retry
+            {t("common:retry")}
           </Button>
         </CardContent>
       </Card>
@@ -224,7 +232,7 @@ export function McpServerCard() {
     return (
       <Card>
         <CardHeader>
-          <CardTitle>MCP server</CardTitle>
+          <CardTitle>{t("settings:agentAccess.server_card_title")}</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
           <Skeleton className="h-8" />
@@ -249,18 +257,25 @@ export function McpServerCard() {
               )}
               aria-hidden
             />
-            <CardTitle className="text-base font-semibold tracking-tight">MCP server</CardTitle>
+            <CardTitle className="text-base font-semibold tracking-tight">
+              {t("settings:agentAccess.server_card_title")}
+            </CardTitle>
           </div>
           {serverUrl ? (
             <CardDescription className="flex flex-wrap items-center gap-1.5 text-xs">
-              <span className="shrink-0">Running at</span>
+              <span className="shrink-0">{t("settings:agentAccess.server_running_at")}</span>
               <code className="bg-muted text-foreground truncate rounded px-1.5 py-0.5 font-mono text-xs">
                 {serverUrl}
               </code>
-              <CopyIconButton value={serverUrl} label="server URL" />
+              <CopyIconButton
+                value={serverUrl}
+                label={t("settings:agentAccess.server_url_label")}
+              />
             </CardDescription>
           ) : (
-            <CardDescription className="text-xs">Stopped</CardDescription>
+            <CardDescription className="text-xs">
+              {t("settings:agentAccess.server_stopped")}
+            </CardDescription>
           )}
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
@@ -274,7 +289,7 @@ export function McpServerCard() {
               onClick={() => stopMutation.mutate()}
             >
               <Icons.Square className="h-3.5 w-3.5" weight="fill" />
-              Stop
+              {t("settings:agentAccess.stop")}
             </Button>
           ) : (
             <Button
@@ -284,7 +299,7 @@ export function McpServerCard() {
               onClick={() => startMutation.mutate()}
             >
               <Icons.PlayCircle className="h-3.5 w-3.5" weight="duotone" />
-              Start
+              {t("settings:agentAccess.start")}
             </Button>
           )}
           {serverUrl && <ConnectHelp serverUrl={serverUrl} />}
@@ -294,8 +309,8 @@ export function McpServerCard() {
         <SettingRow
           icon={<Icons.Clock size={18} weight="duotone" />}
           id="mcp-auto-start"
-          title="Start automatically with Wealthfolio"
-          description="Start the server whenever the app launches."
+          title={t("settings:agentAccess.auto_start_title")}
+          description={t("settings:agentAccess.auto_start_description")}
           checked={status.autoStart}
           disabled={setAutoStartMutation.isPending}
           onCheckedChange={(checked) => setAutoStartMutation.mutate(checked)}
@@ -303,15 +318,15 @@ export function McpServerCard() {
         <SettingRow
           icon={<Icons.FileText size={18} weight="duotone" />}
           id="mcp-audit-enabled"
-          title="Log agent activity"
-          description="Records every agent tool call. Disable to stop writing audit rows."
+          title={t("settings:agentAccess.audit_title")}
+          description={t("settings:agentAccess.audit_description")}
           checked={status.auditEnabled}
           disabled={setAuditEnabledMutation.isPending}
           onCheckedChange={(checked) => setAuditEnabledMutation.mutate(checked)}
         />
 
         <p className="text-muted-foreground px-1 pt-2 text-xs">
-          Stopping the server keeps tokens valid. Remove a token below to cut off access.
+          {t("settings:agentAccess.server_footer_note")}
         </p>
       </CardContent>
     </Card>

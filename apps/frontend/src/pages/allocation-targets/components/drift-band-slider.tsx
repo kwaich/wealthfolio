@@ -1,4 +1,5 @@
 import { AnimatedToggleGroup } from "@wealthfolio/ui";
+import { useTranslation } from "react-i18next";
 
 import type { BandType } from "@/lib/types";
 
@@ -30,6 +31,7 @@ export function DriftBandSlider({
   onRelativeFactorChange,
   className,
 }: DriftBandSliderProps) {
+  const { t } = useTranslation();
   const isHybrid = bandType === "hybrid";
   const floorPct = ((driftBandPct - MIN_DRIFT_BAND) / (MAX_DRIFT_BAND - MIN_DRIFT_BAND)) * 100;
   const relativePct =
@@ -52,24 +54,26 @@ export function DriftBandSlider({
         value={bandType}
         onValueChange={handleBandTypeChange}
         items={[
-          { value: "hybrid", label: "Hybrid" },
-          { value: "absolute", label: "Absolute" },
+          { value: "hybrid", label: t("allocation:band.hybrid") },
+          { value: "absolute", label: t("allocation:band.absolute") },
         ]}
         rounded="lg"
         className="bg-muted/30 [&_button:has(>div)]:text-primary-foreground [&_button:not(:has(>div))]:text-muted-foreground [&_button>div]:bg-primary w-full border [&_button]:flex-1 [&_button]:py-2 [&_button]:text-[12px]"
       />
       <p className="text-muted-foreground mt-2 text-[11px] leading-relaxed">
         {isHybrid
-          ? "Each sleeve's band scales with its target weight. Small sleeves get tighter bands; the absolute floor prevents micro-trades."
-          : "Same fixed band applied to every sleeve regardless of its target weight."}
+          ? t("allocation:band.hybridDescription")
+          : t("allocation:band.absoluteDescription")}
       </p>
 
       {isHybrid && (
         <div className="mt-4">
           <div className="mb-1.5 flex items-center justify-between">
-            <span className="text-foreground text-[12px] font-medium">Relative factor</span>
+            <span className="text-foreground text-[12px] font-medium">
+              {t("allocation:band.relativeFactor")}
+            </span>
             <span className="bg-muted text-foreground rounded-md px-2 py-0.5 text-[12px] font-semibold tabular-nums">
-              ±{relativeFactorPct}% of target
+              {t("allocation:band.percentOfTarget", { value: relativeFactorPct })}
             </span>
           </div>
           <input
@@ -83,9 +87,9 @@ export function DriftBandSlider({
             style={{ ["--lever-pct" as string]: `${relativePct}%` }}
           />
           <div className="text-muted-foreground mt-1.5 flex justify-between text-[10px]">
-            <span>Tight</span>
-            <span>Standard</span>
-            <span>Loose</span>
+            <span>{t("allocation:band.tight")}</span>
+            <span>{t("allocation:band.standard")}</span>
+            <span>{t("allocation:band.loose")}</span>
           </div>
         </div>
       )}
@@ -93,7 +97,7 @@ export function DriftBandSlider({
       <div className="mt-4">
         <div className="mb-1.5 flex items-center justify-between">
           <span className="text-foreground text-[12px] font-medium">
-            {isHybrid ? "Absolute floor" : "Band width"}
+            {isHybrid ? t("allocation:band.absoluteFloor") : t("allocation:band.bandWidth")}
           </span>
           <span className="bg-muted text-foreground rounded-md px-2 py-0.5 text-[12px] font-semibold tabular-nums">
             ±{driftBandPct.toFixed(1)}%
@@ -110,13 +114,13 @@ export function DriftBandSlider({
           style={{ ["--lever-pct" as string]: `${floorPct}%` }}
         />
         <div className="text-muted-foreground mt-1.5 flex justify-between text-[10px]">
-          <span>Tight</span>
-          <span>Standard</span>
-          <span>Loose</span>
+          <span>{t("allocation:band.tight")}</span>
+          <span>{t("allocation:band.standard")}</span>
+          <span>{t("allocation:band.loose")}</span>
         </div>
         {isHybrid && (
           <p className="text-muted-foreground mt-1.5 text-[11px] leading-relaxed">
-            Minimum band for any sleeve, regardless of its target weight.
+            {t("allocation:band.minimumBandNote")}
           </p>
         )}
       </div>

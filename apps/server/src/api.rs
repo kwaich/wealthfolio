@@ -8,7 +8,17 @@ use crate::{
     oidc,
 };
 use axum::middleware;
-use axum::{routing::get, Json, Router};
+use axum::{
+    body::Body,
+    http::{
+        header::{HeaderName, HeaderValue},
+        Request,
+    },
+    middleware::Next,
+    response::Response,
+    routing::get,
+    Json, Router,
+};
 use tower_governor::{governor::GovernorConfigBuilder, GovernorLayer};
 use tower_http::{
     cors::{Any, CorsLayer},
@@ -21,6 +31,7 @@ use utoipa::OpenApi;
 
 mod accounts;
 mod activities;
+mod addon_network;
 mod addons;
 mod agent_access;
 mod ai_chat;
@@ -73,6 +84,39 @@ pub async fn readyz() -> &'static str {
 )]
 pub struct ApiDoc;
 
+const SERVER_CSP: &str = "default-src 'self'; script-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' https://wealthfolio.app https://auth.wealthfolio.app https://connect.wealthfolio.app https://connect-staging.wealthfolio.app; frame-src 'self' blob: about:; child-src 'self' blob: about:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; worker-src 'self' blob:";
+const ADDON_SANDBOX_CSP: &str = "default-src 'none'; script-src 'self' 'unsafe-inline' blob:; style-src 'self' 'unsafe-inline'; img-src data: blob:; font-src 'self' data: blob:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'";
+
+pub async fn security_headers(request: Request<Body>, next: Next) -> Response {
+    let path = request.uri().path().to_string();
+    let mut response = next.run(request).await;
+    let headers = response.headers_mut();
+    let csp = if path.ends_with("/addon-sandbox.html") {
+        ADDON_SANDBOX_CSP
+    } else {
+        SERVER_CSP
+    };
+    headers.insert(
+        HeaderName::from_static("content-security-policy"),
+        HeaderValue::from_static(csp),
+    );
+    if !path.starts_with("/api/") && !path.starts_with("/mcp") {
+        headers.insert(
+            HeaderName::from_static("access-control-allow-origin"),
+            HeaderValue::from_static("*"),
+        );
+    }
+    headers.insert(
+        HeaderName::from_static("x-content-type-options"),
+        HeaderValue::from_static("nosniff"),
+    );
+    headers.insert(
+        HeaderName::from_static("referrer-policy"),
+        HeaderValue::from_static("no-referrer"),
+    );
+    response
+}
+
 #[allow(deprecated)]
 pub fn app_router(state: Arc<AppState>, config: &Config) -> Router {
     let cors = if config.cors_allow.iter().any(|o| o == "*") {
@@ -108,6 +152,7 @@ pub fn app_router(state: Arc<AppState>, config: &Config) -> Router {
         .merge(market_data::router())
         .merge(assets::router())
         .merge(secrets::router())
+        .merge(addon_network::router())
         .merge(limits::router())
         .merge(addons::router())
         .merge(taxonomies::router())

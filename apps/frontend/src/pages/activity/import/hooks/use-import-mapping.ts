@@ -1,4 +1,5 @@
 import { useState, useCallback } from "react";
+import { useTranslation } from "react-i18next";
 import { ImportFormat, ImportMappingData, type SymbolSearchResult } from "@/lib/types";
 import { quoteModeFromSearchResult } from "@/lib/asset-utils";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -466,6 +467,7 @@ export function useImportMapping({
 }: UseImportMappingProps = {}) {
   const [mapping, setMapping] = useState<ImportMappingData>(defaultMapping ?? emptyMapping);
   const queryClient = useQueryClient();
+  const { t } = useTranslation();
 
   // Save mapping mutation
   const saveMappingMutation = useMutation({
@@ -479,8 +481,8 @@ export function useImportMapping({
     onError: (error) => {
       logger.error(`Error saving import mapping: ${error}`);
       toast({
-        title: "Error saving mapping",
-        description: "There was a problem saving your import mapping.",
+        title: t("activity:import.errors.saveMappingTitle"),
+        description: t("activity:import.errors.saveMappingDescription"),
         variant: "destructive",
       });
     },

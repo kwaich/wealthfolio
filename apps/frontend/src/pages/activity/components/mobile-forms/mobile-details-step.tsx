@@ -37,6 +37,7 @@ import {
 } from "@wealthfolio/ui";
 import { useEffect, useMemo, useState } from "react";
 import { useFormContext } from "react-hook-form";
+import { useTranslation } from "react-i18next";
 import { restrictionAllowsType } from "@/lib/activity-restrictions";
 import { roundDecimal } from "@/lib/utils";
 import type { NewActivityFormValues } from "../forms/schemas";
@@ -47,8 +48,6 @@ interface MobileDetailsStepProps {
   isEditing?: boolean;
 }
 
-const FMV_PER_UNIT_HELP_TEXT =
-  "Fair market value per share or token at the time you received it. Used to calculate income amount and cost basis.";
 const INCOME_MODE_CASH = "CASH";
 const TRADE_ACTIVITY_TYPES: readonly string[] = [ActivityType.BUY, ActivityType.SELL];
 const TRANSFER_ACTIVITY_TYPES: readonly string[] = [
@@ -81,26 +80,34 @@ const FEE_FIELD_ACTIVITY_TYPES: readonly string[] = [
 ];
 
 function FmvPerUnitLabel() {
+  const { t } = useTranslation();
   return (
     <div className="flex items-center gap-1.5">
-      <FormLabel className="text-base font-medium">FMV per unit</FormLabel>
+      <FormLabel className="text-base font-medium">
+        {t("activity:form.label_fmv_per_unit")}
+      </FormLabel>
       <Tooltip>
         <TooltipTrigger asChild>
           <button
             type="button"
             className="text-muted-foreground/70 hover:text-foreground inline-flex rounded-full transition-colors"
-            aria-label="More info about FMV per unit"
+            aria-label={t("activity:form.more_info_about", {
+              label: t("activity:form.label_fmv_per_unit"),
+            })}
           >
             <Icons.Info className="h-3.5 w-3.5" />
           </button>
         </TooltipTrigger>
-        <TooltipContent className="max-w-xs text-xs">{FMV_PER_UNIT_HELP_TEXT}</TooltipContent>
+        <TooltipContent className="max-w-xs text-xs">
+          {t("activity:form.help_fmv_per_unit")}
+        </TooltipContent>
       </Tooltip>
     </div>
   );
 }
 
 export function MobileDetailsStep({ accounts, activityType, isEditing }: MobileDetailsStepProps) {
+  const { t } = useTranslation();
   const { control, getFieldState, getValues, watch, setValue, register } =
     useFormContext<NewActivityFormValues>();
   const { settings } = useSettingsContext();
@@ -193,19 +200,19 @@ export function MobileDetailsStep({ accounts, activityType, isEditing }: MobileD
   const needsSplitRatio = activityType === ActivityType.SPLIT;
 
   const transferModeItems = [
-    { value: "cash" as const, label: "Cash" },
-    { value: "securities" as const, label: "Securities" },
+    { value: "cash" as const, label: t("activity:form.transfer_mode_cash") },
+    { value: "securities" as const, label: t("activity:form.transfer_mode_securities") },
   ];
 
   const dividendModeItems = [
-    { value: INCOME_MODE_CASH, label: "Cash" },
-    { value: ACTIVITY_SUBTYPES.DRIP, label: "DRIP" },
-    { value: ACTIVITY_SUBTYPES.DIVIDEND_IN_KIND, label: "In kind" },
+    { value: INCOME_MODE_CASH, label: t("activity:form.type_cash") },
+    { value: ACTIVITY_SUBTYPES.DRIP, label: t("activity:form.type_drip") },
+    { value: ACTIVITY_SUBTYPES.DIVIDEND_IN_KIND, label: t("activity:form.type_in_kind") },
   ];
 
   const interestModeItems = [
-    { value: INCOME_MODE_CASH, label: "Cash" },
-    { value: ACTIVITY_SUBTYPES.STAKING_REWARD, label: "Staking reward" },
+    { value: INCOME_MODE_CASH, label: t("activity:form.type_cash") },
+    { value: ACTIVITY_SUBTYPES.STAKING_REWARD, label: t("activity:form.type_staking_reward") },
   ];
 
   const handleIncomeModeChange = (mode: string) => {
@@ -302,7 +309,7 @@ export function MobileDetailsStep({ accounts, activityType, isEditing }: MobileD
   const baseCurrency = settings?.baseCurrency;
   const displayAccountText = selectedAccount
     ? `${selectedAccount.label} (${selectedAccount.currency})`
-    : "Select an account";
+    : t("activity:select_account_placeholder");
 
   // Backfill currency for preselected accounts when options arrive asynchronously.
   useEffect(() => {
@@ -419,21 +426,22 @@ export function MobileDetailsStep({ accounts, activityType, isEditing }: MobileD
 
   // Quantity label adapts to asset type
   const quantityLabel = isAssetBackedIncome
-    ? "Received quantity"
+    ? t("activity:form.label_received_quantity")
     : isOption
-      ? "Contracts"
+      ? t("activity:form.label_contracts")
       : isBond
-        ? "Bonds"
-        : "Shares";
+        ? t("activity:form.label_bonds")
+        : t("activity:field_shares");
+  const isFmvPriceLabel = isAssetBackedIncome && subtype !== ACTIVITY_SUBTYPES.DRIP;
   const priceLabel = isAssetBackedIncome
     ? subtype === ACTIVITY_SUBTYPES.DRIP
-      ? "Reinvestment price"
-      : "FMV per unit"
+      ? t("activity:form.label_reinvestment_price")
+      : t("activity:form.label_fmv_per_unit")
     : isOption
-      ? "Premium/Share"
+      ? t("activity:form.label_premium_share")
       : isSecuritiesTransfer
-        ? "Cost Basis"
-        : "Price";
+        ? t("activity:form.label_cost_basis")
+        : t("activity:form.label_price");
 
   // Toggle shown in the "Asset & Account" card header: transfer mode for
   // transfers, asset type (Stock/Option/Bond) for buy/sell.
@@ -454,14 +462,14 @@ export function MobileDetailsStep({ accounts, activityType, isEditing }: MobileD
   ) : null;
 
   const detailsTitle = isBuyOrSell
-    ? "Trade"
+    ? t("activity:form.section_trade")
     : isSecuritiesTransfer
-      ? "Securities"
+      ? t("activity:form.section_securities")
       : needsSplitRatio
-        ? "Split"
+        ? t("activity:form.section_split")
         : isIncomeActivity
-          ? "Income"
-          : "Amount";
+          ? t("activity:form.section_income")
+          : t("activity:form.section_amount");
 
   const hasValueFields =
     needsQuantity ||
@@ -480,7 +488,9 @@ export function MobileDetailsStep({ accounts, activityType, isEditing }: MobileD
       name="fee"
       render={({ field }) => (
         <FormItem>
-          <FormLabel className="text-base font-medium">Fee (Optional)</FormLabel>
+          <FormLabel className="text-base font-medium">
+            {t("activity:mobile_fee_optional")}
+          </FormLabel>
           <FormControl>
             <MoneyInput {...field} />
           </FormControl>
@@ -496,7 +506,9 @@ export function MobileDetailsStep({ accounts, activityType, isEditing }: MobileD
       render={({ field }) => (
         <FormItem>
           <FormLabel className="text-base font-medium">
-            {isIncomeActivity ? "Withholding tax (Optional)" : "Tax (Optional)"}
+            {isIncomeActivity
+              ? t("activity:mobile_form.withholding_tax_optional")
+              : t("activity:mobile_form.tax_optional")}
           </FormLabel>
           <FormControl>
             <MoneyInput {...field} />
@@ -511,7 +523,7 @@ export function MobileDetailsStep({ accounts, activityType, isEditing }: MobileD
     <div className="flex h-full flex-col">
       <ScrollArea>
         <div className="form-mobile-spacing pb-4">
-          <FormSection title="Asset & Account" action={headerAction}>
+          <FormSection title={t("activity:form.section_asset_account")} action={headerAction}>
             {/* External checkbox + direction (transfers) */}
             {isTransfer && (
               <div className="flex items-center gap-4">
@@ -522,7 +534,7 @@ export function MobileDetailsStep({ accounts, activityType, isEditing }: MobileD
                     onCheckedChange={(checked) => handleExternalChange(!!checked)}
                   />
                   <Label htmlFor="isExternal" className="cursor-pointer text-sm font-normal">
-                    External transfer
+                    {t("activity:form.external_transfer")}
                   </Label>
                 </div>
                 {isExternal && (
@@ -539,7 +551,7 @@ export function MobileDetailsStep({ accounts, activityType, isEditing }: MobileD
                           htmlFor="mobile-direction-in"
                           className="cursor-pointer text-sm font-normal"
                         >
-                          In
+                          {t("activity:form.transfer_direction_in")}
                         </Label>
                       </div>
                       <div className="flex items-center space-x-1.5">
@@ -548,7 +560,7 @@ export function MobileDetailsStep({ accounts, activityType, isEditing }: MobileD
                           htmlFor="mobile-direction-out"
                           className="cursor-pointer text-sm font-normal"
                         >
-                          Out
+                          {t("activity:form.transfer_direction_out")}
                         </Label>
                       </div>
                     </RadioGroup>
@@ -559,7 +571,9 @@ export function MobileDetailsStep({ accounts, activityType, isEditing }: MobileD
 
             {isDividendActivity && (
               <div className="space-y-2">
-                <FormLabel className="text-base font-medium">Dividend type</FormLabel>
+                <FormLabel className="text-base font-medium">
+                  {t("activity:form.dividend_type")}
+                </FormLabel>
                 <RadioGroup
                   value={incomeMode}
                   onValueChange={handleIncomeModeChange}
@@ -582,7 +596,9 @@ export function MobileDetailsStep({ accounts, activityType, isEditing }: MobileD
 
             {isInterestActivity && (
               <div className="space-y-2">
-                <FormLabel className="text-base font-medium">Interest type</FormLabel>
+                <FormLabel className="text-base font-medium">
+                  {t("activity:form.interest_type")}
+                </FormLabel>
                 <RadioGroup
                   value={incomeMode}
                   onValueChange={handleIncomeModeChange}
@@ -612,11 +628,11 @@ export function MobileDetailsStep({ accounts, activityType, isEditing }: MobileD
                   <FormLabel className="text-base font-medium">
                     {isTransfer && isExternal
                       ? direction === "in"
-                        ? "To Account"
-                        : "From Account"
+                        ? t("activity:form.label_to_account")
+                        : t("activity:form.label_from_account")
                       : isTransfer && !isExternal
-                        ? "From Account"
-                        : "Account"}
+                        ? t("activity:form.label_from_account")
+                        : t("activity:field_account")}
                   </FormLabel>
                   <FormControl>
                     <Button
@@ -647,10 +663,12 @@ export function MobileDetailsStep({ accounts, activityType, isEditing }: MobileD
                   const toAccount = filteredAccounts.find((acc) => acc.value === field.value);
                   const toDisplayText = toAccount
                     ? `${toAccount.label} (${toAccount.currency})`
-                    : "Select destination account";
+                    : t("activity:mobile_form.select_destination_account");
                   return (
                     <FormItem>
-                      <FormLabel className="text-base font-medium">To Account</FormLabel>
+                      <FormLabel className="text-base font-medium">
+                        {t("activity:form.label_to_account")}
+                      </FormLabel>
                       <FormControl>
                         <Button
                           variant="outline"
@@ -679,7 +697,9 @@ export function MobileDetailsStep({ accounts, activityType, isEditing }: MobileD
               name="activityDate"
               render={({ field }) => (
                 <FormItem className="flex flex-col">
-                  <FormLabel className="text-base font-medium">Date & Time</FormLabel>
+                  <FormLabel className="text-base font-medium">
+                    {t("activity:mobile_date_time")}
+                  </FormLabel>
                   <DatePickerInput
                     onChange={(date: Date | undefined) => field.onChange(date)}
                     value={field.value}
@@ -708,7 +728,11 @@ export function MobileDetailsStep({ accounts, activityType, isEditing }: MobileD
               ) : (
                 <SymbolSearch
                   name="assetId"
-                  label={isStakingReward ? "Reward asset" : "Symbol"}
+                  label={
+                    isStakingReward
+                      ? t("activity:form.label_reward_asset")
+                      : t("activity:form.label_symbol")
+                  }
                   isManualAsset={isManualForType}
                   exchangeMicName="exchangeMic"
                   quoteModeName="quoteMode"
@@ -747,7 +771,7 @@ export function MobileDetailsStep({ accounts, activityType, isEditing }: MobileD
                         name="unitPrice"
                         render={({ field }) => (
                           <FormItem>
-                            {priceLabel === "FMV per unit" ? (
+                            {isFmvPriceLabel ? (
                               <FmvPerUnitLabel />
                             ) : (
                               <FormLabel className="text-base font-medium">{priceLabel}</FormLabel>
@@ -765,13 +789,17 @@ export function MobileDetailsStep({ accounts, activityType, isEditing }: MobileD
                   {/* Shares breakdown for options */}
                   {isOption && optQuantity && (
                     <div className="text-muted-foreground -mt-2 flex items-center gap-1.5 px-1 text-xs">
-                      <span>{Number(optQuantity) * (Number(optMultiplier) || 100)} shares</span>
+                      <span>
+                        {t("activity:form.shares_count", {
+                          count: Number(optQuantity) * (Number(optMultiplier) || 100),
+                        })}
+                      </span>
                       <span>·</span>
                       <input
                         type="number"
                         {...register("contractMultiplier" as any, { valueAsNumber: true })}
                         className="hover:border-input focus:border-input focus:bg-background focus:ring-ring h-5 w-14 rounded border border-transparent bg-transparent px-1 text-center text-xs tabular-nums focus:outline-none focus:ring-1"
-                        aria-label="Contract Multiplier"
+                        aria-label={t("activity:form.contract_multiplier")}
                       />
                       <span>x</span>
                     </div>
@@ -785,7 +813,9 @@ export function MobileDetailsStep({ accounts, activityType, isEditing }: MobileD
                   <div className="flex items-center justify-between">
                     <div className="min-w-0 flex-1">
                       <span className="text-muted-foreground text-xs font-medium uppercase tracking-wide">
-                        {activityType === ActivityType.BUY ? "Total Debit" : "Total Credit"}
+                        {activityType === ActivityType.BUY
+                          ? t("activity:form.total_debit")
+                          : t("activity:form.total_credit")}
                       </span>
                       <p className="text-muted-foreground mt-0.5 truncate text-xs tabular-nums">
                         {Number(optQuantity)} × {Number(optUnitPrice)} ×{" "}
@@ -825,14 +855,14 @@ export function MobileDetailsStep({ accounts, activityType, isEditing }: MobileD
                     <FormItem>
                       <FormLabel className="text-base font-medium">
                         {activityType === ActivityType.DIVIDEND
-                          ? "Dividend Amount"
+                          ? t("activity:field_dividend_amount")
                           : activityType === ActivityType.INTEREST
-                            ? "Interest Amount"
+                            ? t("activity:field_interest_amount")
                             : isTaxActivity
-                              ? "Tax Amount"
+                              ? t("activity:field_tax_amount")
                               : isCreditActivity
-                                ? "Credit Amount"
-                                : "Amount"}
+                                ? t("activity:mobile_form.credit_amount")
+                                : t("activity:form.label_amount")}
                       </FormLabel>
                       <FormControl>
                         <MoneyInput {...field} />
@@ -853,13 +883,15 @@ export function MobileDetailsStep({ accounts, activityType, isEditing }: MobileD
                         render={({ field }) => (
                           <FormItem>
                             <FormLabel className="text-base font-medium">
-                              Sent ({effectiveSourceCurrency})
+                              {t("activity:form.label_sent", {
+                                currency: effectiveSourceCurrency,
+                              })}
                             </FormLabel>
                             <FormControl>
                               <MoneyInput
                                 {...field}
                                 onValueChange={handleSourceAmountChange}
-                                aria-label="Sent amount"
+                                aria-label={t("activity:form.sent_amount")}
                               />
                             </FormControl>
                             <FormMessage />
@@ -872,13 +904,15 @@ export function MobileDetailsStep({ accounts, activityType, isEditing }: MobileD
                         render={({ field }) => (
                           <FormItem>
                             <FormLabel className="text-base font-medium">
-                              Received ({effectiveDestinationCurrency})
+                              {t("activity:form.label_received", {
+                                currency: effectiveDestinationCurrency,
+                              })}
                             </FormLabel>
                             <FormControl>
                               <MoneyInput
                                 {...field}
                                 onValueChange={handleDestinationAmountChange}
-                                aria-label="Received amount"
+                                aria-label={t("activity:form.received_amount")}
                               />
                             </FormControl>
                             <FormMessage />
@@ -892,12 +926,14 @@ export function MobileDetailsStep({ accounts, activityType, isEditing }: MobileD
                       name={"sourceAmount" as any}
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel className="text-base font-medium">Amount</FormLabel>
+                          <FormLabel className="text-base font-medium">
+                            {t("activity:form.label_amount")}
+                          </FormLabel>
                           <FormControl>
                             <MoneyInput
                               {...field}
                               onValueChange={handleSourceAmountChange}
-                              aria-label="Amount"
+                              aria-label={t("activity:form.label_amount")}
                             />
                           </FormControl>
                           <FormMessage />
@@ -913,7 +949,7 @@ export function MobileDetailsStep({ accounts, activityType, isEditing }: MobileD
                       render={({ field }) => (
                         <FormItem>
                           <FormLabel className="text-base font-medium">
-                            FX Rate
+                            {t("activity:form.label_fx_rate")}
                             <span className="text-muted-foreground ml-2 text-xs font-normal">
                               1 {effectiveSourceCurrency} ={" "}
                               {Number(field.value) > 0 ? field.value : "?"}{" "}
@@ -925,7 +961,7 @@ export function MobileDetailsStep({ accounts, activityType, isEditing }: MobileD
                               {...field}
                               onValueChange={handleFxRateChange}
                               maxDecimalPlaces={8}
-                              aria-label="FX Rate"
+                              aria-label={t("activity:form.label_fx_rate")}
                             />
                           </FormControl>
                           <FormMessage />
@@ -943,10 +979,12 @@ export function MobileDetailsStep({ accounts, activityType, isEditing }: MobileD
                   name="amount"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel className="text-base font-medium">Split Ratio</FormLabel>
+                      <FormLabel className="text-base font-medium">
+                        {t("activity:form.label_split_ratio")}
+                      </FormLabel>
                       <FormControl>
                         <QuantityInput
-                          placeholder="Ex. 2 for 2:1 split, 0.5 for 1:2 split"
+                          placeholder={t("activity:split_ratio_placeholder")}
                           {...field}
                         />
                       </FormControl>
@@ -974,7 +1012,9 @@ export function MobileDetailsStep({ accounts, activityType, isEditing }: MobileD
                   name="fee"
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel className="text-base font-medium">Fee Amount</FormLabel>
+                      <FormLabel className="text-base font-medium">
+                        {t("activity:field_fee_amount")}
+                      </FormLabel>
                       <FormControl>
                         <MoneyInput {...field} />
                       </FormControl>
@@ -990,7 +1030,7 @@ export function MobileDetailsStep({ accounts, activityType, isEditing }: MobileD
           <AdvancedOptionsSection
             variant="mobile"
             dashed
-            title="Advanced & notes"
+            title={t("activity:form.section_advanced_notes")}
             currencyName="currency"
             fxRateName="fxRate"
             subtypeName="subtype"
@@ -1008,10 +1048,12 @@ export function MobileDetailsStep({ accounts, activityType, isEditing }: MobileD
               name="comment"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel className="text-base font-medium">Description (Optional)</FormLabel>
+                  <FormLabel className="text-base font-medium">
+                    {t("activity:mobile_description_optional")}
+                  </FormLabel>
                   <FormControl>
                     <Textarea
-                      placeholder="Add a note or comment..."
+                      placeholder={t("activity:mobile_description_placeholder")}
                       className="min-h-[100px] resize-none text-base sm:text-sm"
                       {...field}
                       value={field.value ?? ""}
@@ -1069,6 +1111,7 @@ interface MobileAccountSheetProps {
 }
 
 function MobileAccountSheet({ accounts, open, onOpenChange, onSelect }: MobileAccountSheetProps) {
+  const { t } = useTranslation();
   const handleAccountSelect = (account: AccountSelectOption) => {
     onSelect(account.value);
   };
@@ -1077,8 +1120,8 @@ function MobileAccountSheet({ accounts, open, onOpenChange, onSelect }: MobileAc
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="bottom" className="rounded-t-4xl mx-1 h-[70vh] p-0">
         <SheetHeader className="border-border border-b px-6 py-4">
-          <SheetTitle>Select Account</SheetTitle>
-          <SheetDescription>Choose the account for this transaction</SheetDescription>
+          <SheetTitle>{t("activity:select_account")}</SheetTitle>
+          <SheetDescription>{t("activity:mobile_choose_account")}</SheetDescription>
         </SheetHeader>
         <ScrollArea className="h-[calc(70vh-5rem)] px-6 py-4">
           <div className="space-y-2">

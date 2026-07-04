@@ -1,5 +1,6 @@
 mod addon_traits;
 pub mod models;
+pub mod network;
 pub mod service;
 
 pub use addon_traits::AddonServiceTrait;

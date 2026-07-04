@@ -1,4 +1,5 @@
 import { useState, useMemo, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import { useFormContext, useWatch, type FieldPath, type FieldValues } from "react-hook-form";
 import { cn } from "@/lib/utils";
 import {
@@ -55,7 +56,7 @@ interface AdvancedOptionsSectionProps<TFieldValues extends FieldValues = FieldVa
   defaultOpen?: boolean;
   /** Variant for different layouts */
   variant?: "desktop" | "mobile";
-  /** Trigger label (default: "Advanced Options") */
+  /** Trigger label (default: translated "Advanced Options") */
   title?: string;
   /** Render inside a dashed-border container with a leading "+" affordance */
   dashed?: boolean;
@@ -81,13 +82,15 @@ export function AdvancedOptionsSection<TFieldValues extends FieldValues = FieldV
   showSubtype = true,
   defaultOpen = false,
   variant = "desktop",
-  title = "Advanced Options",
+  title,
   dashed = false,
   children,
 }: AdvancedOptionsSectionProps<TFieldValues>) {
+  const { t } = useTranslation(["activity"]);
   const isMobile = variant === "mobile";
   const [isOpen, setIsOpen] = useState(defaultOpen);
   const { control } = useFormContext<TFieldValues>();
+  const triggerTitle = title ?? t("activity:form.advanced_options");
 
   const watchedCurrency = useWatch({
     control,
@@ -159,7 +162,7 @@ export function AdvancedOptionsSection<TFieldValues extends FieldValues = FieldV
         >
           <span className="flex items-center gap-1.5 text-sm font-medium">
             {dashed && <Icons.Plus className="h-3.5 w-3.5" />}
-            {title}
+            {triggerTitle}
           </span>
           <Icons.ChevronDown
             className={`h-4 w-4 transition-transform duration-200 ${isOpen ? "rotate-180" : ""}`}
@@ -180,12 +183,12 @@ export function AdvancedOptionsSection<TFieldValues extends FieldValues = FieldV
                 name={currencyName}
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Currency</FormLabel>
+                    <FormLabel>{t("activity:form.currency")}</FormLabel>
                     <FormControl>
                       <CurrencyInput
                         value={field.value ?? ""}
                         onChange={field.onChange}
-                        placeholder="Select currency"
+                        placeholder={t("activity:form.placeholder_select_currency")}
                         className="w-full"
                         data-testid="advanced-currency-input"
                       />
@@ -204,10 +207,10 @@ export function AdvancedOptionsSection<TFieldValues extends FieldValues = FieldV
                             }`}
                             title={
                               index === 0 && assetCurrency === currency
-                                ? "Asset currency"
+                                ? t("activity:form.currency_hint_asset")
                                 : index <= 1 && accountCurrency === currency
-                                  ? "Account currency"
-                                  : "Base currency"
+                                  ? t("activity:form.currency_hint_account")
+                                  : t("activity:form.currency_hint_base")
                             }
                           >
                             {currency}
@@ -228,7 +231,7 @@ export function AdvancedOptionsSection<TFieldValues extends FieldValues = FieldV
                 name={fxRateName}
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>FX Rate</FormLabel>
+                    <FormLabel>{t("activity:form.label_fx_rate")}</FormLabel>
                     <FormControl>
                       <MoneyInput
                         ref={field.ref}
@@ -243,7 +246,11 @@ export function AdvancedOptionsSection<TFieldValues extends FieldValues = FieldV
                     </FormControl>
                     {fromCurrency && accountCurrency && fromCurrency !== accountCurrency && (
                       <FormDescription className="text-xs">
-                        1 {fromCurrency} = {fxRateDisplay} {accountCurrency}
+                        {t("activity:form.fx_conversion", {
+                          from: fromCurrency,
+                          rate: fxRateDisplay,
+                          to: accountCurrency,
+                        })}
                       </FormDescription>
                     )}
                     <FormMessage />
@@ -259,7 +266,7 @@ export function AdvancedOptionsSection<TFieldValues extends FieldValues = FieldV
                 name={subtypeName}
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Subtype</FormLabel>
+                    <FormLabel>{t("activity:form.subtype")}</FormLabel>
                     <FormControl>
                       <Select
                         onValueChange={(value) =>
@@ -267,12 +274,19 @@ export function AdvancedOptionsSection<TFieldValues extends FieldValues = FieldV
                         }
                         value={field.value ?? "__none__"}
                       >
-                        <SelectTrigger aria-label="Subtype" data-testid="subtype-select">
-                          <SelectValue placeholder="Select subtype" />
+                        <SelectTrigger
+                          aria-label={t("activity:form.subtype")}
+                          data-testid="subtype-select"
+                        >
+                          <SelectValue
+                            placeholder={t("activity:form.placeholder_select_subtype")}
+                          />
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="__none__">
-                            <span className="text-muted-foreground">None</span>
+                            <span className="text-muted-foreground">
+                              {t("activity:form.subtype_none")}
+                            </span>
                           </SelectItem>
                           {availableSubtypes.map((subtype) => (
                             <SelectItem key={subtype} value={subtype}>

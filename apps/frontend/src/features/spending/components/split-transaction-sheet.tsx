@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import {
   Button,
@@ -110,6 +111,7 @@ export function SplitTransactionSheet({
   onSave,
   onClear,
 }: SplitTransactionSheetProps) {
+  const { t } = useTranslation();
   const isMobile = useIsMobileViewport();
   const activity = row?.activity ?? null;
   const taxonomyId = taxonomyForBucket(activity?.cashFlowBucket);
@@ -269,9 +271,10 @@ export function SplitTransactionSheet({
         )}
       >
         <SheetHeader className={cn(isMobile && "border-border border-b px-6 py-4 text-left")}>
-          <SheetTitle>Split Transaction</SheetTitle>
+          <SheetTitle>{t("spending:split.title")}</SheetTitle>
           <SheetDescription>
-            {activity?.notes ?? "Transaction"} · {activity?.currency ?? ""}
+            {activity?.notes ?? t("spending:split.transactionFallback")} ·{" "}
+            {activity?.currency ?? ""}
           </SheetDescription>
         </SheetHeader>
 
@@ -279,8 +282,9 @@ export function SplitTransactionSheet({
           <div className="space-y-4 py-4">
             <div className="bg-muted/50 flex items-center justify-between rounded-2xl px-4 py-4">
               <span className="text-muted-foreground text-sm">
-                Remaining of {currencySymbol}
-                {formatCents(totalAbsCents)}
+                {t("spending:split.remainingOf", {
+                  amount: `${currencySymbol}${formatCents(totalAbsCents)}`,
+                })}
               </span>
               <span
                 className={cn(
@@ -349,7 +353,7 @@ export function SplitTransactionSheet({
                                 !label && "text-muted-foreground",
                               )}
                             >
-                              {label ?? "Category"}
+                              {label ?? t("spending:filters.category")}
                             </span>
                             <Icons.ChevronDown
                               className="text-muted-foreground h-3.5 w-3.5 shrink-0"
@@ -363,7 +367,7 @@ export function SplitTransactionSheet({
                         <Input
                           value={line.note}
                           onChange={(event) => updateLine(line.id, { note: event.target.value })}
-                          placeholder="Note"
+                          placeholder={t("spending:split.note")}
                           className="bg-muted/40 ml-5 mt-1 !h-7 rounded-md border-0 px-2 text-xs shadow-none md:text-xs"
                         />
                       ) : (
@@ -373,7 +377,7 @@ export function SplitTransactionSheet({
                           onClick={() => handleShowNote(line.id)}
                         >
                           <Icons.Plus className="h-3 w-3" aria-hidden="true" />
-                          note
+                          {t("spending:split.noteLower")}
                         </button>
                       )}
                     </div>
@@ -401,7 +405,7 @@ export function SplitTransactionSheet({
                       className="text-muted-foreground hover:text-foreground h-8 w-8"
                       onClick={() => handleRemoveLine(line.id)}
                       disabled={lines.length <= 1}
-                      aria-label={`Remove split line ${index + 1}`}
+                      aria-label={t("spending:split.removeLine", { number: index + 1 })}
                     >
                       <Icons.X className="h-3.5 w-3.5" />
                     </Button>
@@ -414,7 +418,7 @@ export function SplitTransactionSheet({
           <div className="flex flex-wrap gap-2 py-4">
             <Button type="button" variant="outline" size="sm" onClick={handleAddLine}>
               <Icons.Plus className="mr-2 h-4 w-4" />
-              Add line
+              {t("spending:split.addLine")}
             </Button>
             <Button
               type="button"
@@ -424,7 +428,7 @@ export function SplitTransactionSheet({
               disabled={!canDistribute}
             >
               <Icons.SplitHorizontal className="mr-2 h-4 w-4" />
-              Distribute evenly
+              {t("spending:split.distributeEvenly")}
             </Button>
           </div>
         </div>
@@ -441,7 +445,7 @@ export function SplitTransactionSheet({
             <div className="flex w-full flex-col gap-2">
               <Button type="button" onClick={handleSave} disabled={!canSave || isSaving}>
                 {isSaving && <Icons.Spinner className="mr-2 h-4 w-4 animate-spin" />}
-                Save
+                {t("common:save")}
               </Button>
               <div className="flex gap-2">
                 {hasExistingSplits && (
@@ -452,7 +456,7 @@ export function SplitTransactionSheet({
                     disabled={isSaving}
                     className="flex-1"
                   >
-                    Clear split
+                    {t("spending:split.clearSplit")}
                   </Button>
                 )}
                 <Button
@@ -462,7 +466,7 @@ export function SplitTransactionSheet({
                   disabled={isSaving}
                   className="flex-1"
                 >
-                  Cancel
+                  {t("common:cancel")}
                 </Button>
               </div>
             </div>
@@ -476,7 +480,7 @@ export function SplitTransactionSheet({
                   disabled={isSaving}
                   className="mr-auto"
                 >
-                  Clear split
+                  {t("spending:split.clearSplit")}
                 </Button>
               )}
               <Button
@@ -485,11 +489,11 @@ export function SplitTransactionSheet({
                 onClick={() => onOpenChange(false)}
                 disabled={isSaving}
               >
-                Cancel
+                {t("common:cancel")}
               </Button>
               <Button type="button" onClick={handleSave} disabled={!canSave || isSaving}>
                 {isSaving && <Icons.Spinner className="mr-2 h-4 w-4 animate-spin" />}
-                Save
+                {t("common:save")}
               </Button>
             </>
           )}

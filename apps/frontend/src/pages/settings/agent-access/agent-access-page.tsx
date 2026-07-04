@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { getAgentAccessStatus, isDesktop, isWeb } from "@/adapters";
 import { usePlatform } from "@/hooks/use-platform";
 import { QueryKeys } from "@/lib/query-keys";
@@ -16,6 +17,7 @@ import { PatTable } from "./components/pat-table";
 import { useMcpServer } from "./hooks/use-mcp-server";
 
 function DesktopAgentAccess() {
+  const { t } = useTranslation();
   const { status } = useMcpServer();
   const serverUrl =
     status?.running && status.port ? `http://127.0.0.1:${status.port}/mcp` : undefined;
@@ -29,9 +31,7 @@ function DesktopAgentAccess() {
           <PatTable serverUrl={serverUrl} />
           <AuditLogTable
             disabledNotice={
-              !status.auditEnabled
-                ? "Audit logging is off — new activity will not be recorded."
-                : undefined
+              !status.auditEnabled ? t("settings:agentAccess.audit_disabled_desktop") : undefined
             }
           />
         </>
@@ -41,6 +41,7 @@ function DesktopAgentAccess() {
 }
 
 function WebAgentAccess() {
+  const { t } = useTranslation();
   const {
     data: status,
     isError,
@@ -62,11 +63,11 @@ function WebAgentAccess() {
       {isError && (
         <Alert variant="destructive">
           <Icons.AlertTriangle className="h-4 w-4" />
-          <AlertTitle>Failed to load MCP status</AlertTitle>
+          <AlertTitle>{t("settings:agentAccess.web_status_error_title")}</AlertTitle>
           <AlertDescription className="flex items-center justify-between gap-4">
-            <span>Could not check whether the MCP endpoint is enabled on this server.</span>
+            <span>{t("settings:agentAccess.web_status_error_description")}</span>
             <Button variant="outline" size="sm" onClick={() => void refetch()}>
-              Retry
+              {t("common:retry")}
             </Button>
           </AlertDescription>
         </Alert>
@@ -74,17 +75,22 @@ function WebAgentAccess() {
       {status && (
         <McpHero
           active={status.mcpEnabled}
-          title={status.mcpEnabled ? "AI Agent Access · enabled" : "AI Agent Access · off"}
+          title={
+            status.mcpEnabled
+              ? t("settings:agentAccess.web_title_enabled")
+              : t("settings:agentAccess.web_title_off")
+          }
           description={
             status.mcpEnabled
-              ? `AI agents can connect to ${status.endpoint} on this server using a scoped access token.`
-              : "AI Agent Access is off on this server. Enable it to let AI agents read and act on your portfolio over MCP."
+              ? t("settings:agentAccess.web_description_enabled", { endpoint: status.endpoint })
+              : t("settings:agentAccess.web_description_off")
           }
           hint={
             status.mcpEnabled ? undefined : (
               <>
-                Set <code className="font-mono">WF_MCP_ENABLED=true</code> and restart the server to
-                enable the endpoint, then create a token here.
+                {t("settings:agentAccess.web_hint_prefix")}{" "}
+                <code className="font-mono">WF_MCP_ENABLED=true</code>{" "}
+                {t("settings:agentAccess.web_hint_suffix")}
               </>
             )
           }
@@ -95,9 +101,7 @@ function WebAgentAccess() {
           <PatTable serverUrl={serverUrl} />
           <AuditLogTable
             disabledNotice={
-              !status.auditEnabled
-                ? "Audit logging is off (WF_MCP_AUDIT_ENABLED=false) — new activity will not be recorded."
-                : undefined
+              !status.auditEnabled ? t("settings:agentAccess.audit_disabled_web") : undefined
             }
           />
         </>
@@ -107,22 +111,25 @@ function WebAgentAccess() {
 }
 
 export default function AgentAccessPage() {
+  const { t } = useTranslation();
   const { isMobile, loading } = usePlatform();
 
   return (
     <div className="space-y-6">
       <SettingsHeader
-        heading="AI Agent Access"
-        text="Let AI agents access your portfolio over MCP. Each token's scopes control what it can do."
+        heading={t("settings:agentAccess.page_heading")}
+        text={t("settings:agentAccess.page_text")}
       />
       <Separator />
 
       {loading ? null : isDesktop && isMobile ? (
         <EmptyPlaceholder>
           <EmptyPlaceholder.Icon name="Brain" />
-          <EmptyPlaceholder.Title>Not available on mobile</EmptyPlaceholder.Title>
+          <EmptyPlaceholder.Title>
+            {t("settings:agentAccess.mobile_unavailable_title")}
+          </EmptyPlaceholder.Title>
           <EmptyPlaceholder.Description>
-            AI Agent Access is managed on desktop or web.
+            {t("settings:agentAccess.mobile_unavailable_description")}
           </EmptyPlaceholder.Description>
         </EmptyPlaceholder>
       ) : isDesktop ? (

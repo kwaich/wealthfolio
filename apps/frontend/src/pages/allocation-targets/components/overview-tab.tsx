@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import type { AllocationTarget, DriftReport } from "@/lib/types";
 import { useTaxonomy } from "@/hooks/use-taxonomies";
 import { CurrentVsTargetCard } from "./current-vs-target-card";
@@ -21,6 +22,7 @@ export function OverviewTab({
   target,
   onRebalanceClick,
 }: OverviewTabProps) {
+  const { t } = useTranslation();
   const { data: taxonomy } = useTaxonomy(taxonomyId);
   const resolvedReport = resolveDriftReportCategories(report, taxonomy?.categories);
   const taxonomyName = taxonomy?.taxonomy.name;
@@ -29,13 +31,16 @@ export function OverviewTab({
   const displayTaxonomy = taxonomyLabel(taxonomyId, taxonomyName);
   const gapStatus =
     report.outOfBandCount === 0
-      ? `All ${pluralCategoryLabel} inside target`
-      : `${report.outOfBandCount} ${categoryLabel} outside target`;
+      ? t("allocation:overview.allInsideTarget", { categories: pluralCategoryLabel })
+      : t("allocation:overview.outsideTarget", {
+          n: report.outOfBandCount,
+          categories: categoryLabel,
+        });
 
   const bandLabel = (() => {
     if (!target) return null;
     const isHybrid = target.bandType === "hybrid";
-    const typeName = isHybrid ? "Hybrid" : "Absolute";
+    const typeName = isHybrid ? t("allocation:band.hybrid") : t("allocation:band.absolute");
     const requiredRows = resolvedReport.rows.filter((r) => r.isRequired && r.targetBps > 0);
     if (!requiredRows.length) return `${typeName} · ${formatTolerance(target.driftBandBps)}`;
     const bands = requiredRows.map((r) => r.effectiveBandBps);

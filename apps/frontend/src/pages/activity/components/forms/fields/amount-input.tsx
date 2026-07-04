@@ -13,6 +13,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@wealthfolio/ui";
+import { useTranslation } from "react-i18next";
 import { useFormContext, type FieldPath, type FieldValues } from "react-hook-form";
 
 interface AmountInputProps<TFieldValues extends FieldValues = FieldValues> {
@@ -28,12 +29,15 @@ interface AmountInputProps<TFieldValues extends FieldValues = FieldValues> {
 
 export function AmountInput<TFieldValues extends FieldValues = FieldValues>({
   name,
-  label = "Amount",
+  label,
   labelHelpText,
   placeholder = "0.00",
   maxDecimalPlaces = 2,
   currency,
 }: AmountInputProps<TFieldValues>) {
+  const { t } = useTranslation(["activity"]);
+  const resolvedLabel = label ?? t("activity:form.label_amount");
+  const testId = `${String(name).toLowerCase().replace(/\s+/g, "-")}-input`;
   const { control } = useFormContext<TFieldValues>();
 
   return (
@@ -43,14 +47,14 @@ export function AmountInput<TFieldValues extends FieldValues = FieldValues>({
       render={({ field }) => (
         <FormItem className="min-w-0">
           <div className="flex min-w-0 items-center gap-1.5">
-            <FormLabel>{label}</FormLabel>
+            <FormLabel>{resolvedLabel}</FormLabel>
             {labelHelpText && (
               <Tooltip>
                 <TooltipTrigger asChild>
                   <button
                     type="button"
                     className="text-muted-foreground/70 hover:text-foreground inline-flex rounded-full transition-colors"
-                    aria-label={`More info about ${label}`}
+                    aria-label={t("activity:form.more_info_about", { label: resolvedLabel })}
                   >
                     <Icons.Info className="h-3 w-3" />
                   </button>
@@ -71,8 +75,8 @@ export function AmountInput<TFieldValues extends FieldValues = FieldValues>({
                   onValueChange={field.onChange}
                   placeholder={placeholder}
                   maxDecimalPlaces={maxDecimalPlaces}
-                  aria-label={label}
-                  data-testid={`${label.toLowerCase().replace(/\s+/g, "-")}-input`}
+                  aria-label={resolvedLabel}
+                  data-testid={testId}
                 />
                 <InputGroupAddon align="inline-end" className="shrink-0">
                   <InputGroupText className="shrink-0">{currency}</InputGroupText>
@@ -86,8 +90,8 @@ export function AmountInput<TFieldValues extends FieldValues = FieldValues>({
                 onValueChange={field.onChange}
                 placeholder={placeholder}
                 maxDecimalPlaces={maxDecimalPlaces}
-                aria-label={label}
-                data-testid={`${label.toLowerCase().replace(/\s+/g, "-")}-input`}
+                aria-label={resolvedLabel}
+                data-testid={testId}
               />
             )}
           </FormControl>

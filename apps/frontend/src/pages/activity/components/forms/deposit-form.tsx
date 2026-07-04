@@ -3,8 +3,10 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { Button } from "@wealthfolio/ui/components/ui/button";
 import { Icons } from "@wealthfolio/ui/components/ui/icons";
 import { useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import { FormProvider, useForm, type Resolver } from "react-hook-form";
 import { z } from "zod";
+import type { TFunction } from "i18next";
 import {
   AccountSelect,
   AdvancedOptionsSection,
@@ -16,26 +18,45 @@ import {
   type AccountSelectOption,
 } from "./fields";
 
-// Zod schema for DepositForm validation
-export const depositFormSchema = z.object({
-  accountId: z.string().min(1, { message: "Please select an account." }),
-  activityDate: z.date({ required_error: "Please select a date." }),
-  amount: z.coerce
-    .number({
-      required_error: "Please enter an amount.",
-      invalid_type_error: "Amount must be a number.",
-    })
-    .positive({ message: "Amount must be greater than 0." }),
-  comment: z.string().optional().nullable(),
-  // Advanced options
-  currency: z.string().min(1, { message: "Currency is required." }),
-  fxRate: z.coerce
-    .number({
-      invalid_type_error: "FX Rate must be a number.",
-    })
-    .positive({ message: "FX Rate must be positive." })
-    .optional(),
-});
+// Translated message helper (see buy-form for rationale).
+type MsgFn = TFunction | undefined;
+const msg = (t: MsgFn, key: string, en: string) => (t ? t(key) : en);
+
+// Zod schema factory for DepositForm validation. `t` optional so the exported
+// static schema keeps English messages (used by tests and type inference).
+export const createDepositFormSchema = (t?: TFunction) =>
+  z.object({
+    accountId: z
+      .string()
+      .min(1, { message: msg(t, "activity:form.err_select_account", "Please select an account.") }),
+    activityDate: z.date({
+      required_error: msg(t, "activity:form.err_select_date", "Please select a date."),
+    }),
+    amount: z.coerce
+      .number({
+        required_error: msg(t, "activity:form.err_enter_amount", "Please enter an amount."),
+        invalid_type_error: msg(t, "activity:form.err_amount_number", "Amount must be a number."),
+      })
+      .positive({
+        message: msg(t, "activity:form.err_amount_gt_zero", "Amount must be greater than 0."),
+      }),
+    comment: z.string().optional().nullable(),
+    // Advanced options
+    currency: z
+      .string()
+      .min(1, { message: msg(t, "activity:form.err_currency_required", "Currency is required.") }),
+    fxRate: z.coerce
+      .number({
+        invalid_type_error: msg(t, "activity:form.err_fxrate_number", "FX Rate must be a number."),
+      })
+      .positive({
+        message: msg(t, "activity:form.err_fxrate_positive", "FX Rate must be positive."),
+      })
+      .optional(),
+  });
+
+// Zod schema for DepositForm validation (English messages; used by tests).
+export const depositFormSchema = createDepositFormSchema();
 
 export type DepositFormValues = z.infer<typeof depositFormSchema>;
 
@@ -56,8 +77,11 @@ export function DepositForm({
   isLoading = false,
   isEditing = false,
 }: DepositFormProps) {
+  const { t } = useTranslation(["activity"]);
   const { data: settings } = useSettings();
   const baseCurrency = settings?.baseCurrency;
+
+  const schema = useMemo(() => createDepositFormSchema(t), [t]);
 
   // Compute initial account and currency for defaultValues
   const initialAccountId =
@@ -66,7 +90,7 @@ export function DepositForm({
   const initialCurrency = defaultValues?.currency?.trim() || initialAccount?.currency;
 
   const form = useForm<DepositFormValues>({
-    resolver: zodResolver(depositFormSchema) as Resolver<DepositFormValues>,
+    resolver: zodResolver(schema) as Resolver<DepositFormValues>,
     mode: "onSubmit", // Validate only on submit - works correctly with default values
     defaultValues: {
       accountId: initialAccountId,
@@ -97,18 +121,18 @@ export function DepositForm({
   return (
     <FormProvider {...form}>
       <form onSubmit={handleSubmit} className="space-y-4">
-        <FormSection title="Account">
+        <FormSection title={t("activity:form.section_account")}>
           <AccountSelect name="accountId" accounts={accounts} currencyName="currency" />
-          <DatePicker name="activityDate" label="Date" />
+          <DatePicker name="activityDate" label={t("activity:field_date")} />
         </FormSection>
 
-        <FormSection title="Amount">
-          <AmountInput name="amount" label="Amount" currency={currency} />
+        <FormSection title={t("activity:form.section_amount")}>
+          <AmountInput name="amount" label={t("activity:form.label_amount")} currency={currency} />
         </FormSection>
 
         {/* Advanced options (currency, FX rate) and notes, collapsed by default */}
         <AdvancedOptionsSection
-          title="Advanced & notes"
+          title={t("activity:form.section_advanced_notes")}
           dashed
           currencyName="currency"
           fxRateName="fxRate"
@@ -116,14 +140,18 @@ export function DepositForm({
           baseCurrency={baseCurrency}
           showSubtype={false}
         >
-          <NotesInput name="comment" label="Notes" placeholder="Add an optional note..." />
+          <NotesInput
+            name="comment"
+            label={t("activity:form.label_notes")}
+            placeholder={t("activity:form.placeholder_note")}
+          />
         </AdvancedOptionsSection>
 
         {/* Action Buttons */}
         <div className="flex justify-end gap-2">
           {onCancel && (
             <Button type="button" variant="outline" onClick={onCancel} disabled={isLoading}>
-              Cancel
+              {t("activity:cancel")}
             </Button>
           )}
           <Button type="submit" disabled={isLoading}>
@@ -133,7 +161,7 @@ export function DepositForm({
             ) : (
               <Icons.Plus className="mr-2 h-4 w-4" />
             )}
-            {isEditing ? "Update" : "Add Deposit"}
+            {isEditing ? t("activity:form.button_update") : t("activity:form.button_add_deposit")}
           </Button>
         </div>
       </form>

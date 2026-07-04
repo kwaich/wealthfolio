@@ -18,6 +18,7 @@ import {
   TableRow,
 } from "@wealthfolio/ui";
 import { memo, useMemo, type FC } from "react";
+import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 import { useBalancePrivacy } from "@/hooks/use-balance-privacy";
 import { ResponsiveContainer, Treemap, Tooltip as ChartTooltip } from "recharts";
@@ -310,6 +311,7 @@ interface TreemapTooltipProps {
 }
 
 const TreemapTooltip: FC<TreemapTooltipProps> = ({ active, payload, currency = "USD" }) => {
+  const { t } = useTranslation();
   if (!active || !payload?.length) return null;
   const data = payload[0].payload;
   const value = payload[0].value;
@@ -325,11 +327,11 @@ const TreemapTooltip: FC<TreemapTooltipProps> = ({ active, payload, currency = "
         </div>
         <div className="border-t pt-2">
           <div className="flex items-center justify-between gap-4 text-xs">
-            <span className="text-muted-foreground">Value</span>
+            <span className="text-muted-foreground">{t("ai:holdings.value")}</span>
             <span className="font-medium">{formatAmount(value, currency)}</span>
           </div>
           <div className="flex items-center justify-between gap-4 text-xs">
-            <span className="text-muted-foreground">Today</span>
+            <span className="text-muted-foreground">{t("ai:holdings.today")}</span>
             <span className={cn("font-medium", isPositive ? "text-success" : "text-destructive")}>
               {isPositive ? "+" : ""}
               {formatPercent(gain)}
@@ -357,6 +359,7 @@ export const HoldingsToolUI = makeAssistantToolUI<GetHoldingsArgs, GetHoldingsOu
 type HoldingsContentProps = ToolCallMessagePartProps<GetHoldingsArgs, GetHoldingsOutput>;
 
 function HoldingsContentImpl({ args, result, status }: HoldingsContentProps) {
+  const { t } = useTranslation();
   const { settings } = useSettingsContext();
   const baseCurrency = settings?.baseCurrency ?? "USD";
   const { isBalanceHidden } = useBalancePrivacy();
@@ -448,11 +451,7 @@ function HoldingsContentImpl({ args, result, status }: HoldingsContentProps) {
 
   // Compact mode — just show a one-liner when used as a prerequisite
   if (args?.displayMode === "compact" && parsed && !isLoading) {
-    return (
-      <CompactToolCard
-        label={`Fetched ${parsed.holdings.length} holding${parsed.holdings.length !== 1 ? "s" : ""}`}
-      />
-    );
+    return <CompactToolCard label={t("ai:holdings.fetched", { count: parsed.holdings.length })} />;
   }
   const isComplete = status?.type === "complete" || status?.type === "incomplete";
   const hasError = status?.type === "incomplete" && status.reason === "error";
@@ -473,7 +472,7 @@ function HoldingsContentImpl({ args, result, status }: HoldingsContentProps) {
         <CardHeader className="pb-2">
           <div className="flex flex-wrap items-start justify-between gap-2">
             <div>
-              <CardTitle className="text-sm font-medium">Holdings</CardTitle>
+              <CardTitle className="text-sm font-medium">{t("ai:holdings.title")}</CardTitle>
               <Skeleton className="mt-1 h-3 w-16" />
             </div>
             <Skeleton className="h-5 w-20" />
@@ -488,10 +487,14 @@ function HoldingsContentImpl({ args, result, status }: HoldingsContentProps) {
             <Table>
               <TableHeader>
                 <TableRow className="hover:bg-transparent">
-                  <TableHead className="pl-4 text-xs">Symbol</TableHead>
-                  <TableHead className="text-right text-xs">Value</TableHead>
-                  <TableHead className="hidden text-right text-xs sm:table-cell">Weight</TableHead>
-                  <TableHead className="pr-4 text-right text-xs">Gain</TableHead>
+                  <TableHead className="pl-4 text-xs">{t("ai:holdings.colSymbol")}</TableHead>
+                  <TableHead className="text-right text-xs">{t("ai:holdings.colValue")}</TableHead>
+                  <TableHead className="hidden text-right text-xs sm:table-cell">
+                    {t("ai:holdings.colWeight")}
+                  </TableHead>
+                  <TableHead className="pr-4 text-right text-xs">
+                    {t("ai:holdings.colGain")}
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -524,7 +527,7 @@ function HoldingsContentImpl({ args, result, status }: HoldingsContentProps) {
     return (
       <Card className="bg-muted/40 border-destructive/30 w-full">
         <CardContent className="py-4">
-          <p className="text-destructive text-sm">Failed to load holdings data.</p>
+          <p className="text-destructive text-sm">{t("ai:holdings.error")}</p>
         </CardContent>
       </Card>
     );
@@ -535,7 +538,7 @@ function HoldingsContentImpl({ args, result, status }: HoldingsContentProps) {
     return (
       <Card className="bg-muted/40 border-primary/10 w-full">
         <CardContent className="py-4">
-          <p className="text-muted-foreground text-sm">No holdings found for this account.</p>
+          <p className="text-muted-foreground text-sm">{t("ai:holdings.empty")}</p>
         </CardContent>
       </Card>
     );
@@ -545,16 +548,22 @@ function HoldingsContentImpl({ args, result, status }: HoldingsContentProps) {
   const viewMode = parsed?.viewMode ?? args?.viewMode ?? "treemap";
   const canShowTreemap = hasData && treemapData.length > 0;
   const returnLabel =
-    returnType === "daily" ? "Today" : returnType === "return" ? "Total Return" : "Total P&L";
+    returnType === "daily"
+      ? t("ai:holdings.today")
+      : returnType === "return"
+        ? t("ai:holdings.totalReturn")
+        : t("ai:holdings.totalPnl");
 
   // Treemap view component
   const TreemapView = () => (
     <div className="pb-2 pt-4">
       <div className="flex flex-wrap items-start justify-between gap-2 px-4 pb-2">
         <div>
-          <p className="text-sm font-medium">Your Portfolio {returnLabel}</p>
+          <p className="text-sm font-medium">
+            {t("ai:holdings.portfolioReturn", { label: returnLabel })}
+          </p>
           <p className="text-muted-foreground mt-1 text-xs">
-            {holdingsCount} position{holdingsCount !== 1 ? "s" : ""} · {returnLabel}
+            {t("ai:holdings.positions", { count: holdingsCount })} · {returnLabel}
             {accountLabel !== "Portfolio" && (
               <Badge variant="outline" className="ml-2 text-xs uppercase">
                 {accountLabel}
@@ -573,7 +582,11 @@ function HoldingsContentImpl({ args, result, status }: HoldingsContentProps) {
             >
               {totalChange > 0 ? "+" : ""}
               {formatPercent(totalChange)}{" "}
-              {returnType === "daily" ? "today" : returnType === "return" ? "return" : "P&L"}
+              {returnType === "daily"
+                ? t("ai:holdings.todaySuffix")
+                : returnType === "return"
+                  ? t("ai:holdings.returnSuffix")
+                  : t("ai:holdings.pnlSuffix")}
             </p>
           )}
         </div>
@@ -609,9 +622,11 @@ function HoldingsContentImpl({ args, result, status }: HoldingsContentProps) {
         {showHeader && (
           <div className="flex flex-wrap items-start justify-between gap-2 px-4 pb-2">
             <div>
-              <p className="text-sm font-medium">Holdings {returnLabel}</p>
+              <p className="text-sm font-medium">
+                {t("ai:holdings.holdingsLabel", { label: returnLabel })}
+              </p>
               <p className="text-muted-foreground mt-1 text-xs">
-                {holdingsCount} position{holdingsCount !== 1 ? "s" : ""}
+                {t("ai:holdings.positions", { count: holdingsCount })}
                 {accountLabel !== "Portfolio" && (
                   <Badge variant="outline" className="ml-2 text-xs uppercase">
                     {accountLabel}
@@ -645,11 +660,17 @@ function HoldingsContentImpl({ args, result, status }: HoldingsContentProps) {
           <Table>
             <TableHeader>
               <TableRow className="hover:bg-transparent">
-                <TableHead className="pl-4 text-xs">Symbol</TableHead>
-                <TableHead className="text-right text-xs">Value</TableHead>
-                <TableHead className="hidden text-right text-xs sm:table-cell">Weight</TableHead>
+                <TableHead className="pl-4 text-xs">{t("ai:holdings.colSymbol")}</TableHead>
+                <TableHead className="text-right text-xs">{t("ai:holdings.colValue")}</TableHead>
+                <TableHead className="hidden text-right text-xs sm:table-cell">
+                  {t("ai:holdings.colWeight")}
+                </TableHead>
                 <TableHead className="pr-4 text-right text-xs">
-                  {returnType === "daily" ? "Today" : returnType === "return" ? "Return" : "P&L"}
+                  {returnType === "daily"
+                    ? t("ai:holdings.today")
+                    : returnType === "return"
+                      ? t("ai:holdings.return")
+                      : t("ai:holdings.pnl")}
                 </TableHead>
               </TableRow>
             </TableHeader>
@@ -709,9 +730,9 @@ function HoldingsContentImpl({ args, result, status }: HoldingsContentProps) {
   const ReturnTypeToggle = (
     <AnimatedToggleGroup
       items={[
-        { value: "daily", label: "Daily" },
-        { value: "pnl", label: "P&L" },
-        { value: "return", label: "Return" },
+        { value: "daily", label: t("ai:holdings.daily") },
+        { value: "pnl", label: t("ai:holdings.pnl") },
+        { value: "return", label: t("ai:holdings.toggleReturn") },
       ]}
       value={returnType}
       onValueChange={(value: ReturnType) => setReturnType(value)}

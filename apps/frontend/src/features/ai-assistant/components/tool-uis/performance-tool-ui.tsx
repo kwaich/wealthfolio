@@ -2,6 +2,7 @@ import type { ToolCallMessagePartProps } from "@assistant-ui/react";
 import { makeAssistantToolUI } from "@assistant-ui/react";
 import { Badge, Card, CardContent, CardHeader, CardTitle, Skeleton } from "@wealthfolio/ui";
 import { memo, useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 import { useBalancePrivacy } from "@/hooks/use-balance-privacy";
 import { Icons } from "@wealthfolio/ui/components/ui/icons";
@@ -71,10 +72,11 @@ function EmptyState() {
 }
 
 function ErrorState({ message }: { message?: string }) {
+  const { t } = useTranslation();
   return (
     <Card className="border-destructive/30 bg-destructive/5">
       <CardContent className="py-4">
-        <p className="text-destructive text-sm font-medium">Failed to load performance data</p>
+        <p className="text-destructive text-sm font-medium">{t("ai:performance.error")}</p>
         {message && <p className="text-muted-foreground mt-1 text-xs">{message}</p>}
       </CardContent>
     </Card>
@@ -118,6 +120,7 @@ type PerformanceToolUIContentProps = ToolCallMessagePartProps<
 >;
 
 function PerformanceToolUIContentImpl({ args, result, status }: PerformanceToolUIContentProps) {
+  const { t } = useTranslation();
   const { settings } = useSettingsContext();
   const baseCurrency = settings?.baseCurrency ?? "USD";
   const { isBalanceHidden } = useBalancePrivacy();
@@ -167,20 +170,20 @@ function PerformanceToolUIContentImpl({ args, result, status }: PerformanceToolU
           day: "numeric",
           year: "numeric",
         })
-      : "Start";
+      : t("ai:performance.start");
     const end = parsed.periodEndDate
       ? new Date(parsed.periodEndDate).toLocaleDateString(undefined, {
           month: "short",
           day: "numeric",
           year: "numeric",
         })
-      : "Today";
+      : t("ai:performance.today");
     return `${start} - ${end}`;
-  }, [parsed?.periodStartDate, parsed?.periodEndDate]);
+  }, [parsed?.periodStartDate, parsed?.periodEndDate, t]);
 
   // Compact mode — just show a one-liner when used as a prerequisite
   if (args?.displayMode === "compact" && parsed && !isLoading) {
-    return <CompactToolCard label="Fetched performance metrics" />;
+    return <CompactToolCard label={t("ai:performance.fetched")} />;
   }
 
   // Show loading skeleton while running
@@ -190,7 +193,7 @@ function PerformanceToolUIContentImpl({ args, result, status }: PerformanceToolU
 
   // Show error state for incomplete/failed status
   if (isIncomplete) {
-    return <ErrorState message="The request was interrupted or failed." />;
+    return <ErrorState message={t("ai:performance.interrupted")} />;
   }
 
   // Show empty state if no valid data
@@ -212,7 +215,10 @@ function PerformanceToolUIContentImpl({ args, result, status }: PerformanceToolU
     : (parsed.annualizedTwr ?? parsed.annualizedValueReturn);
   const irr = suppressReturnMetrics ? null : parsed.irr;
   const annualizedIrr = suppressReturnMetrics ? null : parsed.annualizedIrr;
-  const annualizedLabel = parsed.annualizedTwr == null ? "Annualized Return" : "Annualized TWR";
+  const annualizedLabel =
+    parsed.annualizedTwr == null
+      ? t("ai:performance.annualizedReturn")
+      : t("ai:performance.annualizedTwr");
   const isPositiveReturn = summaryReturnValue == null ? null : summaryReturnValue >= 0;
   const TrendIcon = isPositiveReturn ? Icons.TrendingUp : Icons.TrendingDown;
 
@@ -221,7 +227,7 @@ function PerformanceToolUIContentImpl({ args, result, status }: PerformanceToolU
       <CardHeader className="pb-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2">
-            <CardTitle className="text-base">Performance</CardTitle>
+            <CardTitle className="text-base">{t("ai:performance.title")}</CardTitle>
             {accountLabel !== "Portfolio" && !isUuid && (
               <Badge variant="outline" className="text-xs uppercase">
                 {accountLabel}
@@ -255,7 +261,9 @@ function PerformanceToolUIContentImpl({ args, result, status }: PerformanceToolU
                     : "text-destructive",
               )}
             >
-              {summaryReturnValue == null ? "N/A" : formatPercentSigned(summaryReturnValue)}
+              {summaryReturnValue == null
+                ? t("ai:performance.notAvailableUpper")
+                : formatPercentSigned(summaryReturnValue)}
             </span>
           </div>
           {periodPnlAmount != null && (
@@ -278,25 +286,39 @@ function PerformanceToolUIContentImpl({ args, result, status }: PerformanceToolU
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <MetricCard
             label={annualizedLabel}
-            value={annualizedReturn == null ? "n/a" : formatPercentSigned(annualizedReturn)}
+            value={
+              annualizedReturn == null
+                ? t("ai:performance.notAvailable")
+                : formatPercentSigned(annualizedReturn)
+            }
             isPositive={annualizedReturn == null ? null : annualizedReturn >= 0}
           />
           <MetricCard
-            label="IRR"
-            value={irr == null ? "n/a" : formatPercentSigned(irr)}
+            label={t("ai:performance.irr")}
+            value={irr == null ? t("ai:performance.notAvailable") : formatPercentSigned(irr)}
             subValue={
-              annualizedIrr == null ? undefined : `${formatPercentSigned(annualizedIrr)} ann.`
+              annualizedIrr == null
+                ? undefined
+                : t("ai:performance.irrAnn", { value: formatPercentSigned(annualizedIrr) })
             }
             isPositive={irr == null ? null : irr >= 0}
           />
           <MetricCard
-            label="Volatility"
-            value={parsed.volatility == null ? "n/a" : formatPercent(parsed.volatility)}
+            label={t("ai:performance.volatility")}
+            value={
+              parsed.volatility == null
+                ? t("ai:performance.notAvailable")
+                : formatPercent(parsed.volatility)
+            }
             isPositive={null}
           />
           <MetricCard
-            label="Max Drawdown"
-            value={parsed.maxDrawdown == null ? "n/a" : formatPercent(parsed.maxDrawdown)}
+            label={t("ai:performance.maxDrawdown")}
+            value={
+              parsed.maxDrawdown == null
+                ? t("ai:performance.notAvailable")
+                : formatPercent(parsed.maxDrawdown)
+            }
             isPositive={parsed.maxDrawdown == null ? null : false}
           />
         </div>

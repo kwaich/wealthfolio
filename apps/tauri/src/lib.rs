@@ -619,6 +619,10 @@ pub fn run() {
             commands::secrets::set_secret,
             commands::secrets::get_secret,
             commands::secrets::delete_secret,
+            commands::secrets::set_addon_secret,
+            commands::secrets::get_addon_secret,
+            commands::secrets::delete_addon_secret,
+            commands::addon_network::addon_network_request,
             // Provider settings commands
             commands::providers_settings::get_market_data_providers_settings,
             commands::providers_settings::update_market_data_provider_settings,

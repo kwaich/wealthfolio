@@ -8,8 +8,10 @@ import { Alert, AlertDescription } from "@wealthfolio/ui/components/ui/alert";
 import { Button } from "@wealthfolio/ui/components/ui/button";
 import { Icons } from "@wealthfolio/ui/components/ui/icons";
 import { useEffect, useMemo, useRef } from "react";
+import { useTranslation } from "react-i18next";
 import { FormProvider, useForm, type Resolver } from "react-hook-form";
 import { z } from "zod";
+import type { TFunction } from "i18next";
 import {
   AccountSelect,
   AdvancedOptionsSection,
@@ -39,115 +41,160 @@ const assetMetadataSchema = z
   })
   .optional();
 
-// Zod schema for SellForm validation
-export const sellFormSchema = z
-  .object({
-    assetType: z.enum(["stock", "option", "bond"]).default("stock"),
-    assetKind: z.string().optional(),
-    accountId: z.string().min(1, { message: "Please select an account." }),
-    assetId: z.string().default(""),
-    existingAssetId: z.string().nullable().optional(),
-    activityDate: z.date({ required_error: "Please select a date." }),
-    quantity: z.coerce
-      .number({
-        required_error: "Please enter a quantity.",
-        invalid_type_error: "Quantity must be a number.",
-      })
-      .positive({ message: "Quantity must be greater than 0." }),
-    unitPrice: z.coerce
-      .number({
-        required_error: "Please enter a price.",
-        invalid_type_error: "Price must be a number.",
-      })
-      .positive({ message: "Price must be greater than 0." }),
-    fee: z.coerce
-      .number({
-        invalid_type_error: "Fee must be a number.",
-      })
-      .min(0, { message: "Fee must be non-negative." })
-      .default(0),
-    tax: z.coerce
-      .number({
-        invalid_type_error: "Tax must be a number.",
-      })
-      .min(0, { message: "Tax must be non-negative." })
-      .default(0),
-    comment: z.string().optional().nullable(),
-    subtype: z.string().optional().nullable(),
-    // Advanced options
-    currency: z.string().min(1, { message: "Currency is required." }),
-    fxRate: z.coerce
-      .number({
-        invalid_type_error: "FX Rate must be a number.",
-      })
-      .positive({ message: "FX Rate must be positive." })
-      .optional(),
-    // Internal fields
-    quoteMode: z.enum([QuoteMode.MARKET, QuoteMode.MANUAL]).default(QuoteMode.MARKET),
-    exchangeMic: z.string().nullable().optional(),
-    symbolQuoteCcy: z.string().nullable().optional(),
-    symbolInstrumentType: z.string().nullable().optional(),
-    // Asset metadata for custom assets (name, etc.)
-    assetMetadata: assetMetadataSchema,
-    // Option-specific fields
-    underlyingSymbol: z.string().optional(),
-    strikePrice: z.coerce.number().positive().optional(),
-    expirationDate: z.string().optional(),
-    optionType: z.enum(["CALL", "PUT"]).optional(),
-    contractMultiplier: z.coerce.number().positive().default(100).optional(),
-  })
-  .superRefine((data, ctx) => {
-    // Options build their symbol at submit time; stocks/bonds require it upfront
-    if (data.assetType !== "option" && (!data.assetId || data.assetId.trim() === "")) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "Please enter a symbol.",
-        path: ["assetId"],
-      });
-    }
-    // Option contracts require all 4 structured fields
-    if (data.assetType === "option") {
-      // Require an explicit Open/Close choice — never silently default the intent.
-      if (
-        data.subtype !== ACTIVITY_SUBTYPES.POSITION_OPEN &&
-        data.subtype !== ACTIVITY_SUBTYPES.POSITION_CLOSE
-      ) {
+// Translated message helper (see buy-form for rationale).
+type MsgFn = TFunction | undefined;
+const msg = (t: MsgFn, key: string, en: string) => (t ? t(key) : en);
+
+// Zod schema factory for SellForm validation. `t` optional so the exported
+// static schema keeps English messages (used by tests and type inference).
+export const createSellFormSchema = (t?: TFunction) =>
+  z
+    .object({
+      assetType: z.enum(["stock", "option", "bond"]).default("stock"),
+      assetKind: z.string().optional(),
+      accountId: z.string().min(1, {
+        message: msg(t, "activity:form.err_select_account", "Please select an account."),
+      }),
+      assetId: z.string().default(""),
+      existingAssetId: z.string().nullable().optional(),
+      activityDate: z.date({
+        required_error: msg(t, "activity:form.err_select_date", "Please select a date."),
+      }),
+      quantity: z.coerce
+        .number({
+          required_error: msg(t, "activity:form.err_enter_quantity", "Please enter a quantity."),
+          invalid_type_error: msg(
+            t,
+            "activity:form.err_quantity_number",
+            "Quantity must be a number.",
+          ),
+        })
+        .positive({
+          message: msg(t, "activity:form.err_quantity_gt_zero", "Quantity must be greater than 0."),
+        }),
+      unitPrice: z.coerce
+        .number({
+          required_error: msg(t, "activity:form.err_enter_price", "Please enter a price."),
+          invalid_type_error: msg(t, "activity:form.err_price_number", "Price must be a number."),
+        })
+        .positive({
+          message: msg(t, "activity:form.err_price_gt_zero", "Price must be greater than 0."),
+        }),
+      fee: z.coerce
+        .number({
+          invalid_type_error: msg(t, "activity:form.err_fee_number", "Fee must be a number."),
+        })
+        .min(0, {
+          message: msg(t, "activity:form.err_fee_non_negative", "Fee must be non-negative."),
+        })
+        .default(0),
+      tax: z.coerce
+        .number({
+          invalid_type_error: msg(t, "activity:form.err_tax_number", "Tax must be a number."),
+        })
+        .min(0, {
+          message: msg(t, "activity:form.err_tax_non_negative", "Tax must be non-negative."),
+        })
+        .default(0),
+      comment: z.string().optional().nullable(),
+      subtype: z.string().optional().nullable(),
+      // Advanced options
+      currency: z.string().min(1, {
+        message: msg(t, "activity:form.err_currency_required", "Currency is required."),
+      }),
+      fxRate: z.coerce
+        .number({
+          invalid_type_error: msg(
+            t,
+            "activity:form.err_fxrate_number",
+            "FX Rate must be a number.",
+          ),
+        })
+        .positive({
+          message: msg(t, "activity:form.err_fxrate_positive", "FX Rate must be positive."),
+        })
+        .optional(),
+      // Internal fields
+      quoteMode: z.enum([QuoteMode.MARKET, QuoteMode.MANUAL]).default(QuoteMode.MARKET),
+      exchangeMic: z.string().nullable().optional(),
+      symbolQuoteCcy: z.string().nullable().optional(),
+      symbolInstrumentType: z.string().nullable().optional(),
+      // Asset metadata for custom assets (name, etc.)
+      assetMetadata: assetMetadataSchema,
+      // Option-specific fields
+      underlyingSymbol: z.string().optional(),
+      strikePrice: z.coerce.number().positive().optional(),
+      expirationDate: z.string().optional(),
+      optionType: z.enum(["CALL", "PUT"]).optional(),
+      contractMultiplier: z.coerce.number().positive().default(100).optional(),
+    })
+    .superRefine((data, ctx) => {
+      // Options build their symbol at submit time; stocks/bonds require it upfront
+      if (data.assetType !== "option" && (!data.assetId || data.assetId.trim() === "")) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          message: "Select whether this opens or closes a position.",
-          path: ["subtype"],
+          message: msg(t, "activity:form.err_enter_symbol", "Please enter a symbol."),
+          path: ["assetId"],
         });
       }
-      if (!data.underlyingSymbol?.trim()) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: "Underlying symbol is required.",
-          path: ["underlyingSymbol"],
-        });
+      // Option contracts require all 4 structured fields
+      if (data.assetType === "option") {
+        // Require an explicit Open/Close choice — never silently default the intent.
+        if (
+          data.subtype !== ACTIVITY_SUBTYPES.POSITION_OPEN &&
+          data.subtype !== ACTIVITY_SUBTYPES.POSITION_CLOSE
+        ) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: msg(
+              t,
+              "activity:form.err_open_or_close",
+              "Select whether this opens or closes a position.",
+            ),
+            path: ["subtype"],
+          });
+        }
+        if (!data.underlyingSymbol?.trim()) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: msg(
+              t,
+              "activity:form.err_underlying_required",
+              "Underlying symbol is required.",
+            ),
+            path: ["underlyingSymbol"],
+          });
+        }
+        if (!data.strikePrice || data.strikePrice <= 0) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: msg(t, "activity:form.err_strike_required", "Strike price is required."),
+            path: ["strikePrice"],
+          });
+        }
+        if (!data.expirationDate?.trim()) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: msg(
+              t,
+              "activity:form.err_expiration_required",
+              "Expiration date is required.",
+            ),
+            path: ["expirationDate"],
+          });
+        }
+        if (!data.optionType) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: msg(t, "activity:form.err_option_type_required", "Option type is required."),
+            path: ["optionType"],
+          });
+        }
       }
-      if (!data.strikePrice || data.strikePrice <= 0) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: "Strike price is required.",
-          path: ["strikePrice"],
-        });
-      }
-      if (!data.expirationDate?.trim()) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: "Expiration date is required.",
-          path: ["expirationDate"],
-        });
-      }
-      if (!data.optionType) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: "Option type is required.",
-          path: ["optionType"],
-        });
-      }
-    }
-  });
+    });
+
+// Zod schema for SellForm validation (English messages; used by tests).
+export const sellFormSchema = createSellFormSchema();
 
 export type SellFormValues = z.infer<typeof sellFormSchema>;
 
@@ -171,8 +218,11 @@ export function SellForm({
   isEditing = false,
   assetCurrency,
 }: SellFormProps) {
+  const { t } = useTranslation(["activity"]);
   const { data: settings } = useSettings();
   const baseCurrency = settings?.baseCurrency;
+
+  const schema = useMemo(() => createSellFormSchema(t), [t]);
 
   // Compute initial account and currency for defaultValues
   const initialAccountId =
@@ -183,7 +233,7 @@ export function SellForm({
     defaultValues?.currency?.trim() || assetCurrency?.trim() || initialAccount?.currency;
 
   const form = useForm<SellFormValues>({
-    resolver: zodResolver(sellFormSchema) as Resolver<SellFormValues>,
+    resolver: zodResolver(schema) as Resolver<SellFormValues>,
     mode: "onSubmit",
     defaultValues: {
       assetType: "stock",
@@ -251,12 +301,14 @@ export function SellForm({
   }, [assetId, isStock, subtype, setValue]);
   const optionSubmitLabel =
     subtype === ACTIVITY_SUBTYPES.POSITION_OPEN
-      ? "Sell to Open"
+      ? t("activity:form.button_sell_to_open")
       : subtype === ACTIVITY_SUBTYPES.POSITION_CLOSE
-        ? "Sell to Close"
-        : "Add Sell";
+        ? t("activity:form.button_sell_to_close")
+        : t("activity:form.button_add_sell");
   const isStockSellShort = isStock && subtype === ACTIVITY_SUBTYPES.POSITION_OPEN;
-  const stockSubmitLabel = isStockSellShort ? "Sell Short" : "Add Sell";
+  const stockSubmitLabel = isStockSellShort
+    ? t("activity:form.button_sell_short")
+    : t("activity:form.button_add_sell");
 
   // Option total calculation
   const optQuantity = watch("quantity");
@@ -270,9 +322,9 @@ export function SellForm({
     const q = Number(optQuantity) || 0;
     const p = Number(optUnitPrice) || 0;
     const f = Number(optFee) || 0;
-    const t = Number(optTax) || 0;
+    const tx = Number(optTax) || 0;
     const m = Number(optMultiplier) || 100;
-    return q * p * m - f - t;
+    return q * p * m - f - tx;
   }, [isOption, optQuantity, optUnitPrice, optFee, optTax, optMultiplier]);
 
   const handleAssetTypeChange = (value: AssetType) => {
@@ -298,8 +350,14 @@ export function SellForm({
     setValue("assetMetadata", undefined);
   };
 
-  const quantityLabel = isOption ? "Contracts" : assetType === "bond" ? "Bonds" : "Quantity";
-  const priceLabel = isOption ? "Premium/Share" : "Price";
+  const quantityLabel = isOption
+    ? t("activity:form.label_contracts")
+    : assetType === "bond"
+      ? t("activity:form.label_bonds")
+      : t("activity:form.label_quantity");
+  const priceLabel = isOption
+    ? t("activity:form.label_premium_share")
+    : t("activity:form.label_price");
 
   // Get account currency from selected account
   const selectedAccount = useMemo(
@@ -448,7 +506,7 @@ export function SellForm({
     <FormProvider {...form}>
       <form onSubmit={handleSubmit} className="space-y-4">
         <FormSection
-          title="Asset & Account"
+          title={t("activity:form.section_asset_account")}
           action={
             !isEditing && (
               <AssetTypeSelector
@@ -494,11 +552,11 @@ export function SellForm({
           )}
 
           <AccountSelect name="accountId" accounts={accounts} currencyName="currency" />
-          <DatePicker name="activityDate" label="Date" enableTime={true} />
+          <DatePicker name="activityDate" label={t("activity:field_date")} enableTime={true} />
         </FormSection>
 
         <FormSection
-          title="Trade"
+          title={t("activity:form.section_trade")}
           action={
             isOption ? (
               <PositionIntentSelector control={form.control} name="subtype" hideLabel />
@@ -518,25 +576,31 @@ export function SellForm({
               {/* Shares breakdown with click-to-edit multiplier */}
               {isOption && optQuantity && (
                 <div className="text-muted-foreground mt-1.5 flex items-center gap-1 text-xs">
-                  <span>{Number(optQuantity) * (Number(optMultiplier) || 100)} shares</span>
+                  <span>
+                    {t("activity:form.shares_count", {
+                      count: Number(optQuantity) * (Number(optMultiplier) || 100),
+                    })}
+                  </span>
                   <span>·</span>
                   <input
                     type="number"
                     {...form.register("contractMultiplier", { valueAsNumber: true })}
                     className="hover:border-input focus:border-input focus:bg-background focus:ring-ring h-5 w-14 rounded border border-transparent bg-transparent px-1 text-center text-xs tabular-nums focus:outline-none focus:ring-1"
-                    aria-label="Contract Multiplier"
+                    aria-label={t("activity:form.contract_multiplier")}
                   />
                   <span>x</span>
                 </div>
               )}
               {!isOption && availableHoldingQuantity > 0 && (
                 <p className="text-muted-foreground mt-1.5 text-xs">
-                  Available: {availableHoldingQuantity.toLocaleString()}
+                  {t("activity:form.available_amount", {
+                    amount: availableHoldingQuantity.toLocaleString(),
+                  })}
                 </p>
               )}
               {isOption && availableHoldingQuantity > 0 && (
                 <p className="text-muted-foreground mt-1.5 text-xs">
-                  Holding: {availableHoldingQuantity.toLocaleString()} contracts
+                  {t("activity:form.holding_contracts", { count: availableHoldingQuantity })}
                 </p>
               )}
             </div>
@@ -546,8 +610,8 @@ export function SellForm({
               maxDecimalPlaces={4}
               currency={currency}
             />
-            <AmountInput name="fee" label="Fee" currency={currency} />
-            <AmountInput name="tax" label="Tax" currency={currency} />
+            <AmountInput name="fee" label={t("activity:form.label_fee")} currency={currency} />
+            <AmountInput name="tax" label={t("activity:form.label_tax")} currency={currency} />
           </div>
 
           {/* Option Total Credit with formula breakdown */}
@@ -556,7 +620,7 @@ export function SellForm({
               <div className="flex items-center justify-between">
                 <div>
                   <span className="text-muted-foreground text-xs font-medium uppercase">
-                    Total Credit
+                    {t("activity:form.total_credit")}
                   </span>
                   <p className="text-muted-foreground mt-0.5 text-xs tabular-nums">
                     {Number(optQuantity)} ×{" "}
@@ -610,8 +674,14 @@ export function SellForm({
               <Icons.AlertTriangle className="text-warning h-4 w-4" />
               <AlertDescription className="text-warning text-sm">
                 {isOption
-                  ? `You are selling more contracts (${optQuantity?.toLocaleString()}) than your available holdings (${availableHoldingQuantity.toLocaleString()}). This may create or extend a short option position.`
-                  : `You are selling more shares (${optQuantity?.toLocaleString()}) than your available holdings (${availableHoldingQuantity.toLocaleString()}). Split the excess into a separate Sell Short activity.`}
+                  ? t("activity:form.warn_selling_more_contracts", {
+                      selling: optQuantity?.toLocaleString(),
+                      available: availableHoldingQuantity.toLocaleString(),
+                    })
+                  : t("activity:form.warn_selling_more_shares", {
+                      selling: optQuantity?.toLocaleString(),
+                      available: availableHoldingQuantity.toLocaleString(),
+                    })}
               </AlertDescription>
             </Alert>
           )}
@@ -620,9 +690,9 @@ export function SellForm({
             <Alert variant="default" className="border-warning bg-warning/10">
               <Icons.AlertTriangle className="text-warning h-4 w-4" />
               <AlertDescription className="text-warning text-sm">
-                You currently hold {availableHoldingQuantity.toLocaleString()} shares. Sell Short is
-                for opening a short position; split this into a normal Sell first, then Sell Short
-                for any remaining short quantity.
+                {t("activity:form.warn_sell_short_while_long", {
+                  available: availableHoldingQuantity.toLocaleString(),
+                })}
               </AlertDescription>
             </Alert>
           )}
@@ -631,8 +701,7 @@ export function SellForm({
             <Alert variant="default" className="border-warning bg-warning/10">
               <Icons.AlertTriangle className="text-warning h-4 w-4" />
               <AlertDescription className="text-warning text-sm">
-                You already have a short position in this stock. Use Sell Short to increase it;
-                enter a normal Sell only when you have a long position to close.
+                {t("activity:form.warn_sell_while_short")}
               </AlertDescription>
             </Alert>
           )}
@@ -640,7 +709,7 @@ export function SellForm({
 
         {/* Advanced options (currency, FX rate) and notes, collapsed by default */}
         <AdvancedOptionsSection
-          title="Advanced & notes"
+          title={t("activity:form.section_advanced_notes")}
           dashed
           currencyName="currency"
           fxRateName="fxRate"
@@ -650,14 +719,18 @@ export function SellForm({
           baseCurrency={baseCurrency}
           showSubtype={false}
         >
-          <NotesInput name="comment" label="Notes" placeholder="Add an optional note..." />
+          <NotesInput
+            name="comment"
+            label={t("activity:form.label_notes")}
+            placeholder={t("activity:form.placeholder_note")}
+          />
         </AdvancedOptionsSection>
 
         {/* Action Buttons */}
         <div className="flex justify-end gap-2">
           {onCancel && (
             <Button type="button" variant="outline" onClick={onCancel} disabled={isLoading}>
-              Cancel
+              {t("activity:cancel")}
             </Button>
           )}
           <Button type="submit" disabled={isLoading}>
@@ -667,7 +740,11 @@ export function SellForm({
             ) : (
               <Icons.Plus className="mr-2 h-4 w-4" />
             )}
-            {isEditing ? "Update" : isOption ? optionSubmitLabel : stockSubmitLabel}
+            {isEditing
+              ? t("activity:form.button_update")
+              : isOption
+                ? optionSubmitLabel
+                : stockSubmitLabel}
           </Button>
         </div>
       </form>

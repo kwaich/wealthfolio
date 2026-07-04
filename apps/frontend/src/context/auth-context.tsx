@@ -10,6 +10,8 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 
 interface AuthContextValue {
   requiresAuth: boolean;
@@ -24,23 +26,30 @@ interface AuthContextValue {
   clearError: () => void;
 }
 
-/** Human-readable messages for `?oidc_error=` codes set by the server callback. */
-const OIDC_ERROR_MESSAGES: Record<string, string> = {
-  oidc_forbidden: "Your account is not allowed to access this instance.",
-  oidc_provider_error: "The identity provider reported an error. Please try again.",
-  oidc_expired: "Your sign-in session expired. Please try again.",
-  oidc_state_mismatch: "Sign-in could not be verified. Please try again.",
-  oidc_exchange_failed: "Could not complete sign-in with the identity provider.",
-  oidc_invalid_token: "The identity provider returned an invalid token.",
-  oidc_no_id_token: "The identity provider did not return an ID token.",
-  oidc_missing_params: "Sign-in was cancelled or incomplete. Please try again.",
-  oidc_not_configured: "Single sign-on is not configured on this server.",
-  oidc_internal: "An unexpected error occurred during sign-in. Please try again.",
+/** Translation keys for `?oidc_error=` codes set by the server callback. */
+const OIDC_ERROR_KEYS: Record<string, string> = {
+  oidc_forbidden: "auth:context.oidcErrors.forbidden",
+  oidc_provider_error: "auth:context.oidcErrors.providerError",
+  oidc_expired: "auth:context.oidcErrors.expired",
+  oidc_state_mismatch: "auth:context.oidcErrors.stateMismatch",
+  oidc_exchange_failed: "auth:context.oidcErrors.exchangeFailed",
+  oidc_invalid_token: "auth:context.oidcErrors.invalidToken",
+  oidc_no_id_token: "auth:context.oidcErrors.noIdToken",
+  oidc_missing_params: "auth:context.oidcErrors.missingParams",
+  oidc_not_configured: "auth:context.oidcErrors.notConfigured",
+  oidc_internal: "auth:context.oidcErrors.internal",
 };
+
+/** Resolve a server OIDC error code to a localized message. */
+function resolveOidcError(t: TFunction, code: string): string {
+  const key = OIDC_ERROR_KEYS[code];
+  return key ? t(key) : t("auth:context.oidcErrors.generic");
+}
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
+  const { t } = useTranslation();
   const [requiresPassword, setRequiresPassword] = useState(false);
   const [oidcEnabled, setOidcEnabled] = useState(false);
   const [statusLoading, setStatusLoading] = useState(isWeb);
@@ -115,14 +124,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const hadSession = cookieSessionRef.current;
       setCookieSession(false);
       if (hadSession) {
-        setLoginError("Session expired. Please sign in again.");
+        setLoginError(t("auth:context.sessionExpired"));
       }
     };
     setUnauthorizedHandler(handler);
     return () => {
       setUnauthorizedHandler(null);
     };
-  }, []);
+  }, [t]);
 
   // Surface OIDC callback errors passed back as `?oidc_error=<code>`.
   useEffect(() => {
@@ -130,48 +139,51 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const params = new URLSearchParams(window.location.search);
     const code = params.get("oidc_error");
     if (!code) return;
-    setLoginError(OIDC_ERROR_MESSAGES[code] ?? "Single sign-on failed. Please try again.");
+    setLoginError(resolveOidcError(t, code));
     params.delete("oidc_error");
     const query = params.toString();
     const newUrl = window.location.pathname + (query ? `?${query}` : "") + window.location.hash;
     window.history.replaceState({}, "", newUrl);
-  }, []);
+  }, [t]);
 
-  const login = useCallback(async (password: string) => {
-    setLoginLoading(true);
-    setLoginError(null);
-    try {
-      const response = await fetch("/api/v1/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ password }),
-        credentials: "same-origin",
-      });
-      if (!response.ok) {
-        if (response.status === 404) {
-          setRequiresPassword(false);
-        }
-        let message = "Invalid password";
-        try {
-          const body = await response.json();
-          message = body?.message ?? message;
-        } catch (parseError) {
-          console.error("Failed to parse login error", parseError);
-        }
-        throw new Error(message);
-      }
-      // Cookie is set by the server via Set-Cookie header
-      setCookieSession(true);
+  const login = useCallback(
+    async (password: string) => {
+      setLoginLoading(true);
       setLoginError(null);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Login failed";
-      setCookieSession(false);
-      setLoginError(message);
-      throw error;
-    } finally {
-      setLoginLoading(false);
-    }
-  }, []);
+      try {
+        const response = await fetch("/api/v1/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ password }),
+          credentials: "same-origin",
+        });
+        if (!response.ok) {
+          if (response.status === 404) {
+            setRequiresPassword(false);
+          }
+          let message = t("auth:context.invalidPassword");
+          try {
+            const body = await response.json();
+            message = body?.message ?? message;
+          } catch (parseError) {
+            console.error("Failed to parse login error", parseError);
+          }
+          throw new Error(message);
+        }
+        // Cookie is set by the server via Set-Cookie header
+        setCookieSession(true);
+        setLoginError(null);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : t("auth:context.loginFailed");
+        setCookieSession(false);
+        setLoginError(message);
+        throw error;
+      } finally {
+        setLoginLoading(false);
+      }
+    },
+    [t],
+  );
 
   const logout = useCallback(() => {
     if (isWeb) {
@@ -234,12 +246,13 @@ export const useAuth = () => {
 };
 
 export function AuthGate({ children, fallback }: { children: ReactNode; fallback: ReactNode }) {
+  const { t } = useTranslation();
   const { requiresAuth, isAuthenticated, statusLoading } = useAuth();
 
   if (statusLoading) {
     return (
       <div className="bg-background text-muted-foreground flex min-h-screen items-center justify-center">
-        Checking authentication...
+        {t("auth:context.checkingAuthentication")}
       </div>
     );
   }

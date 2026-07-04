@@ -19,6 +19,8 @@ export type {
   AddonFile,
   AddonInstallResult,
   AddonManifest,
+  AddonNetworkRequest,
+  AddonNetworkResponse,
   AddonUpdateCheckResult,
   AddonUpdateInfo,
   AddonValidationResult,
@@ -116,6 +118,9 @@ export * from "../shared/exchange-rates";
 
 // Secrets Commands
 export * from "../shared/secrets";
+
+// Addon Network Commands
+export * from "../shared/addon-network";
 
 // Connect Commands (Broker + Device Sync + Auth)
 export * from "../shared/connect";

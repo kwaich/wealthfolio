@@ -1,4 +1,4 @@
-import React from 'react';
+import { createRoot, type Root } from 'react-dom/client';
 import type { AddonContext } from '@wealthfolio/addon-sdk';
 import { Card, CardContent, Icons } from '@wealthfolio/ui';
 
@@ -18,28 +18,34 @@ function AddonExample({ ctx }: { ctx: AddonContext }) {
 }
 
 export default function enable(ctx: AddonContext) {
+  let root: Root | null = null;
+
   // Add a sidebar item
   const sidebarItem = ctx.sidebar.addItem({
     id: '{{addonId}}',
     label: '{{addonName}}',
-    icon: <Icons.Blocks className="h-5 w-5" />,
+    icon: 'blocks',
     route: '/addon/{{addonId}}',
     order: 100,
   });
 
   // Add a route
-  const Wrapper = () => <AddonExample ctx={ctx} />;
   ctx.router.add({
     path: '/addon/{{addonId}}',
-    component: React.lazy(() => Promise.resolve({ default: Wrapper })),
+    render: ({ root: routeRoot }) => {
+      root ??= createRoot(routeRoot);
+      root.render(<AddonExample ctx={ctx} />);
+    },
   });
 
   // Cleanup on disable
   ctx.onDisable(() => {
     try {
       sidebarItem.remove();
+      root?.unmount();
+      root = null;
     } catch (err) {
-      ctx.api.logger.error('Failed to remove sidebar item:', err);
+      ctx.api.logger.error(`Failed to remove sidebar item: ${String(err)}`);
     }
   });
 }

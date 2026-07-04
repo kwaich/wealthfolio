@@ -859,7 +859,7 @@ impl MarketDataClient {
             sectors,
             industry: profile.industry,
             categories: None,
-            classes: None,
+            classes: profile.asset_allocation,
             attributes: None,
             url: profile.website,
             // Financial metrics
@@ -1108,6 +1108,26 @@ mod tests {
 
         assert_eq!(result.quote_type, "EQUITY");
         assert_eq!(result.canonical_symbol.as_deref(), Some("GOLD"));
+    }
+
+    #[test]
+    fn test_convert_profile_maps_asset_allocation_to_classes() {
+        let market_profile = MarketAssetProfile {
+            name: Some("Balanced ETF".to_string()),
+            quote_type: Some("ETF".to_string()),
+            asset_allocation: Some(
+                r#"[{"name":"stock","weight":0.60},{"name":"bond","weight":0.40}]"#.to_string(),
+            ),
+            ..Default::default()
+        };
+
+        let provider_profile = MarketDataClient::convert_profile(market_profile, "BAL");
+
+        assert_eq!(provider_profile.asset_type.as_deref(), Some("ETF"));
+        assert_eq!(
+            provider_profile.classes.as_deref(),
+            Some(r#"[{"name":"stock","weight":0.60},{"name":"bond","weight":0.40}]"#)
+        );
     }
 
     // =========================================================================

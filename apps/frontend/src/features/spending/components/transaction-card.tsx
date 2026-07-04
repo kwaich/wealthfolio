@@ -1,4 +1,5 @@
 import { memo } from "react";
+import { useTranslation } from "react-i18next";
 
 import {
   Badge,
@@ -70,6 +71,7 @@ function TransactionCardImpl({
   onLinkTransfer,
   onUnlinkTransfer,
 }: TransactionCardProps) {
+  const { t } = useTranslation();
   const a = row.activity;
   const { isOutflow, isIncome, isSaving, isNeutral, sign, safeAmount } = getTransactionDisplay(
     a,
@@ -95,7 +97,9 @@ function TransactionCardImpl({
         <Checkbox
           checked={isSelected}
           onCheckedChange={() => onToggleSelect(a.id)}
-          aria-label={isSelected ? "Deselect transaction" : "Select transaction"}
+          aria-label={
+            isSelected ? t("spending:transactions.deselect") : t("spending:transactions.select")
+          }
           className="mt-0.5 shrink-0"
         />
         <div className="min-w-0 flex-1">
@@ -108,7 +112,7 @@ function TransactionCardImpl({
                 variant="outline"
                 className="shrink-0 border-amber-500/50 text-[10px] text-amber-600"
               >
-                Review
+                {t("spending:transactions.review")}
               </Badge>
             )}
           </div>
@@ -136,11 +140,15 @@ function TransactionCardImpl({
 
       <div className="mt-2.5 flex items-center gap-2 pl-7">
         {isNeutral ? (
-          <span className="text-muted-foreground text-xs">Neutral</span>
+          <span className="text-muted-foreground text-xs">
+            {t("spending:transactions.neutral")}
+          </span>
         ) : row.splitCount > 0 ? (
           <button type="button" className={cn(CHIP, "min-w-0")} onClick={() => onEditSplits(row)}>
             <Icons.SplitHorizontal className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-            <span className="truncate">Split · {row.splitCount} lines</span>
+            <span className="truncate">
+              {t("spending:transactions.splitLines", { count: row.splitCount })}
+            </span>
           </button>
         ) : (
           <QuickCategorizePopover
@@ -152,7 +160,9 @@ function TransactionCardImpl({
               <button
                 type="button"
                 aria-label={
-                  row.category ? `Change category (${row.category.name})` : "Assign category"
+                  row.category
+                    ? t("spending:transactions.changeCategory", { name: row.category.name })
+                    : t("spending:transactions.assignCategory")
                 }
                 className={cn(CHIP, "min-w-0")}
               >
@@ -170,7 +180,7 @@ function TransactionCardImpl({
                 ) : (
                   <span className="text-muted-foreground inline-flex items-center gap-1 italic">
                     <Icons.Plus className="h-3 w-3" aria-hidden="true" />
-                    Categorize
+                    {t("spending:transactions.categorize")}
                   </span>
                 )}
               </button>
@@ -188,7 +198,7 @@ function TransactionCardImpl({
             event ? (
               <button
                 type="button"
-                aria-label={`Change event (${event.name})`}
+                aria-label={t("spending:transactions.changeEvent", { name: event.name })}
                 className={cn(CHIP, "min-w-0")}
               >
                 <span
@@ -201,7 +211,7 @@ function TransactionCardImpl({
             ) : (
               <button
                 type="button"
-                aria-label="Tag event"
+                aria-label={t("spending:transactions.tagEvent")}
                 className="border-border/60 bg-background/50 text-muted-foreground hover:bg-muted/60 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border transition-colors"
               >
                 <Icons.Tag className="h-3.5 w-3.5" aria-hidden="true" />
@@ -216,7 +226,7 @@ function TransactionCardImpl({
               variant="ghost"
               size="icon"
               className="ml-auto h-8 w-8 shrink-0"
-              aria-label="Row actions"
+              aria-label={t("spending:transactions.rowActions")}
             >
               <Icons.MoreVertical className="h-4 w-4" aria-hidden="true" />
             </Button>
@@ -224,42 +234,42 @@ function TransactionCardImpl({
           <DropdownMenuContent align="end">
             <DropdownMenuItem onClick={() => onEdit(row)}>
               <Icons.Pencil className="mr-2 h-4 w-4" aria-hidden="true" />
-              Edit
+              {t("common:edit")}
             </DropdownMenuItem>
             {canMarkReimbursement && (
               <DropdownMenuItem onClick={() => onMarkReimbursement(row)}>
                 <Icons.RefreshCw className="mr-2 h-4 w-4" aria-hidden="true" />
-                Mark as reimbursement
+                {t("spending:transactions.markReimbursement")}
               </DropdownMenuItem>
             )}
             {!isNeutral && (
               <DropdownMenuItem onClick={() => onEditSplits(row)}>
                 <Icons.SplitHorizontal className="mr-2 h-4 w-4" aria-hidden="true" />
-                Split transaction
+                {t("spending:transactions.splitTransaction")}
               </DropdownMenuItem>
             )}
             <DropdownMenuItem onClick={() => onDuplicate(row)}>
               <Icons.Copy className="mr-2 h-4 w-4" aria-hidden="true" />
-              Duplicate
+              {t("spending:transactions.duplicate")}
             </DropdownMenuItem>
             {isTransfer && (onLinkTransfer || onUnlinkTransfer) ? (
               transferLinkStatus === "linked" ? (
                 onUnlinkTransfer ? (
                   <DropdownMenuItem onClick={() => onUnlinkTransfer(row)}>
                     <Icons.Unlink className="mr-2 h-4 w-4" aria-hidden="true" />
-                    Unlink transfer
+                    {t("spending:transactions.unlinkTransfer")}
                   </DropdownMenuItem>
                 ) : null
               ) : onLinkTransfer ? (
                 <DropdownMenuItem onClick={() => onLinkTransfer(row)}>
                   <Icons.Link className="mr-2 h-4 w-4" aria-hidden="true" />
-                  Link transfer...
+                  {t("spending:transactions.linkTransfer")}
                 </DropdownMenuItem>
               ) : null
             ) : null}
             <DropdownMenuItem className="text-destructive" onClick={() => onDelete(row)}>
               <Icons.Trash className="mr-2 h-4 w-4" aria-hidden="true" />
-              Delete
+              {t("common:delete")}
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

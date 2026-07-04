@@ -40,6 +40,8 @@ import type {
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import { BUILT_IN_PRESETS, ModelPresetPicker, type ModelPreset } from "./model-preset-picker";
 import { TargetWeightEditor, type WeightDraft } from "./target-weight-editor";
 import { DriftBandSlider } from "./drift-band-slider";
@@ -70,17 +72,22 @@ function targetScopeLabel(
   target: AllocationTarget,
   accounts: { id: string; name: string }[],
   portfolios: { id: string; name: string }[],
+  t: TFunction,
 ): string {
-  if (target.scopeType === "all") return "All Accounts";
+  if (target.scopeType === "all") return t("allocation:scope.allAccounts");
   if (target.scopeType === "account" && target.scopeId) {
-    return accounts.find((account) => account.id === target.scopeId)?.name ?? "Account target";
+    return (
+      accounts.find((account) => account.id === target.scopeId)?.name ??
+      t("allocation:scope.accountTarget")
+    );
   }
   if (target.scopeType === "portfolio" && target.scopeId) {
     return (
-      portfolios.find((portfolio) => portfolio.id === target.scopeId)?.name ?? "Portfolio target"
+      portfolios.find((portfolio) => portfolio.id === target.scopeId)?.name ??
+      t("allocation:scope.portfolioTarget")
     );
   }
-  return "Target scope";
+  return t("allocation:scope.targetScope");
 }
 
 function TargetScopeIcon({ scopeType }: { scopeType: TargetScopeType }) {
@@ -91,12 +98,16 @@ function TargetScopeIcon({ scopeType }: { scopeType: TargetScopeType }) {
   return <Icons.Wallet className="h-4 w-4 shrink-0 opacity-70" />;
 }
 
-function currentPreset(taxonomyId: string, categories: CategoryAllocation[]): ModelPreset {
+function currentPreset(
+  taxonomyId: string,
+  categories: CategoryAllocation[],
+  t: TFunction,
+): ModelPreset {
   return {
     id: "current",
     taxonomyId,
-    name: "Current allocation",
-    description: "Start from what you hold today",
+    name: t("allocation:presets.currentAllocation"),
+    description: t("allocation:presets.currentAllocationDescription"),
     risk: "From holdings",
     weights: Object.fromEntries(categories.map((c) => [c.categoryId, c.percentage])),
   };
@@ -129,15 +140,15 @@ function topLevelCategories(categories: CategoryAllocation[]): CategoryAllocatio
   );
 }
 
-function categoryLabelForTaxonomy(taxonomyName: string | undefined): string {
-  if (!taxonomyName) return "Category";
+function categoryLabelForTaxonomy(taxonomyName: string | undefined, t: TFunction): string {
+  if (!taxonomyName) return t("allocation:editor.category");
   const normalized = taxonomyName.toLowerCase();
-  if (normalized.includes("regions")) return "Region";
-  if (normalized.includes("industries")) return "Industry";
-  if (normalized.includes("risk")) return "Risk category";
-  if (normalized.includes("custom")) return "Custom group";
-  if (normalized.includes("asset classes")) return "Asset class";
-  return "Category";
+  if (normalized.includes("regions")) return t("allocation:editor.region");
+  if (normalized.includes("industries")) return t("allocation:editor.industry");
+  if (normalized.includes("risk")) return t("allocation:editor.riskCategory");
+  if (normalized.includes("custom")) return t("allocation:editor.customGroup");
+  if (normalized.includes("asset classes")) return t("allocation:editor.assetClass");
+  return t("allocation:editor.category");
 }
 
 function normalizeWeights(
@@ -260,6 +271,7 @@ function SellProtectionSection({
   }[];
   accounts: { id: string; name: string }[];
 }) {
+  const { t } = useTranslation();
   const [assetPopoverOpen, setAssetPopoverOpen] = useState(false);
   const [accountPopoverOpen, setAccountPopoverOpen] = useState(false);
   const [assetSearch, setAssetSearch] = useState("");
@@ -306,12 +318,16 @@ function SellProtectionSection({
   return (
     <section className="bg-card/80 rounded-lg border p-5 shadow-sm">
       <div className="mb-1">
-        <h3 className="text-foreground text-[13px] font-semibold">Sell protection</h3>
+        <h3 className="text-foreground text-[13px] font-semibold">
+          {t("allocation:sellProtection.title")}
+        </h3>
       </div>
 
       <div className="border-border border-b py-4">
         <div className="mb-1 flex items-center gap-2">
-          <span className="text-foreground text-[12.5px] font-medium">Protected assets</span>
+          <span className="text-foreground text-[12.5px] font-medium">
+            {t("allocation:sellProtection.protectedAssets")}
+          </span>
           {protectedAssets.length > 0 && (
             <span className="bg-muted text-muted-foreground inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full px-1.5 font-mono text-[10.5px] font-semibold">
               {protectedAssets.length}
@@ -319,7 +335,7 @@ function SellProtectionSection({
           )}
         </div>
         <p className="text-muted-foreground mb-3 text-[11px] leading-relaxed">
-          These holdings are never sold, even when overweight.
+          {t("allocation:sellProtection.protectedAssetsNote")}
         </p>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -350,7 +366,7 @@ function SellProtectionSection({
                 className="border-border text-muted-foreground hover:text-foreground hover:border-foreground/40 inline-flex items-center gap-1.5 rounded-full border border-dashed px-3 py-1 text-[11.5px] font-medium"
               >
                 <Icons.Plus className="h-3.5 w-3.5" />
-                Add asset
+                {t("allocation:sellProtection.addAsset")}
               </button>
             </PopoverTrigger>
             <PopoverContent className="w-72 p-0" align="start">
@@ -359,7 +375,7 @@ function SellProtectionSection({
                 <input
                   value={assetSearch}
                   onChange={(e) => setAssetSearch(e.target.value)}
-                  placeholder="Search holdings…"
+                  placeholder={t("allocation:sellProtection.searchHoldings")}
                   className="text-foreground placeholder:text-muted-foreground/60 w-full bg-transparent text-[12.5px] outline-none"
                   autoFocus
                 />
@@ -367,7 +383,9 @@ function SellProtectionSection({
               <div className="max-h-[228px] overflow-auto p-1">
                 {availableAssets.length === 0 ? (
                   <p className="text-muted-foreground px-3 py-4 text-center text-[11px]">
-                    {assetSearch ? "No matching holdings" : "All holdings are protected"}
+                    {assetSearch
+                      ? t("allocation:sellProtection.noMatchingHoldings")
+                      : t("allocation:sellProtection.allHoldingsProtected")}
                   </p>
                 ) : (
                   availableAssets.map((a) => (
@@ -403,7 +421,9 @@ function SellProtectionSection({
 
       <div className="pt-4">
         <div className="mb-1 flex items-center gap-2">
-          <span className="text-foreground text-[12.5px] font-medium">Protected accounts</span>
+          <span className="text-foreground text-[12.5px] font-medium">
+            {t("allocation:sellProtection.protectedAccounts")}
+          </span>
           {protectedAccounts.length > 0 && (
             <span className="bg-muted text-muted-foreground inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full px-1.5 font-mono text-[10.5px] font-semibold">
               {protectedAccounts.length}
@@ -411,7 +431,7 @@ function SellProtectionSection({
           )}
         </div>
         <p className="text-muted-foreground mb-3 text-[11px] leading-relaxed">
-          No sells are generated from these accounts.
+          {t("allocation:sellProtection.protectedAccountsNote")}
         </p>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -439,13 +459,13 @@ function SellProtectionSection({
                 className="border-border text-muted-foreground hover:text-foreground hover:border-foreground/40 inline-flex items-center gap-1.5 rounded-full border border-dashed px-3 py-1 text-[11.5px] font-medium"
               >
                 <Icons.Plus className="h-3.5 w-3.5" />
-                Add account
+                {t("allocation:sellProtection.addAccount")}
               </button>
             </PopoverTrigger>
             <PopoverContent className="w-64 p-1" align="start">
               {availableAccounts.length === 0 ? (
                 <p className="text-muted-foreground px-3 py-4 text-center text-[11px]">
-                  All accounts are protected
+                  {t("allocation:sellProtection.allAccountsProtected")}
                 </p>
               ) : (
                 availableAccounts.map((a) => (
@@ -492,6 +512,7 @@ function TargetEditor({
   onDelete?: () => void;
   onUnsavedChange?: (dirty: boolean) => void;
 }) {
+  const { t } = useTranslation();
   const { data: taxonomies = [] } = useTaxonomies({ scope: "asset" });
   const { accounts } = useAccounts({ filterActive: false, includeArchived: true });
   const { data: portfolios = [] } = usePortfolios();
@@ -614,7 +635,7 @@ function TargetEditor({
     startId === "scratch" || startId === "saved"
       ? null
       : startId === "current"
-        ? currentPreset(taxonomyId, categories)
+        ? currentPreset(taxonomyId, categories, t)
         : (presets.find((preset) => preset.id === startId) ?? null);
   const scope = target
     ? { scopeType: target.scopeType, scopeId: target.scopeId ?? null }
@@ -623,8 +644,13 @@ function TargetEditor({
   const selectedTaxonomy = taxonomies.find((taxonomy) => taxonomy.id === taxonomyId);
   const suggestedTargetName =
     startId === "scratch" || startId === "current"
-      ? `${selectedTaxonomy?.name ?? "Custom"} target`
-      : `${selectedPreset?.name ?? selectedTaxonomy?.name ?? "Custom"} target`;
+      ? t("allocation:editor.suggestedTargetName", {
+          name: selectedTaxonomy?.name ?? t("allocation:editor.customFallback"),
+        })
+      : t("allocation:editor.suggestedTargetName", {
+          name:
+            selectedPreset?.name ?? selectedTaxonomy?.name ?? t("allocation:editor.customFallback"),
+        });
   const savedWeightDrafts = React.useMemo(
     () => (existingWeightsData ? savedWeightsToDraft(existingWeightsData) : null),
     [existingWeightsData],
@@ -734,10 +760,10 @@ function TargetEditor({
   const canSave = !cannotTargetScope && targetName.trim().length > 0 && totalBps === 10000;
   const selectedStartName =
     startId === "saved"
-      ? "Saved target"
+      ? t("allocation:editor.savedTarget")
       : startId === "scratch"
-        ? "Build from scratch"
-        : (selectedPreset?.name ?? "Current allocation");
+        ? t("allocation:presets.buildFromScratch")
+        : (selectedPreset?.name ?? t("allocation:presets.currentAllocation"));
   const showEditorSkeleton =
     taxonomyLoading || (!!target && existingWeightsLoading && weights.length === 0);
 
@@ -789,10 +815,12 @@ function TargetEditor({
 
       setHasUnsavedChanges(false);
       onUnsavedChange?.(false);
-      toast.success(target ? "Target saved" : "Target created");
+      toast.success(
+        target ? t("allocation:toast.targetSaved") : t("allocation:toast.targetCreated"),
+      );
       onSaved(saved.target);
     } catch (error) {
-      toast.error(target ? "Failed to save target" : "Failed to create target");
+      toast.error(target ? t("allocation:toast.saveFailed") : t("allocation:toast.createFailed"));
       console.error(error);
     }
   }
@@ -846,7 +874,7 @@ function TargetEditor({
         <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
           <Button variant="ghost" size="sm" onClick={handleCancel}>
             <Icons.X className="mr-1.5 h-4 w-4" />
-            Cancel
+            {t("common:cancel")}
           </Button>
           {target ? (
             <>
@@ -855,15 +883,15 @@ function TargetEditor({
                 disabled={!canSave || isSaving || !hasUnsavedChanges}
                 onClick={() => persistTarget()}
               >
-                {isSaving ? "Saving…" : "Save target"}
+                {isSaving ? t("allocation:editor.saving") : t("allocation:editor.saveTarget")}
               </Button>
               {onDelete && (
                 <Button
                   variant="ghost"
                   size="icon-sm"
                   className="text-destructive hover:text-destructive"
-                  aria-label="Delete target"
-                  title="Delete target"
+                  aria-label={t("allocation:editor.deleteTarget")}
+                  title={t("allocation:editor.deleteTarget")}
                   onClick={() => setDeleteOpen(true)}
                 >
                   <Icons.Trash className="h-4 w-4" />
@@ -872,7 +900,7 @@ function TargetEditor({
             </>
           ) : (
             <Button size="sm" disabled={!canSave || isSaving} onClick={() => persistTarget()}>
-              {isSaving ? "Creating…" : "Create target"}
+              {isSaving ? t("allocation:editor.creating") : t("allocation:editor.createTarget")}
             </Button>
           )}
         </div>
@@ -882,11 +910,11 @@ function TargetEditor({
         <div className="space-y-4">
           <section className="bg-card/80 rounded-lg border p-5 shadow-sm">
             <StepHeader number={1} className="mb-3">
-              Name & scope
+              {t("allocation:editor.step1")}
             </StepHeader>
             <label className="block">
               <span className="text-muted-foreground mb-1.5 block text-[11px] font-medium uppercase tracking-wider">
-                Target name
+                {t("allocation:editor.targetName")}
               </span>
               <input
                 value={targetName}
@@ -895,19 +923,19 @@ function TargetEditor({
                   setTargetName(event.target.value);
                   markDirty();
                 }}
-                placeholder="Target name"
+                placeholder={t("allocation:editor.targetName")}
                 className="bg-background/70 text-foreground placeholder:text-muted-foreground focus:border-foreground w-full rounded-lg border px-3 py-2.5 text-[14px] font-semibold outline-none transition-colors placeholder:font-normal"
               />
             </label>
             <div className="mt-4">
               <div className="text-muted-foreground mb-1.5 text-[11px] font-medium uppercase tracking-wider">
-                Account scope
+                {t("allocation:editor.accountScope")}
               </div>
               {target ? (
                 <div className="bg-muted/20 text-foreground flex items-center gap-2 rounded-lg border px-3 py-2.5 text-[14px] font-semibold">
                   <TargetScopeIcon scopeType={target.scopeType} />
                   <span className="min-w-0 truncate">
-                    {targetScopeLabel(target, accounts, portfolios)}
+                    {targetScopeLabel(target, accounts, portfolios, t)}
                   </span>
                 </div>
               ) : (
@@ -924,20 +952,19 @@ function TargetEditor({
             </div>
             {!target ? (
               <p className="text-muted-foreground mt-3 text-[12px] leading-relaxed">
-                Targets are saved for the selected all-account, portfolio, or account scope.
+                {t("allocation:editor.scopeSavedNote")}
               </p>
             ) : null}
             {cannotTargetScope && (
               <p className="text-destructive mt-3 text-[12px] leading-relaxed">
-                Custom multi-account selections cannot have targets yet. Select all accounts, one
-                portfolio, or one account.
+                {t("allocation:editor.cannotTargetScope")}
               </p>
             )}
           </section>
 
           <section className="bg-card/80 rounded-lg border p-5 shadow-sm">
             <StepHeader number={2} className="mb-3">
-              Allocation type
+              {t("allocation:editor.step2")}
             </StepHeader>
             <div className="space-y-2">
               {guidedTaxonomies.map((taxonomy) => {
@@ -960,7 +987,7 @@ function TargetEditor({
                         {taxonomy.name}
                       </span>
                       <span className="text-muted-foreground text-[11px]">
-                        {count} current categories
+                        {t("allocation:editor.currentCategories", { count })}
                       </span>
                     </span>
                     {selected && (
@@ -976,7 +1003,7 @@ function TargetEditor({
 
           <section className="bg-card/80 rounded-lg border p-5 shadow-sm">
             <StepHeader number={3} className="mb-3">
-              Drift tolerance
+              {t("allocation:editor.step3")}
             </StepHeader>
             <DriftBandSlider
               driftBandPct={driftBandPct}
@@ -999,11 +1026,13 @@ function TargetEditor({
 
           <section className="bg-card/80 rounded-lg border p-5 shadow-sm">
             <div className="text-muted-foreground mb-4 text-[11px] font-medium uppercase tracking-wider">
-              Rebalance settings
+              {t("allocation:editor.rebalanceSettings")}
             </div>
             <div className="divide-border/50 divide-y [&>*:first-child]:pt-0 [&>*:last-child]:pb-0 [&>*]:py-4">
               <div>
-                <div className="text-foreground mb-2 text-[12.5px] font-medium">Mode</div>
+                <div className="text-foreground mb-2 text-[12.5px] font-medium">
+                  {t("allocation:editor.mode")}
+                </div>
                 <AnimatedToggleGroup<"buy_only" | "allow_sells">
                   value={allowSells ? "allow_sells" : "buy_only"}
                   onValueChange={(v) => {
@@ -1011,21 +1040,23 @@ function TargetEditor({
                     markDirty();
                   }}
                   items={[
-                    { value: "buy_only", label: "Buy only" },
-                    { value: "allow_sells", label: "Allow sells" },
+                    { value: "buy_only", label: t("allocation:editor.buyOnly") },
+                    { value: "allow_sells", label: t("allocation:editor.allowSells") },
                   ]}
                   rounded="lg"
                   className="bg-muted/30 [&_button:has(>div)]:text-primary-foreground [&_button:not(:has(>div))]:text-muted-foreground [&_button>div]:bg-primary w-full border [&_button]:flex-1 [&_button]:py-2 [&_button]:text-[12px]"
                 />
                 <p className="text-muted-foreground mt-2 text-[11px] leading-relaxed">
                   {allowSells
-                    ? "Sell overweight positions to fund underweight ones."
-                    : "Deploy new cash only — no positions are sold."}
+                    ? t("allocation:editor.modeSellNote")
+                    : t("allocation:editor.modeBuyNote")}
                 </p>
               </div>
 
               <div>
-                <div className="text-foreground mb-2 text-[12.5px] font-medium">Goal</div>
+                <div className="text-foreground mb-2 text-[12.5px] font-medium">
+                  {t("allocation:editor.goal")}
+                </div>
                 <AnimatedToggleGroup<RebalanceGoal>
                   value={rebalanceGoal}
                   onValueChange={(v) => {
@@ -1033,21 +1064,23 @@ function TargetEditor({
                     markDirty();
                   }}
                   items={[
-                    { value: "nearest_band", label: "Nearest band" },
-                    { value: "exact_target", label: "Exact target" },
+                    { value: "nearest_band", label: t("allocation:editor.nearestBand") },
+                    { value: "exact_target", label: t("allocation:editor.exactTarget") },
                   ]}
                   rounded="lg"
                   className="bg-muted/30 [&_button:has(>div)]:text-primary-foreground [&_button:not(:has(>div))]:text-muted-foreground [&_button>div]:bg-primary w-full border [&_button]:flex-1 [&_button]:py-2 [&_button]:text-[12px]"
                 />
                 <p className="text-muted-foreground mt-2 text-[11px] leading-relaxed">
                   {rebalanceGoal === "exact_target"
-                    ? "Deploy cash until each sleeve reaches exactly its target weight."
-                    : "Stop once each sleeve is within the drift tolerance band."}
+                    ? t("allocation:editor.goalExactNote")
+                    : t("allocation:editor.goalNearestNote")}
                 </p>
               </div>
 
               <div>
-                <div className="text-foreground mb-2 text-[12.5px] font-medium">Share sizing</div>
+                <div className="text-foreground mb-2 text-[12.5px] font-medium">
+                  {t("allocation:editor.shareSizing")}
+                </div>
                 <AnimatedToggleGroup<"fractional" | "whole">
                   value={wholeSharesOnly ? "whole" : "fractional"}
                   onValueChange={(v) => {
@@ -1055,22 +1088,22 @@ function TargetEditor({
                     markDirty();
                   }}
                   items={[
-                    { value: "fractional", label: "Fractional" },
-                    { value: "whole", label: "Whole shares" },
+                    { value: "fractional", label: t("allocation:editor.fractional") },
+                    { value: "whole", label: t("allocation:editor.wholeShares") },
                   ]}
                   rounded="lg"
                   className="bg-muted/30 [&_button:has(>div)]:text-primary-foreground [&_button:not(:has(>div))]:text-muted-foreground [&_button>div]:bg-primary w-full border [&_button]:flex-1 [&_button]:py-2 [&_button]:text-[12px]"
                 />
                 <p className="text-muted-foreground mt-2 text-[11px] leading-relaxed">
                   {wholeSharesOnly
-                    ? "Suggest integer share quantities only."
-                    : "Allow fractional quantities for precise allocation."}
+                    ? t("allocation:editor.shareWholeNote")
+                    : t("allocation:editor.shareFractionalNote")}
                 </p>
               </div>
 
               <label className="block">
                 <div className="text-foreground mb-2 text-[12.5px] font-medium">
-                  Minimum trade amount
+                  {t("allocation:editor.minTradeAmount")}
                 </div>
                 <div className="border-input bg-background focus-within:ring-ring flex h-9 items-center rounded-md border px-3 focus-within:ring-2">
                   <input
@@ -1088,12 +1121,14 @@ function TargetEditor({
                   />
                 </div>
                 <p className="text-muted-foreground mt-2 text-[11px] leading-relaxed">
-                  Trades below this amount are excluded from the plan.
+                  {t("allocation:editor.minTradeNote")}
                 </p>
               </label>
 
               <label className="mt-4 block">
-                <div className="text-foreground mb-2 text-[12.5px] font-medium">Max turnover %</div>
+                <div className="text-foreground mb-2 text-[12.5px] font-medium">
+                  {t("allocation:editor.maxTurnover")}
+                </div>
                 <div className="border-input bg-background focus-within:ring-ring flex h-9 items-center rounded-md border px-3 focus-within:ring-2">
                   <input
                     type="number"
@@ -1105,14 +1140,13 @@ function TargetEditor({
                       setMaxTurnoverPctDisplay(e.target.value);
                       markDirty();
                     }}
-                    placeholder="No limit"
+                    placeholder={t("allocation:editor.noLimit")}
                     className="text-foreground placeholder:text-muted-foreground/60 w-full bg-transparent text-[13px] outline-none"
                   />
                   <span className="text-muted-foreground ml-1 text-[13px]">%</span>
                 </div>
                 <p className="text-muted-foreground mt-2 text-[11px] leading-relaxed">
-                  Cap the total portfolio value that can be sold in one plan. Leave empty for no
-                  limit.
+                  {t("allocation:editor.maxTurnoverNote")}
                 </p>
               </label>
             </div>
@@ -1122,7 +1156,7 @@ function TargetEditor({
         <div className="space-y-4">
           <section className="bg-card/80 rounded-lg border p-5 shadow-sm">
             <div className="mb-3">
-              <StepHeader number={4}>Starting point</StepHeader>
+              <StepHeader number={4}>{t("allocation:editor.step4")}</StepHeader>
             </div>
 
             <ModelPresetPicker
@@ -1142,19 +1176,19 @@ function TargetEditor({
           <section className="bg-card/80 rounded-lg border p-5 shadow-sm">
             <div className="mb-7">
               <h3 className="text-foreground text-[15px] font-semibold">
-                Target weights · {selectedStartName}
+                {t("allocation:editor.targetWeightsTitle", { start: selectedStartName })}
               </h3>
               <p className="text-muted-foreground mt-1 text-[12px]">
-                Set the intended mix. The total must equal 100%.
+                {t("allocation:editor.targetWeightsHint")}
               </p>
               {cannotTargetScope && (
                 <p className="text-destructive mt-2 text-[11px] leading-relaxed">
-                  Select all accounts, one portfolio, or one account before saving.
+                  {t("allocation:editor.selectScopeBeforeSaving")}
                 </p>
               )}
               {targetName.trim().length === 0 && (
                 <p className="text-destructive mt-2 text-[11px] leading-relaxed">
-                  Add a target name before saving.
+                  {t("allocation:editor.addNameBeforeSaving")}
                 </p>
               )}
             </div>
@@ -1166,7 +1200,7 @@ function TargetEditor({
                 categories={targetCategories}
                 weights={weights}
                 currentAllocation={currentAllocation}
-                categoryLabel={categoryLabelForTaxonomy(selectedTaxonomy?.name)}
+                categoryLabel={categoryLabelForTaxonomy(selectedTaxonomy?.name, t)}
                 bandType={bandType}
                 driftBandBps={Math.round(driftBandPct * 100)}
                 relativeFactorBps={Math.round(relativeFactorPct * 100)}
@@ -1177,7 +1211,7 @@ function TargetEditor({
               />
             ) : (
               <p className="text-muted-foreground rounded-lg border px-4 py-6 text-[12px]">
-                No categories found for this allocation type.
+                {t("allocation:editor.noCategoriesFound")}
               </p>
             )}
           </section>
@@ -1196,14 +1230,13 @@ function TargetEditor({
       <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete target?</AlertDialogTitle>
+            <AlertDialogTitle>{t("allocation:editor.deleteDialogTitle")}</AlertDialogTitle>
             <AlertDialogDescription>
-              This will permanently delete &ldquo;{targetName}&rdquo; and all its target weights.
-              This action cannot be undone.
+              {t("allocation:editor.deleteDialogDescription", { name: targetName })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogCancel>{t("common:cancel")}</AlertDialogCancel>
             <AlertDialogAction
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
               onClick={() => {
@@ -1213,7 +1246,7 @@ function TargetEditor({
                 onDelete?.();
               }}
             >
-              Delete
+              {t("common:delete")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

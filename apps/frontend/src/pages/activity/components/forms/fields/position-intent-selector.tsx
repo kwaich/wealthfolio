@@ -1,4 +1,5 @@
 import { useController, type Control, type FieldPath, type FieldValues } from "react-hook-form";
+import { useTranslation } from "react-i18next";
 import { ACTIVITY_SUBTYPES } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 
@@ -6,9 +7,9 @@ type PositionIntent =
   | typeof ACTIVITY_SUBTYPES.POSITION_OPEN
   | typeof ACTIVITY_SUBTYPES.POSITION_CLOSE;
 
-const positionIntents: { value: PositionIntent; label: string }[] = [
-  { value: ACTIVITY_SUBTYPES.POSITION_OPEN, label: "Open" },
-  { value: ACTIVITY_SUBTYPES.POSITION_CLOSE, label: "Close" },
+const positionIntents: { value: PositionIntent; labelKey: string }[] = [
+  { value: ACTIVITY_SUBTYPES.POSITION_OPEN, labelKey: "activity:form.position_open" },
+  { value: ACTIVITY_SUBTYPES.POSITION_CLOSE, labelKey: "activity:form.position_close" },
 ];
 
 // Hand-rolled (not AnimatedToggleGroup) because options require an explicit
@@ -28,6 +29,7 @@ export function PositionIntentSelector<TFieldValues extends FieldValues = FieldV
   className,
   hideLabel = false,
 }: PositionIntentSelectorProps<TFieldValues>) {
+  const { t } = useTranslation(["activity"]);
   const { field, fieldState } = useController({ name, control });
   const selectedValue =
     field.value === ACTIVITY_SUBTYPES.POSITION_OPEN ||
@@ -43,12 +45,14 @@ export function PositionIntentSelector<TFieldValues extends FieldValues = FieldV
       )}
     >
       {!hideLabel && (
-        <span className="text-muted-foreground text-xs font-medium sm:text-sm">Position</span>
+        <span className="text-muted-foreground text-xs font-medium sm:text-sm">
+          {t("activity:form.position")}
+        </span>
       )}
       <div className="flex flex-col gap-1">
         <div
           role="group"
-          aria-label="Position"
+          aria-label={t("activity:form.position")}
           className={cn(
             "bg-muted grid h-10 w-full grid-cols-2 gap-1 rounded-lg p-1",
             hideLabel ? "h-9 sm:w-44" : "sm:w-56",
@@ -71,7 +75,7 @@ export function PositionIntentSelector<TFieldValues extends FieldValues = FieldV
                     : "text-muted-foreground hover:text-foreground",
                 )}
               >
-                {intent.label}
+                {t(intent.labelKey)}
               </button>
             );
           })}

@@ -3,6 +3,8 @@
 // sets, and `activities:write` without `activities:draft`; this module keeps
 // the UI in sync with that contract.
 
+import type { TFunction } from "i18next";
+
 export type ScopeKey =
   | "accounts:read"
   | "holdings:read"
@@ -19,73 +21,23 @@ export type ScopeGroup = "read" | "write";
 
 export interface ScopeMeta {
   key: ScopeKey;
-  label: string;
-  description: string;
+  /** i18n key suffix under `settings:agentAccess.scope.<i18n>`. */
+  i18n: string;
   group: ScopeGroup;
 }
 
 /** Ordered list of all 10 scopes, grouped reads first then write/suggest. */
 export const SCOPES: ScopeMeta[] = [
-  {
-    key: "accounts:read",
-    label: "Accounts (read)",
-    description: "List accounts and their metadata.",
-    group: "read",
-  },
-  {
-    key: "holdings:read",
-    label: "Holdings & value (read)",
-    description: "Read holdings, positions, and portfolio value.",
-    group: "read",
-  },
-  {
-    key: "performance:read",
-    label: "Performance (read)",
-    description: "Read performance history and summaries.",
-    group: "read",
-  },
-  {
-    key: "activities:read",
-    label: "Activities (read)",
-    description: "Read transactions and other account activities.",
-    group: "read",
-  },
-  {
-    key: "financial-planning:read",
-    label: "Financial planning (read)",
-    description: "Read goals, contribution limits, and planning data.",
-    group: "read",
-  },
-  {
-    key: "health:read",
-    label: "Health (read)",
-    description: "Read portfolio health and diagnostic checks.",
-    group: "read",
-  },
-  {
-    key: "classification:read",
-    label: "Classification (read)",
-    description: "Read instrument classifications and taxonomies.",
-    group: "read",
-  },
-  {
-    key: "activities:draft",
-    label: "Activities — draft",
-    description: "Prepare draft activities for review (not committed).",
-    group: "write",
-  },
-  {
-    key: "activities:write",
-    label: "Activities — commit/write",
-    description: "Commit activities. Requires the draft scope.",
-    group: "write",
-  },
-  {
-    key: "classification:suggest",
-    label: "Classification — suggest",
-    description: "Suggest instrument classifications for review.",
-    group: "write",
-  },
+  { key: "accounts:read", i18n: "accounts_read", group: "read" },
+  { key: "holdings:read", i18n: "holdings_read", group: "read" },
+  { key: "performance:read", i18n: "performance_read", group: "read" },
+  { key: "activities:read", i18n: "activities_read", group: "read" },
+  { key: "financial-planning:read", i18n: "financial_planning_read", group: "read" },
+  { key: "health:read", i18n: "health_read", group: "read" },
+  { key: "classification:read", i18n: "classification_read", group: "read" },
+  { key: "activities:draft", i18n: "activities_draft", group: "write" },
+  { key: "activities:write", i18n: "activities_write", group: "write" },
+  { key: "classification:suggest", i18n: "classification_suggest", group: "write" },
 ];
 
 /** The 7 read scopes, in canonical order. */
@@ -95,7 +47,8 @@ export const READ_SCOPES: ScopeKey[] = SCOPES.filter((scope) => scope.group === 
 
 export interface ScopePreset {
   key: string;
-  label: string;
+  /** i18n key suffix under `settings:agentAccess.preset.<i18n>`. */
+  i18n: string;
   scopes: ScopeKey[];
 }
 
@@ -103,31 +56,43 @@ export interface ScopePreset {
 export const SCOPE_PRESETS: ScopePreset[] = [
   {
     key: "read-only",
-    label: "Read-only",
+    i18n: "read_only",
     scopes: [...READ_SCOPES],
   },
   {
     key: "read-activity-draft",
-    label: "Read + draft",
+    i18n: "read_activity_draft",
     scopes: [...READ_SCOPES, "activities:draft"],
   },
   {
     key: "read-activity-write",
-    label: "Read + write",
+    i18n: "read_activity_write",
     scopes: [...READ_SCOPES, "activities:draft", "activities:write"],
   },
   {
     key: "read-activity-write-classification-suggest",
-    label: "Read + write + suggest",
+    i18n: "read_activity_write_classification_suggest",
     scopes: [...READ_SCOPES, "activities:draft", "activities:write", "classification:suggest"],
   },
 ];
 
-const SCOPE_LABELS = new Map(SCOPES.map((scope) => [scope.key, scope.label]));
+const SCOPE_I18N = new Map(SCOPES.map((scope) => [scope.key, scope.i18n]));
 
 /** Human label for a scope key; falls back to the raw key for unknown scopes. */
-export function scopeLabel(key: string): string {
-  return SCOPE_LABELS.get(key as ScopeKey) ?? key;
+export function scopeLabel(t: TFunction, key: string): string {
+  const suffix = SCOPE_I18N.get(key as ScopeKey);
+  return suffix ? t(`settings:agentAccess.scope.${suffix}.label`) : key;
+}
+
+/** Human description for a scope key; falls back to the raw key for unknown scopes. */
+export function scopeDescription(t: TFunction, key: string): string {
+  const suffix = SCOPE_I18N.get(key as ScopeKey);
+  return suffix ? t(`settings:agentAccess.scope.${suffix}.description`) : key;
+}
+
+/** Localized label for a preset. */
+export function presetLabel(t: TFunction, preset: ScopePreset): string {
+  return t(`settings:agentAccess.preset.${preset.i18n}`);
 }
 
 /**

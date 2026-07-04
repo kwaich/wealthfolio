@@ -13,6 +13,8 @@ export type {
   AddonFile,
   AddonInstallResult,
   AddonManifest,
+  AddonNetworkRequest,
+  AddonNetworkResponse,
   AddonUpdateCheckResult,
   AddonUpdateInfo,
   AddonValidationResult,
@@ -138,7 +140,17 @@ export {
 } from "../shared/goals";
 
 // Secrets Commands
-export { deleteSecret, getSecret, setSecret } from "../shared/secrets";
+export {
+  deleteAddonSecret,
+  deleteSecret,
+  getAddonSecret,
+  getSecret,
+  setAddonSecret,
+  setSecret,
+} from "../shared/secrets";
+
+// Addon Network Commands
+export { addonNetworkRequest } from "../shared/addon-network";
 
 // Taxonomy Commands
 export {

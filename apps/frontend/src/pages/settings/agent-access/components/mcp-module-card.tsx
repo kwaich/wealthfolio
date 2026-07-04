@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 import { Switch } from "@wealthfolio/ui/components/ui/switch";
 import { useMcpServer } from "../hooks/use-mcp-server";
@@ -5,6 +6,7 @@ import { McpHero } from "./mcp-hero";
 
 /** Master feature toggle for AI Agent Access — gates the rest of the page. */
 export function McpModuleCard() {
+  const { t } = useTranslation();
   const { status, isLoading, setEnabledMutation } = useMcpServer();
   const enabled = status?.enabled ?? false;
   const running = status?.running ?? false;
@@ -15,20 +17,22 @@ export function McpModuleCard() {
       title={
         enabled
           ? running
-            ? "AI Agent Access · running"
-            : "AI Agent Access · enabled"
-          : "AI Agent Access · off"
+            ? t("settings:agentAccess.desktop_title_running")
+            : t("settings:agentAccess.desktop_title_enabled")
+          : t("settings:agentAccess.desktop_title_off")
       }
       description={
         enabled
-          ? "AI agents can connect over MCP using scoped access tokens. Start the server and create a token below."
-          : "AI Agent Access is off. Enable it to let AI agents read and act on your portfolio over MCP."
+          ? t("settings:agentAccess.desktop_description_enabled")
+          : t("settings:agentAccess.desktop_description_off")
       }
-      hint="Disabling stops the server and hides AI Agent Access. Your tokens are kept but won't work until you re-enable."
+      hint={t("settings:agentAccess.desktop_hint")}
       action={
         <label className="flex shrink-0 cursor-pointer select-none items-center gap-2">
           <span className="text-background/55 hidden text-xs font-medium uppercase tracking-widest sm:inline">
-            {enabled ? "Enabled" : "Disabled"}
+            {enabled
+              ? t("settings:agentAccess.enabled_label")
+              : t("settings:agentAccess.disabled_label")}
           </span>
           <Switch
             checked={enabled}

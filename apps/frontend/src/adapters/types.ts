@@ -101,6 +101,25 @@ export interface InstalledAddon {
   isZipAddon: boolean;
 }
 
+export interface AddonNetworkRequest {
+  url: string;
+  method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD";
+  headers?: Record<string, string>;
+  body?: string;
+  auth?: AddonNetworkAuth;
+}
+
+export interface AddonNetworkResponse {
+  status: number;
+  headers: Record<string, string>;
+  body: string;
+}
+
+export interface AddonNetworkAuth {
+  type: "bearer";
+  secretKey: string;
+}
+
 // Provider capabilities from backend
 export interface ProviderCapabilities {
   instruments: string;

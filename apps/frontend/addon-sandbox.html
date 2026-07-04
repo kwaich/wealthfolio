@@ -1,0 +1,88 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self' 'unsafe-inline' blob: http://localhost:* http://127.0.0.1:* http://tauri.localhost https://tauri.localhost tauri: asset:; style-src 'self' 'unsafe-inline' http://localhost:* http://127.0.0.1:* http://tauri.localhost https://tauri.localhost tauri: asset:; img-src data: blob:; font-src 'self' data: blob: http://localhost:* http://127.0.0.1:* http://tauri.localhost https://tauri.localhost tauri: asset:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <script>
+      (function () {
+        try {
+          var params = new URLSearchParams(window.location.hash.slice(1));
+          var themeClass = params.get("themeClass") === "dark" ? "dark" : "light";
+          var backgroundColor = params.get("backgroundColor");
+          var foregroundColor = params.get("foregroundColor");
+          document.documentElement.classList.add(themeClass);
+          document.documentElement.style.colorScheme = params.get("colorScheme") || themeClass;
+          if (backgroundColor) {
+            document.documentElement.style.setProperty(
+              "--addon-initial-background",
+              backgroundColor,
+            );
+          }
+          if (foregroundColor) {
+            document.documentElement.style.setProperty(
+              "--addon-initial-foreground",
+              foregroundColor,
+            );
+          }
+        } catch (e) {}
+      })();
+    </script>
+    <style>
+      :root {
+        color-scheme: light dark;
+        font-family:
+          Inter,
+          ui-sans-serif,
+          system-ui,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          sans-serif;
+      }
+
+      html,
+      body,
+      #addon-root {
+        min-height: 100%;
+        margin: 0;
+      }
+
+      html {
+        background: var(--addon-initial-background, transparent);
+      }
+
+      body {
+        background: var(--addon-initial-background, transparent);
+        color: var(--addon-initial-foreground, inherit);
+      }
+
+      #addon-root {
+        background: inherit;
+        color: inherit;
+      }
+
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+      }
+    </style>
+  </head>
+  <body>
+    <script>
+      (function () {
+        try {
+          var fontClass = new URLSearchParams(window.location.hash.slice(1)).get("fontClass");
+          if (/^font-(mono|sans|serif)$/.test(fontClass)) {
+            document.body.classList.add(fontClass);
+          }
+        } catch (e) {}
+      })();
+    </script>
+    <div id="addon-root"></div>
+    <script type="module" src="/src/addons/iframe/addon-sandbox-entry.tsx"></script>
+  </body>
+</html>

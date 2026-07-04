@@ -18,8 +18,10 @@ import {
   MoneyInput,
 } from "@wealthfolio/ui";
 import { useEffect, useMemo } from "react";
+import { useTranslation } from "react-i18next";
 import { FormProvider, useForm, type Resolver } from "react-hook-form";
 import { z } from "zod";
+import type { TFunction } from "i18next";
 import {
   AccountSelect,
   AdvancedOptionsSection,
@@ -36,6 +38,10 @@ import {
 export type TransferMode = "cash" | "securities";
 export type TransferDirection = "in" | "out";
 
+// Translated message helper (see buy-form for rationale).
+type MsgFn = TFunction | undefined;
+const msg = (t: MsgFn, key: string, en: string) => (t ? t(key) : en);
+
 // Asset metadata schema for custom assets
 const assetMetadataSchema = z
   .object({
@@ -47,210 +53,279 @@ const assetMetadataSchema = z
   })
   .optional();
 
-// Zod schema for TransferForm validation
-export const transferFormSchema = z
-  .object({
-    isExternal: z.boolean().default(false),
-    direction: z.enum(["in", "out"]).default("in"),
-    accountId: z.string().optional(), // For external transfers (single account)
-    fromAccountId: z.string().optional(), // For internal transfers
-    toAccountId: z.string().optional(), // For internal transfers
-    activityDate: z.date({ required_error: "Please select a date." }),
-    transferMode: z.enum(["cash", "securities"]).default("cash"),
-    amount: z.coerce
-      .number({
-        invalid_type_error: "Amount must be a number.",
-      })
-      .positive({ message: "Amount must be greater than 0." })
-      .optional()
-      .nullable(),
-    sourceAmount: z.coerce
-      .number({
-        invalid_type_error: "Sent amount must be a number.",
-      })
-      .positive({ message: "Sent amount must be greater than 0." })
-      .optional()
-      .nullable(),
-    destinationAmount: z.coerce
-      .number({
-        invalid_type_error: "Received amount must be a number.",
-      })
-      .positive({ message: "Received amount must be greater than 0." })
-      .optional()
-      .nullable(),
-    sourceCurrency: z.string().optional(),
-    destinationCurrency: z.string().optional(),
-    // Fields for security transfers
-    assetId: z.string().optional().nullable(),
-    existingAssetId: z.string().nullable().optional(),
-    quantity: z.coerce
-      .number({
-        invalid_type_error: "Quantity must be a number.",
-      })
-      .positive({ message: "Quantity must be greater than 0." })
-      .optional()
-      .nullable(),
-    unitPrice: z.coerce
-      .number({
-        invalid_type_error: "Cost basis must be a number.",
-      })
-      .positive({ message: "Cost basis must be greater than 0." })
-      .optional()
-      .nullable(),
-    comment: z.string().optional().nullable(),
-    // Advanced options
-    currency: z.string().min(1, { message: "Currency is required." }),
-    fxRate: z.coerce
-      .number({
-        invalid_type_error: "FX Rate must be a number.",
-      })
-      .positive({ message: "FX Rate must be positive." })
-      .optional(),
-    subtype: z.string().optional().nullable(),
-    // Internal field for manual quote mode
-    quoteMode: z.enum([QuoteMode.MARKET, QuoteMode.MANUAL]).default(QuoteMode.MARKET),
-    exchangeMic: z.string().nullable().optional(),
-    symbolQuoteCcy: z.string().nullable().optional(),
-    symbolInstrumentType: z.string().nullable().optional(),
-    // Asset metadata for custom assets (name, etc.)
-    assetMetadata: assetMetadataSchema,
-  })
-  // External transfer requires accountId
-  .refine(
-    (data) => {
-      if (data.isExternal) {
-        return data.accountId != null && data.accountId.length > 0;
-      }
-      return true;
-    },
-    {
-      message: "Please select an account.",
-      path: ["accountId"],
-    },
-  )
-  // Internal transfer requires fromAccountId
-  .refine(
-    (data) => {
-      if (!data.isExternal) {
-        return data.fromAccountId != null && data.fromAccountId.length > 0;
-      }
-      return true;
-    },
-    {
-      message: "Please select a source account.",
-      path: ["fromAccountId"],
-    },
-  )
-  // Internal transfer requires toAccountId
-  .refine(
-    (data) => {
-      if (!data.isExternal) {
-        return data.toAccountId != null && data.toAccountId.length > 0;
-      }
-      return true;
-    },
-    {
-      message: "Please select a destination account.",
-      path: ["toAccountId"],
-    },
-  )
-  // Internal transfer: accounts must be different
-  .refine(
-    (data) => {
-      if (!data.isExternal) {
-        return data.fromAccountId !== data.toAccountId;
-      }
-      return true;
-    },
-    {
-      message: "Source and destination accounts must be different.",
-      path: ["toAccountId"],
-    },
-  )
-  .refine(
-    (data) => {
-      // Cash mode requires amount
-      if (data.transferMode === "cash" && data.isExternal) {
-        return data.amount != null && data.amount > 0;
-      }
-      return true;
-    },
-    {
-      message: "Please enter an amount.",
-      path: ["amount"],
-    },
-  )
-  .refine(
-    (data) => {
-      if (data.transferMode === "cash" && !data.isExternal) {
-        const sourceAmount = data.sourceAmount ?? data.amount;
-        return sourceAmount != null && sourceAmount > 0;
-      }
-      return true;
-    },
-    {
-      message: "Please enter an amount.",
-      path: ["sourceAmount"],
-    },
-  )
-  .refine(
-    (data) => {
-      if (
-        data.transferMode === "cash" &&
-        !data.isExternal &&
-        data.sourceCurrency &&
-        data.destinationCurrency &&
-        data.sourceCurrency !== data.destinationCurrency
-      ) {
-        return data.destinationAmount != null && data.destinationAmount > 0;
-      }
-      return true;
-    },
-    {
-      message: "Please enter a received amount.",
-      path: ["destinationAmount"],
-    },
-  )
-  .refine(
-    (data) => {
-      // Securities mode requires assetId
-      if (data.transferMode === "securities") {
-        return data.assetId != null && data.assetId.length > 0;
-      }
-      return true;
-    },
-    {
-      message: "Please select a symbol.",
-      path: ["assetId"],
-    },
-  )
-  .refine(
-    (data) => {
-      // Securities mode requires quantity
-      if (data.transferMode === "securities") {
-        return data.quantity != null && data.quantity > 0;
-      }
-      return true;
-    },
-    {
-      message: "Please enter a quantity.",
-      path: ["quantity"],
-    },
-  )
-  .refine(
-    (data) => {
-      // Cost basis required only for external transfer in with securities
-      // Backend calculates cost basis for transfer out from existing holdings
-      if (data.transferMode === "securities" && data.isExternal && data.direction === "in") {
-        return data.unitPrice != null && data.unitPrice > 0;
-      }
-      return true;
-    },
-    {
-      message: "Please enter a cost basis.",
-      path: ["unitPrice"],
-    },
-  );
+// Zod schema factory for TransferForm validation. `t` optional so the exported
+// static schema keeps English messages (used by tests and type inference).
+export const createTransferFormSchema = (t?: TFunction) =>
+  z
+    .object({
+      isExternal: z.boolean().default(false),
+      direction: z.enum(["in", "out"]).default("in"),
+      accountId: z.string().optional(), // For external transfers (single account)
+      fromAccountId: z.string().optional(), // For internal transfers
+      toAccountId: z.string().optional(), // For internal transfers
+      activityDate: z.date({
+        required_error: msg(t, "activity:form.err_select_date", "Please select a date."),
+      }),
+      transferMode: z.enum(["cash", "securities"]).default("cash"),
+      amount: z.coerce
+        .number({
+          invalid_type_error: msg(t, "activity:form.err_amount_number", "Amount must be a number."),
+        })
+        .positive({
+          message: msg(t, "activity:form.err_amount_gt_zero", "Amount must be greater than 0."),
+        })
+        .optional()
+        .nullable(),
+      sourceAmount: z.coerce
+        .number({
+          invalid_type_error: msg(
+            t,
+            "activity:form.err_sent_amount_number",
+            "Sent amount must be a number.",
+          ),
+        })
+        .positive({
+          message: msg(
+            t,
+            "activity:form.err_sent_amount_gt_zero",
+            "Sent amount must be greater than 0.",
+          ),
+        })
+        .optional()
+        .nullable(),
+      destinationAmount: z.coerce
+        .number({
+          invalid_type_error: msg(
+            t,
+            "activity:form.err_received_amount_number",
+            "Received amount must be a number.",
+          ),
+        })
+        .positive({
+          message: msg(
+            t,
+            "activity:form.err_received_amount_gt_zero",
+            "Received amount must be greater than 0.",
+          ),
+        })
+        .optional()
+        .nullable(),
+      sourceCurrency: z.string().optional(),
+      destinationCurrency: z.string().optional(),
+      // Fields for security transfers
+      assetId: z.string().optional().nullable(),
+      existingAssetId: z.string().nullable().optional(),
+      quantity: z.coerce
+        .number({
+          invalid_type_error: msg(
+            t,
+            "activity:form.err_quantity_number",
+            "Quantity must be a number.",
+          ),
+        })
+        .positive({
+          message: msg(t, "activity:form.err_quantity_gt_zero", "Quantity must be greater than 0."),
+        })
+        .optional()
+        .nullable(),
+      unitPrice: z.coerce
+        .number({
+          invalid_type_error: msg(
+            t,
+            "activity:form.err_cost_basis_number",
+            "Cost basis must be a number.",
+          ),
+        })
+        .positive({
+          message: msg(
+            t,
+            "activity:form.err_cost_basis_gt_zero",
+            "Cost basis must be greater than 0.",
+          ),
+        })
+        .optional()
+        .nullable(),
+      comment: z.string().optional().nullable(),
+      // Advanced options
+      currency: z.string().min(1, {
+        message: msg(t, "activity:form.err_currency_required", "Currency is required."),
+      }),
+      fxRate: z.coerce
+        .number({
+          invalid_type_error: msg(
+            t,
+            "activity:form.err_fxrate_number",
+            "FX Rate must be a number.",
+          ),
+        })
+        .positive({
+          message: msg(t, "activity:form.err_fxrate_positive", "FX Rate must be positive."),
+        })
+        .optional(),
+      subtype: z.string().optional().nullable(),
+      // Internal field for manual quote mode
+      quoteMode: z.enum([QuoteMode.MARKET, QuoteMode.MANUAL]).default(QuoteMode.MARKET),
+      exchangeMic: z.string().nullable().optional(),
+      symbolQuoteCcy: z.string().nullable().optional(),
+      symbolInstrumentType: z.string().nullable().optional(),
+      // Asset metadata for custom assets (name, etc.)
+      assetMetadata: assetMetadataSchema,
+    })
+    // External transfer requires accountId
+    .refine(
+      (data) => {
+        if (data.isExternal) {
+          return data.accountId != null && data.accountId.length > 0;
+        }
+        return true;
+      },
+      {
+        message: msg(t, "activity:form.err_select_account", "Please select an account."),
+        path: ["accountId"],
+      },
+    )
+    // Internal transfer requires fromAccountId
+    .refine(
+      (data) => {
+        if (!data.isExternal) {
+          return data.fromAccountId != null && data.fromAccountId.length > 0;
+        }
+        return true;
+      },
+      {
+        message: msg(
+          t,
+          "activity:form.err_select_source_account",
+          "Please select a source account.",
+        ),
+        path: ["fromAccountId"],
+      },
+    )
+    // Internal transfer requires toAccountId
+    .refine(
+      (data) => {
+        if (!data.isExternal) {
+          return data.toAccountId != null && data.toAccountId.length > 0;
+        }
+        return true;
+      },
+      {
+        message: msg(
+          t,
+          "activity:form.err_select_destination_account",
+          "Please select a destination account.",
+        ),
+        path: ["toAccountId"],
+      },
+    )
+    // Internal transfer: accounts must be different
+    .refine(
+      (data) => {
+        if (!data.isExternal) {
+          return data.fromAccountId !== data.toAccountId;
+        }
+        return true;
+      },
+      {
+        message: msg(
+          t,
+          "activity:form.err_accounts_different",
+          "Source and destination accounts must be different.",
+        ),
+        path: ["toAccountId"],
+      },
+    )
+    .refine(
+      (data) => {
+        // Cash mode requires amount
+        if (data.transferMode === "cash" && data.isExternal) {
+          return data.amount != null && data.amount > 0;
+        }
+        return true;
+      },
+      {
+        message: msg(t, "activity:form.err_enter_amount", "Please enter an amount."),
+        path: ["amount"],
+      },
+    )
+    .refine(
+      (data) => {
+        if (data.transferMode === "cash" && !data.isExternal) {
+          const sourceAmount = data.sourceAmount ?? data.amount;
+          return sourceAmount != null && sourceAmount > 0;
+        }
+        return true;
+      },
+      {
+        message: msg(t, "activity:form.err_enter_amount", "Please enter an amount."),
+        path: ["sourceAmount"],
+      },
+    )
+    .refine(
+      (data) => {
+        if (
+          data.transferMode === "cash" &&
+          !data.isExternal &&
+          data.sourceCurrency &&
+          data.destinationCurrency &&
+          data.sourceCurrency !== data.destinationCurrency
+        ) {
+          return data.destinationAmount != null && data.destinationAmount > 0;
+        }
+        return true;
+      },
+      {
+        message: msg(
+          t,
+          "activity:form.err_enter_received_amount",
+          "Please enter a received amount.",
+        ),
+        path: ["destinationAmount"],
+      },
+    )
+    .refine(
+      (data) => {
+        // Securities mode requires assetId
+        if (data.transferMode === "securities") {
+          return data.assetId != null && data.assetId.length > 0;
+        }
+        return true;
+      },
+      {
+        message: msg(t, "activity:form.err_select_symbol", "Please select a symbol."),
+        path: ["assetId"],
+      },
+    )
+    .refine(
+      (data) => {
+        // Securities mode requires quantity
+        if (data.transferMode === "securities") {
+          return data.quantity != null && data.quantity > 0;
+        }
+        return true;
+      },
+      {
+        message: msg(t, "activity:form.err_enter_quantity", "Please enter a quantity."),
+        path: ["quantity"],
+      },
+    )
+    .refine(
+      (data) => {
+        // Cost basis required only for external transfer in with securities
+        // Backend calculates cost basis for transfer out from existing holdings
+        if (data.transferMode === "securities" && data.isExternal && data.direction === "in") {
+          return data.unitPrice != null && data.unitPrice > 0;
+        }
+        return true;
+      },
+      {
+        message: msg(t, "activity:form.err_enter_cost_basis", "Please enter a cost basis."),
+        path: ["unitPrice"],
+      },
+    );
+
+// Zod schema for TransferForm validation (English messages; used by tests).
+export const transferFormSchema = createTransferFormSchema();
 
 export type TransferFormValues = z.infer<typeof transferFormSchema>;
 
@@ -278,8 +353,11 @@ export function TransferForm({
   isEditing = false,
   assetCurrency,
 }: TransferFormProps) {
+  const { t } = useTranslation(["activity"]);
   const { data: settings } = useSettings();
   const baseCurrency = settings?.baseCurrency ?? "USD";
+
+  const schema = useMemo(() => createTransferFormSchema(t), [t]);
 
   // Compute initial account and currency for defaultValues
   const initialFromAccountId = defaultValues?.fromAccountId ?? "";
@@ -308,7 +386,7 @@ export function TransferForm({
       : "cash");
 
   const form = useForm<TransferFormValues>({
-    resolver: zodResolver(transferFormSchema) as Resolver<TransferFormValues>,
+    resolver: zodResolver(schema) as Resolver<TransferFormValues>,
     mode: "onSubmit", // Validate only on submit - works correctly with default values
     defaultValues: {
       isExternal: initialIsExternal,
@@ -475,8 +553,8 @@ export function TransferForm({
 
   // Toggle items for transfer mode
   const transferModeItems = [
-    { value: "cash" as const, label: "Cash" },
-    { value: "securities" as const, label: "Securities" },
+    { value: "cash" as const, label: t("activity:form.transfer_mode_cash") },
+    { value: "securities" as const, label: t("activity:form.transfer_mode_securities") },
   ];
 
   // Handle transfer mode change
@@ -543,15 +621,15 @@ export function TransferForm({
 
   // Generate dynamic submit button text
   const getSubmitButtonText = () => {
-    if (isEditing) return "Update";
+    if (isEditing) return t("activity:form.button_update");
 
     const actionPrefix = isCreditCardPayment
-      ? "Payment"
+      ? t("activity:form.button_payment")
       : isExternal
         ? direction === "in"
-          ? "Transfer In"
-          : "Transfer Out"
-        : "Transfer";
+          ? t("activity:form.button_transfer_in")
+          : t("activity:form.button_transfer_out")
+        : t("activity:form.button_transfer");
 
     const displayAmount = isInternalCashTransfer ? sourceAmount : amount;
     if (isCashMode && displayAmount && displayAmount > 0) {
@@ -564,10 +642,10 @@ export function TransferForm({
     }
 
     return isCreditCardPayment
-      ? "Add Payment"
+      ? t("activity:form.button_add_payment")
       : isExternal
-        ? `Add ${actionPrefix}`
-        : "Add Transfer";
+        ? t("activity:form.button_add_prefixed", { action: actionPrefix })
+        : t("activity:form.button_add_transfer");
   };
 
   // Filter destination accounts to exclude source account (for internal transfers)
@@ -585,7 +663,7 @@ export function TransferForm({
     <FormProvider {...form}>
       <form onSubmit={handleSubmit} className="space-y-4">
         <FormSection
-          title="Transfer"
+          title={t("activity:form.section_transfer")}
           action={
             <AnimatedToggleGroup
               items={transferModeItems}
@@ -605,7 +683,7 @@ export function TransferForm({
                 onCheckedChange={handleExternalChange}
               />
               <Label htmlFor="isExternal" className="cursor-pointer text-sm font-normal">
-                External transfer
+                {t("activity:form.external_transfer")}
               </Label>
             </div>
 
@@ -621,13 +699,13 @@ export function TransferForm({
                   <div className="flex items-center space-x-1.5">
                     <RadioGroupItem value="in" id="direction-in" />
                     <Label htmlFor="direction-in" className="cursor-pointer text-sm font-normal">
-                      In
+                      {t("activity:form.transfer_direction_in")}
                     </Label>
                   </div>
                   <div className="flex items-center space-x-1.5">
                     <RadioGroupItem value="out" id="direction-out" />
                     <Label htmlFor="direction-out" className="cursor-pointer text-sm font-normal">
-                      Out
+                      {t("activity:form.transfer_direction_out")}
                     </Label>
                   </div>
                 </RadioGroup>
@@ -642,8 +720,12 @@ export function TransferForm({
               name="accountId"
               accounts={externalAccountOptions}
               currencyName="currency"
-              label={direction === "in" ? "To Account" : "From Account"}
-              placeholder="Select account..."
+              label={
+                direction === "in"
+                  ? t("activity:form.label_to_account")
+                  : t("activity:form.label_from_account")
+              }
+              placeholder={t("activity:form.placeholder_select_account")}
             />
           ) : (
             <>
@@ -652,8 +734,8 @@ export function TransferForm({
                 name="fromAccountId"
                 accounts={sourceAccountOptions}
                 currencyName="currency"
-                label="From Account"
-                placeholder="Select source account..."
+                label={t("activity:form.label_from_account")}
+                placeholder={t("activity:form.placeholder_select_source_account")}
               />
 
               {/* To Account Selection */}
@@ -661,17 +743,21 @@ export function TransferForm({
                 key={`to-${transferMode}-${fromAccountId || "none"}-${toAccountId || "none"}`}
                 name="toAccountId"
                 accounts={toAccountOptions}
-                label="To Account"
-                placeholder="Select destination account..."
+                label={t("activity:form.label_to_account")}
+                placeholder={t("activity:form.placeholder_select_destination_account")}
               />
             </>
           )}
 
           {/* Date Picker */}
-          <DatePicker name="activityDate" label="Date" />
+          <DatePicker name="activityDate" label={t("activity:field_date")} />
         </FormSection>
 
-        <FormSection title={isCashMode ? "Amount" : "Securities"}>
+        <FormSection
+          title={
+            isCashMode ? t("activity:form.section_amount") : t("activity:form.section_securities")
+          }
+        >
           {/* Securities mode: Symbol and Quantity at top */}
           {!isCashMode && (
             <>
@@ -692,12 +778,12 @@ export function TransferForm({
               <input type="hidden" {...form.register("symbolQuoteCcy")} />
               <input type="hidden" {...form.register("symbolInstrumentType")} />
               <input type="hidden" {...form.register("existingAssetId")} />
-              <QuantityInput name="quantity" label="Quantity" />
+              <QuantityInput name="quantity" label={t("activity:form.label_quantity")} />
               {/* Cost basis only needed for external transfer in - backend calculates for transfer out */}
               {isExternal && direction === "in" && (
                 <AmountInput
                   name="unitPrice"
-                  label="Cost Basis"
+                  label={t("activity:form.label_cost_basis")}
                   maxDecimalPlaces={4}
                   currency={currency}
                 />
@@ -716,7 +802,9 @@ export function TransferForm({
                       name="sourceAmount"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>Sent ({effectiveSourceCurrency})</FormLabel>
+                          <FormLabel>
+                            {t("activity:form.label_sent", { currency: effectiveSourceCurrency })}
+                          </FormLabel>
                           <FormControl>
                             <MoneyInput
                               ref={field.ref}
@@ -724,7 +812,7 @@ export function TransferForm({
                               value={field.value}
                               onValueChange={handleSourceAmountChange}
                               placeholder="0.00"
-                              aria-label="Sent amount"
+                              aria-label={t("activity:form.sent_amount")}
                               data-testid="sent-amount-input"
                             />
                           </FormControl>
@@ -737,7 +825,11 @@ export function TransferForm({
                       name="destinationAmount"
                       render={({ field }) => (
                         <FormItem>
-                          <FormLabel>Received ({effectiveDestinationCurrency})</FormLabel>
+                          <FormLabel>
+                            {t("activity:form.label_received", {
+                              currency: effectiveDestinationCurrency,
+                            })}
+                          </FormLabel>
                           <FormControl>
                             <MoneyInput
                               ref={field.ref}
@@ -745,7 +837,7 @@ export function TransferForm({
                               value={field.value}
                               onValueChange={handleDestinationAmountChange}
                               placeholder="0.00"
-                              aria-label="Received amount"
+                              aria-label={t("activity:form.received_amount")}
                               data-testid="received-amount-input"
                             />
                           </FormControl>
@@ -760,7 +852,7 @@ export function TransferForm({
                     name="sourceAmount"
                     render={({ field }) => (
                       <FormItem>
-                        <FormLabel>Amount</FormLabel>
+                        <FormLabel>{t("activity:form.label_amount")}</FormLabel>
                         <FormControl>
                           <MoneyInput
                             ref={field.ref}
@@ -768,7 +860,7 @@ export function TransferForm({
                             value={field.value}
                             onValueChange={handleSourceAmountChange}
                             placeholder="0.00"
-                            aria-label="Amount"
+                            aria-label={t("activity:form.label_amount")}
                             data-testid="input-amount"
                           />
                         </FormControl>
@@ -785,11 +877,13 @@ export function TransferForm({
                     render={({ field }) => (
                       <FormItem>
                         <FormLabel>
-                          FX Rate
+                          {t("activity:form.label_fx_rate")}
                           <span className="text-muted-foreground ml-2 text-xs font-normal">
-                            1 {effectiveSourceCurrency} ={" "}
-                            {Number(field.value) > 0 ? field.value : "?"}{" "}
-                            {effectiveDestinationCurrency}
+                            {t("activity:form.fx_conversion", {
+                              from: effectiveSourceCurrency,
+                              rate: Number(field.value) > 0 ? field.value : "?",
+                              to: effectiveDestinationCurrency,
+                            })}
                           </span>
                         </FormLabel>
                         <FormControl>
@@ -800,7 +894,7 @@ export function TransferForm({
                             onValueChange={handleFxRateChange}
                             placeholder="1.0000"
                             maxDecimalPlaces={8}
-                            aria-label="FX Rate"
+                            aria-label={t("activity:form.label_fx_rate")}
                             data-testid="fx-rate-input"
                           />
                         </FormControl>
@@ -811,13 +905,17 @@ export function TransferForm({
                 )}
               </div>
             ) : (
-              <AmountInput name="amount" label="Amount" currency={currency} />
+              <AmountInput
+                name="amount"
+                label={t("activity:form.label_amount")}
+                currency={currency}
+              />
             ))}
         </FormSection>
 
         {/* Advanced options (currency, FX rate, subtype) and notes, collapsed by default */}
         <AdvancedOptionsSection
-          title="Advanced & notes"
+          title={t("activity:form.section_advanced_notes")}
           dashed
           currencyName="currency"
           fxRateName="fxRate"
@@ -829,14 +927,18 @@ export function TransferForm({
           showCurrency={isExternal}
           showFxRate={isExternal}
         >
-          <NotesInput name="comment" label="Notes" placeholder="Add an optional note..." />
+          <NotesInput
+            name="comment"
+            label={t("activity:form.label_notes")}
+            placeholder={t("activity:form.placeholder_note")}
+          />
         </AdvancedOptionsSection>
 
         {/* Action Buttons */}
         <div className="flex justify-end gap-2">
           {onCancel && (
             <Button type="button" variant="outline" onClick={onCancel} disabled={isLoading}>
-              Cancel
+              {t("activity:cancel")}
             </Button>
           )}
           <Button type="submit" disabled={isLoading}>

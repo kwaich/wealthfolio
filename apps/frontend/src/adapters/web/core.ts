@@ -164,6 +164,10 @@ export const COMMANDS: CommandMap = {
   set_secret: { method: "POST", path: "/secrets" },
   get_secret: { method: "GET", path: "/secrets" },
   delete_secret: { method: "DELETE", path: "/secrets" },
+  set_addon_secret: { method: "POST", path: "/addons" },
+  get_addon_secret: { method: "GET", path: "/addons" },
+  delete_addon_secret: { method: "DELETE", path: "/addons" },
+  addon_network_request: { method: "POST", path: "/addons" },
   // Taxonomies
   get_taxonomies: { method: "GET", path: "/taxonomies" },
   get_taxonomy: { method: "GET", path: "/taxonomies" },
@@ -1104,6 +1108,33 @@ export const invoke = async <T>(command: string, payload?: Record<string, unknow
       url += `?${params.toString()}`;
       break;
     }
+    case "set_addon_secret": {
+      const { addonId, key, secret } = payload as {
+        addonId: string;
+        key: string;
+        secret: string;
+      };
+      url += `/${encodeURIComponent(addonId)}/secrets`;
+      body = JSON.stringify({ key, secret });
+      break;
+    }
+    case "get_addon_secret":
+    case "delete_addon_secret": {
+      const { addonId, key } = payload as { addonId: string; key: string };
+      const params = new URLSearchParams();
+      params.set("key", key);
+      url += `/${encodeURIComponent(addonId)}/secrets?${params.toString()}`;
+      break;
+    }
+    case "addon_network_request": {
+      const { addonId, request } = payload as {
+        addonId: string;
+        request: unknown;
+      };
+      url += `/${encodeURIComponent(addonId)}/network/request`;
+      body = JSON.stringify({ request });
+      break;
+    }
     // Taxonomy commands
     case "get_taxonomies":
       break;
@@ -1496,13 +1527,14 @@ export const invoke = async <T>(command: string, payload?: Record<string, unknow
     }
     // Addons
     case "install_addon_zip": {
-      const { zipData, enableAfterInstall } = payload as {
+      const { zipData, enableAfterInstall, approvedNetworkHosts } = payload as {
         zipData: Uint8Array | number[];
         enableAfterInstall?: boolean;
+        approvedNetworkHosts?: string[];
       };
       // Send compact base64 payload to avoid gigantic JSON arrays of numbers
       const zipDataB64 = toBase64(zipData);
-      body = JSON.stringify({ zipDataB64, enableAfterInstall });
+      body = JSON.stringify({ zipDataB64, enableAfterInstall, approvedNetworkHosts });
       break;
     }
     case "toggle_addon": {
@@ -1540,11 +1572,12 @@ export const invoke = async <T>(command: string, payload?: Record<string, unknow
       break;
     }
     case "install_addon_from_staging": {
-      const { addonId, enableAfterInstall } = payload as {
+      const { addonId, enableAfterInstall, approvedNetworkHosts } = payload as {
         addonId: string;
         enableAfterInstall?: boolean;
+        approvedNetworkHosts?: string[];
       };
-      body = JSON.stringify({ addonId, enableAfterInstall });
+      body = JSON.stringify({ addonId, enableAfterInstall, approvedNetworkHosts });
       break;
     }
     case "clear_addon_staging": {

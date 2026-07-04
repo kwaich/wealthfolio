@@ -722,6 +722,32 @@ export interface QueryAPI {
   refetchQueries(queryKey: string | string[]): void;
 }
 
+export interface NetworkRequest {
+  url: string;
+  method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD';
+  headers?: Record<string, string>;
+  body?: string;
+  auth?: NetworkAuth;
+}
+
+export interface NetworkResponse {
+  status: number;
+  headers: Record<string, string>;
+  body: string;
+}
+
+export interface NetworkAuth {
+  type: 'bearer';
+  secretKey: string;
+}
+
+export interface NetworkAPI {
+  /**
+   * Send a brokered HTTPS request to a host declared in the addon manifest.
+   */
+  request(request: NetworkRequest): Promise<NetworkResponse>;
+}
+
 /**
  * Snapshot management APIs
  * For accounts using HOLDINGS tracking mode
@@ -804,6 +830,9 @@ export interface HostAPI {
 
   /** React Query operations */
   query: QueryAPI;
+
+  /** Brokered external network operations */
+  network: NetworkAPI;
 
   /** Toast notification operations */
   toast: ToastAPI;

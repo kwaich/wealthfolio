@@ -2,6 +2,7 @@
 
 use async_trait::async_trait;
 
+use super::network::{AddonNetworkRequest, AddonNetworkResponse};
 use super::{AddonManifest, AddonUpdateCheckResult, ExtractedAddon, InstalledAddon};
 
 /// Service trait for addon business logic operations.
@@ -12,12 +13,14 @@ pub trait AddonServiceTrait: Send + Sync {
         &self,
         zip_data: Vec<u8>,
         enable_after_install: bool,
+        approved_network_hosts: Vec<String>,
     ) -> Result<AddonManifest, String>;
 
     async fn install_addon_from_staging(
         &self,
         addon_id: &str,
         enable_after_install: bool,
+        approved_network_hosts: Vec<String>,
     ) -> Result<AddonManifest, String>;
 
     async fn uninstall_addon(&self, addon_id: &str) -> Result<(), String>;
@@ -35,6 +38,13 @@ pub trait AddonServiceTrait: Send + Sync {
     async fn check_all_addon_updates(&self) -> Result<Vec<AddonUpdateCheckResult>, String>;
 
     async fn update_addon_from_store(&self, addon_id: &str) -> Result<AddonManifest, String>;
+
+    // Brokered network operations
+    async fn addon_network_request(
+        &self,
+        addon_id: &str,
+        request: AddonNetworkRequest,
+    ) -> Result<AddonNetworkResponse, String>;
 
     // Toggle operation
     fn toggle_addon(&self, addon_id: &str, enabled: bool) -> Result<(), String>;

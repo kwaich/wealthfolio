@@ -10,6 +10,7 @@ import {
 import { cn } from "@/lib/utils";
 import { formatPercent, GainAmount, GainPercent } from "@wealthfolio/ui";
 import React, { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 
 // Explanatory texts for info popovers
@@ -69,6 +70,7 @@ export const MetricDisplay: React.FC<MetricDisplayProps> = ({
   emptyReason,
   tone = "gain",
 }) => {
+  const { t } = useTranslation();
   const [mobilePopoverOpen, setMobilePopoverOpen] = useState(false);
 
   const displayValue =
@@ -107,7 +109,7 @@ export const MetricDisplay: React.FC<MetricDisplayProps> = ({
             className="text-muted-foreground hover:text-foreground absolute right-2 top-2 hidden h-4 w-4 rounded-full p-0 md:inline-flex"
           >
             <Icons.Info className="h-3 w-3" />
-            <span className="sr-only">More info about {label}</span>
+            <span className="sr-only">{t("common:component.more_info_about", { label })}</span>
           </Button>
         </PopoverTrigger>
         <PopoverContent className="w-60 text-xs" side="top" align="end">
@@ -129,10 +131,10 @@ export const MetricDisplay: React.FC<MetricDisplayProps> = ({
       ? []
       : [
           annualizedValue !== undefined && annualizedValue !== null
-            ? { label: "Annualized", value: annualizedValue }
+            ? { label: t("common:component.annualized"), value: annualizedValue }
             : null,
           secondaryValue !== undefined && secondaryValue !== null
-            ? { label: secondaryValueLabel ?? "Related", value: secondaryValue }
+            ? { label: secondaryValueLabel ?? t("common:component.related"), value: secondaryValue }
             : null,
         ].filter((row): row is { label: string; value: number } => row !== null);
 
@@ -163,7 +165,7 @@ export const MetricDisplay: React.FC<MetricDisplayProps> = ({
         <Link
           to="/health"
           title={emptyReason}
-          aria-label={`Open Health Center for ${label} issue`}
+          aria-label={t("common:component.open_health_center_for", { label })}
           className="text-muted-foreground hover:text-foreground focus-visible:ring-ring line-clamp-2 max-w-[11rem] rounded-sm text-center text-[10px] leading-tight underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2"
           onClick={(event) => event.stopPropagation()}
           onPointerDown={(event) => event.stopPropagation()}
@@ -229,6 +231,7 @@ export const MetricLabelWithInfo: React.FC<MetricLabelWithInfoProps> = ({
   boldTerms = [],
   className,
 }) => {
+  const { t } = useTranslation();
   const warningItems = Array.from(
     new Set(
       (Array.isArray(warningText) ? warningText : warningText ? [warningText] : [])
@@ -257,7 +260,9 @@ export const MetricLabelWithInfo: React.FC<MetricLabelWithInfoProps> = ({
               <Icons.Info className="h-3 w-3" />
             )}
             <span className="sr-only">
-              {hasWarnings ? "Calculation note for" : "More info about"} {label}
+              {hasWarnings
+                ? t("common:component.calculation_note_for", { label })
+                : t("common:component.more_info_about", { label })}
             </span>
           </Button>
         </PopoverTrigger>
@@ -274,8 +279,8 @@ export const MetricLabelWithInfo: React.FC<MetricLabelWithInfoProps> = ({
                   <Icons.AlertTriangle className="h-4 w-4 shrink-0" />
                   <span>
                     {warningItems.length === 1
-                      ? "Calculation note"
-                      : `Calculation notes (${warningItems.length})`}
+                      ? t("common:component.calculation_note")
+                      : t("common:component.calculation_notes", { count: warningItems.length })}
                   </span>
                 </div>
                 <ul className="text-muted-foreground max-h-[60vh] space-y-2 overflow-y-auto pr-1 leading-relaxed">

@@ -55,6 +55,9 @@ export const FUNCTION_DISPLAY_NAMES: Record<string, string> = {
   "performance.calculateAccountsSimple": "Calculate basic account performance",
 
   // ExchangeRatesAPI functions
+  "currency.getAll": "View exchange rates",
+  "currency.update": "Update currency rates",
+  "currency.add": "Add new exchange rates",
   "exchangeRates.getAll": "View exchange rates",
   "exchangeRates.update": "Update currency rates",
   "exchangeRates.add": "Add new exchange rates",
@@ -86,6 +89,7 @@ export const FUNCTION_DISPLAY_NAMES: Record<string, string> = {
   // SecretsAPI functions
   "secrets.get": "Retrieve stored credentials",
   "secrets.set": "Store secure credentials",
+  "secrets.use": "Use stored credentials for brokered requests",
   "secrets.delete": "Remove stored credentials",
 
   // EventsAPI functions - Import events
@@ -105,6 +109,11 @@ export const FUNCTION_DISPLAY_NAMES: Record<string, string> = {
   // UI functions (addon extensions) - these use dotted notation in backend detection
   "ui.sidebar.addItem": "Add navigation items",
   "ui.router.add": "Add new pages",
+  "ui.navigation.navigate": "Navigate within the app",
+  "ui.onDisable": "Run cleanup when disabled",
+
+  // Network broker
+  "network.request": "Send brokered network requests",
 };
 
 /**

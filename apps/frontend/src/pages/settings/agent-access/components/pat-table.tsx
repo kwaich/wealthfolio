@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import { format, formatDistanceToNowStrict } from "date-fns";
 import type { AgentAccessToken } from "@/adapters";
 import { cn } from "@/lib/utils";
@@ -25,15 +27,15 @@ import { Icons } from "@wealthfolio/ui/components/ui/icons";
 import { Skeleton } from "@wealthfolio/ui/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@wealthfolio/ui/components/ui/tooltip";
 import { useAccessTokens } from "../hooks/use-access-tokens";
-import { matchPreset, scopeLabel } from "../scopes";
+import { matchPreset, presetLabel, scopeLabel } from "../scopes";
 import { PatCreateDialog } from "./pat-create-dialog";
 
 type TokenStatus = "active" | "expired" | "revoked";
 
-const STATUS_LABEL: Record<TokenStatus, string> = {
-  active: "Active",
-  expired: "Expired",
-  revoked: "Revoked",
+const STATUS_LABEL_KEY: Record<TokenStatus, string> = {
+  active: "settings:agentAccess.pat_status_active",
+  expired: "settings:agentAccess.pat_status_expired",
+  revoked: "settings:agentAccess.pat_status_revoked",
 };
 
 function tokenStatus(token: AgentAccessToken): TokenStatus {
@@ -43,29 +45,36 @@ function tokenStatus(token: AgentAccessToken): TokenStatus {
 }
 
 /** "Created Mar 12, 2026". */
-const formatCreated = (value: string) => `Created ${format(new Date(value), "MMM dd, yyyy")}`;
+const formatCreated = (t: TFunction, value: string) =>
+  t("settings:agentAccess.pat_created", { date: format(new Date(value), "MMM dd, yyyy") });
 
 /** "Expires in 78 days" / "No expiration" / "Expired Apr 1". */
-function formatExpiry(expiresAt: string | null): string {
-  if (!expiresAt) return "No expiration";
+function formatExpiry(t: TFunction, expiresAt: string | null): string {
+  if (!expiresAt) return t("settings:agentAccess.pat_no_expiration");
   const date = new Date(expiresAt);
-  if (date < new Date()) return `Expired ${format(date, "MMM d")}`;
-  return `Expires in ${formatDistanceToNowStrict(date)}`;
+  if (date < new Date())
+    return t("settings:agentAccess.pat_expired_on", { date: format(date, "MMM d") });
+  return t("settings:agentAccess.pat_expires_in", { duration: formatDistanceToNowStrict(date) });
 }
 
 /** "Last used 2 hours ago" / "Never used". */
-const formatLastUsed = (lastUsedAt: string | null) =>
+const formatLastUsed = (t: TFunction, lastUsedAt: string | null) =>
   lastUsedAt
-    ? `Last used ${formatDistanceToNowStrict(new Date(lastUsedAt), { addSuffix: true })}`
-    : "Never used";
+    ? t("settings:agentAccess.pat_last_used", {
+        time: formatDistanceToNowStrict(new Date(lastUsedAt), { addSuffix: true }),
+      })
+    : t("settings:agentAccess.pat_never_used");
 
 /** A muted chip summarizing a token's scopes; hover to view the exact list. */
 function ScopeBadge({ scopes }: { scopes: string[] }) {
+  const { t } = useTranslation();
   if (scopes.length === 0) {
     return <span className="text-muted-foreground text-xs">—</span>;
   }
   const preset = matchPreset(scopes);
-  const label = preset ? preset.label : `Custom · ${scopes.length} scopes`;
+  const label = preset
+    ? presetLabel(t, preset)
+    : t("settings:agentAccess.pat_scope_custom", { count: scopes.length });
   return (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -74,10 +83,10 @@ function ScopeBadge({ scopes }: { scopes: string[] }) {
         </Badge>
       </TooltipTrigger>
       <TooltipContent className="max-w-xs">
-        <p className="mb-1 font-medium">This token can:</p>
+        <p className="mb-1 font-medium">{t("settings:agentAccess.pat_scopes_tooltip")}</p>
         <ul className="text-muted-foreground space-y-0.5">
           {scopes.map((scope) => (
-            <li key={scope}>{scopeLabel(scope)}</li>
+            <li key={scope}>{scopeLabel(t, scope)}</li>
           ))}
         </ul>
       </TooltipContent>
@@ -86,6 +95,7 @@ function ScopeBadge({ scopes }: { scopes: string[] }) {
 }
 
 export function PatTable({ serverUrl }: { serverUrl?: string } = {}) {
+  const { t } = useTranslation();
   const { tokens, isLoading, createMutation, deleteMutation } = useAccessTokens();
   const [createOpen, setCreateOpen] = useState(false);
   const [removing, setRemoving] = useState<AgentAccessToken | null>(null);
@@ -95,15 +105,15 @@ export function PatTable({ serverUrl }: { serverUrl?: string } = {}) {
       <CardHeader className="flex flex-row items-start justify-between gap-3 space-y-0 p-6 pb-4">
         <div className="min-w-0 space-y-1">
           <CardTitle className="text-base font-semibold tracking-tight">
-            Personal access tokens
+            {t("settings:agentAccess.pat_title")}
           </CardTitle>
           <CardDescription className="text-xs">
-            Scoped tokens for MCP clients connecting to the /mcp endpoint.
+            {t("settings:agentAccess.pat_description")}
           </CardDescription>
         </div>
         <Button size="sm" onClick={() => setCreateOpen(true)}>
           <Icons.Plus className="mr-2 h-4 w-4" />
-          Create token
+          {t("settings:agentAccess.pat_create")}
         </Button>
       </CardHeader>
       <CardContent className="p-6 pt-0">
@@ -114,7 +124,7 @@ export function PatTable({ serverUrl }: { serverUrl?: string } = {}) {
           </div>
         ) : tokens.length === 0 ? (
           <div className="text-muted-foreground rounded-md border border-dashed py-8 text-center text-xs">
-            No access tokens yet. Create one to connect an MCP client.
+            {t("settings:agentAccess.pat_empty")}
           </div>
         ) : (
           <div className="flex flex-col gap-2">
@@ -145,12 +155,12 @@ export function PatTable({ serverUrl }: { serverUrl?: string } = {}) {
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="truncate text-sm font-medium">{token.name}</span>
                       <Badge variant="secondary" className="font-normal">
-                        {STATUS_LABEL[status]}
+                        {t(STATUS_LABEL_KEY[status])}
                       </Badge>
                     </div>
                     <p className="text-muted-foreground text-xs">
-                      {formatCreated(token.createdAt)} · {formatExpiry(token.expiresAt)} ·{" "}
-                      {formatLastUsed(token.lastUsedAt)}
+                      {formatCreated(t, token.createdAt)} · {formatExpiry(t, token.expiresAt)} ·{" "}
+                      {formatLastUsed(t, token.lastUsedAt)}
                     </p>
                   </div>
                   <div className="flex shrink-0 items-center gap-3">
@@ -161,7 +171,7 @@ export function PatTable({ serverUrl }: { serverUrl?: string } = {}) {
                       className="text-destructive hover:text-destructive hover:border-destructive/40 rounded-full"
                       onClick={() => setRemoving(token)}
                     >
-                      Remove
+                      {t("settings:agentAccess.pat_remove")}
                     </Button>
                   </div>
                 </div>
@@ -188,14 +198,17 @@ export function PatTable({ serverUrl }: { serverUrl?: string } = {}) {
       <AlertDialog open={removing !== null} onOpenChange={(value) => !value && setRemoving(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Remove token?</AlertDialogTitle>
+            <AlertDialogTitle>{t("settings:agentAccess.pat_remove_title")}</AlertDialogTitle>
             <AlertDialogDescription>
-              {removing ? `"${removing.name}"` : "This token"} will be deleted and stop working
-              immediately. Any MCP client using it will lose access. This can&apos;t be undone.
+              {removing
+                ? t("settings:agentAccess.pat_remove_desc_named", { name: removing.name })
+                : t("settings:agentAccess.pat_remove_desc_generic")}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={deleteMutation.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel disabled={deleteMutation.isPending}>
+              {t("common:cancel")}
+            </AlertDialogCancel>
             <AlertDialogAction
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
               disabled={deleteMutation.isPending}
@@ -204,7 +217,7 @@ export function PatTable({ serverUrl }: { serverUrl?: string } = {}) {
                 deleteMutation.mutate(removing.id, { onSuccess: () => setRemoving(null) });
               }}
             >
-              Remove
+              {t("settings:agentAccess.pat_remove")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

@@ -2,6 +2,8 @@ import { TimePeriod } from "@/lib/types";
 import { formatDate } from "@/lib/utils";
 import { formatAmount } from "@wealthfolio/ui";
 import { useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
+import type { TFunction } from "i18next";
 import {
   Area,
   AreaChart,
@@ -166,6 +168,7 @@ export default function HistoryChart({
 }
 
 function SymbolToolTip({ active, payload }: SymbolTooltipProps) {
+  const { t } = useTranslation();
   if (!active || !payload?.length) {
     return null;
   }
@@ -185,10 +188,10 @@ function SymbolToolTip({ active, payload }: SymbolTooltipProps) {
             const dotClass = markerDotClass(tone);
             const label =
               act.variant === "buy"
-                ? "Bought"
+                ? t("common:component.activity_bought")
                 : act.variant === "sell"
-                  ? "Sold"
-                  : formatActivityType(act.activityType);
+                  ? t("common:component.activity_sold")
+                  : formatActivityType(act.activityType, t);
             const hasPriceDetails = Boolean(act.quantity && act.unitPrice);
             return (
               <div key={act.id} className="flex items-center justify-between space-x-2">
@@ -248,8 +251,8 @@ function markerDotClass(tone: HistoryChartMarkerTone) {
   }
 }
 
-function formatActivityType(activityType?: string) {
-  if (!activityType) return "Activity";
+function formatActivityType(activityType: string | undefined, t: TFunction) {
+  if (!activityType) return t("common:component.activity_generic");
   return activityType
     .toLowerCase()
     .split("_")

@@ -16,7 +16,9 @@ use super::assets_model::{
     InstrumentType, NewAsset, QuoteCcyResolutionSource, QuoteMode, UpdateAssetProfile,
 };
 use super::assets_traits::{AssetRepositoryTrait, AssetServiceTrait};
-use super::auto_classification::{AutoClassificationService, ClassificationInput};
+use super::auto_classification::{
+    AutoClassificationService, ClassificationInput, ProviderProfileClassification,
+};
 use super::{
     asset_provider_alias_symbols, parse_crypto_pair_symbol, parse_symbol_with_exchange_suffix,
     AssetResolutionInput, AssetResolutionOutput,
@@ -2192,15 +2194,16 @@ impl AssetServiceTrait for AssetService {
 
         // Auto-classify asset based on provider profile data
         if let Some(taxonomy_service) = &self.taxonomy_service {
-            let classification_input = ClassificationInput::from_provider_profile(
-                provider_profile.asset_type.as_deref(),
-                updated_asset.name.as_deref(),
-                None,
-                provider_profile.sectors.as_deref(),
-                None,
-                provider_profile.countries.as_deref(),
-                existing_asset.instrument_exchange_mic.as_deref(),
-            );
+            let classification_input =
+                ClassificationInput::from_provider_profile(ProviderProfileClassification {
+                    quote_type: provider_profile.asset_type.as_deref(),
+                    name: updated_asset.name.as_deref(),
+                    sectors_json: provider_profile.sectors.as_deref(),
+                    classes_json: provider_profile.classes.as_deref(),
+                    countries_json: provider_profile.countries.as_deref(),
+                    exchange_mic: existing_asset.instrument_exchange_mic.as_deref(),
+                    ..Default::default()
+                });
 
             let auto_classifier = AutoClassificationService::new(Arc::clone(taxonomy_service));
             match auto_classifier

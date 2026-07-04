@@ -21,6 +21,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { useTranslation } from "react-i18next";
 import { authenticate as authenticateWithASWebAuth } from "tauri-plugin-web-auth-api";
 import { clearSyncSession, restoreSyncSession, storeSyncSession } from "../services/auth-service";
 import { getUserInfo } from "../services/broker-service";
@@ -200,6 +201,7 @@ const createSupabaseClient = () => {
 
 // Internal provider used when Connect is enabled
 function EnabledWealthfolioConnectProvider({ children }: { children: ReactNode }) {
+  const { t } = useTranslation();
   const { isAuthenticated } = useAuth();
   const [isInitializing, setIsInitializing] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
@@ -343,7 +345,7 @@ function EnabledWealthfolioConnectProvider({ children }: { children: ReactNode }
         if (!data.session) {
           processedAuthCodesRef.current.delete(payload.code);
           logger.error("No session returned after code exchange");
-          setError("No session returned after completing sign-in.");
+          setError(t("connect:authErrors.noSessionReturned"));
           return;
         }
 
@@ -359,10 +361,10 @@ function EnabledWealthfolioConnectProvider({ children }: { children: ReactNode }
           processedAuthCodesRef.current.delete(payload.code);
         }
         logger.error(`Error in handleAuthCallback: ${err instanceof Error ? err.message : err}`);
-        setError(err instanceof Error ? err.message : "Failed to complete sign in");
+        setError(err instanceof Error ? err.message : t("connect:authErrors.completeSignInFailed"));
       }
     },
-    [supabase, storeTokens, rememberAuthCodeIfNew, requestPostLoginSync],
+    [supabase, storeTokens, rememberAuthCodeIfNew, requestPostLoginSync, t],
   );
 
   // Restore session from stored tokens on mount
@@ -508,14 +510,14 @@ function EnabledWealthfolioConnectProvider({ children }: { children: ReactNode }
           requestPostLoginSync("email-sign-in", data.session);
         }
       } catch (err) {
-        const message = err instanceof Error ? err.message : "Sign in failed";
+        const message = err instanceof Error ? err.message : t("connect:authErrors.signInFailed");
         setError(message);
         throw err;
       } finally {
         setIsLoading(false);
       }
     },
-    [supabase, storeTokens, requestPostLoginSync],
+    [supabase, storeTokens, requestPostLoginSync, t],
   );
 
   const signUpWithEmail = useCallback(
@@ -542,17 +544,17 @@ function EnabledWealthfolioConnectProvider({ children }: { children: ReactNode }
           requestPostLoginSync("email-sign-up", data.session);
         } else if (data.user && !data.session) {
           // Email confirmation required
-          setError("Please check your email to confirm your account.");
+          setError(t("connect:authErrors.confirmEmail"));
         }
       } catch (err) {
-        const message = err instanceof Error ? err.message : "Sign up failed";
+        const message = err instanceof Error ? err.message : t("connect:authErrors.signUpFailed");
         setError(message);
         throw err;
       } finally {
         setIsLoading(false);
       }
     },
-    [supabase, storeTokens, requestPostLoginSync],
+    [supabase, storeTokens, requestPostLoginSync, t],
   );
 
   const signInWithOAuth = useCallback(
@@ -638,14 +640,14 @@ function EnabledWealthfolioConnectProvider({ children }: { children: ReactNode }
           await openUrlInBrowser(data.url);
         }
       } catch (err) {
-        const message = err instanceof Error ? err.message : "OAuth sign in failed";
+        const message = err instanceof Error ? err.message : t("connect:authErrors.oauthFailed");
         setError(message);
         throw err;
       } finally {
         setIsLoading(false);
       }
     },
-    [supabase, handleAuthCallback],
+    [supabase, handleAuthCallback, t],
   );
 
   const signInWithMagicLink = useCallback(
@@ -680,14 +682,15 @@ function EnabledWealthfolioConnectProvider({ children }: { children: ReactNode }
         // Don't throw error - magic link sent successfully
         // The UI will handle showing success message
       } catch (err) {
-        const message = err instanceof Error ? err.message : "Failed to send magic link";
+        const message =
+          err instanceof Error ? err.message : t("connect:authErrors.magicLinkFailed");
         setError(message);
         throw err;
       } finally {
         setIsLoading(false);
       }
     },
-    [supabase],
+    [supabase, t],
   );
 
   const verifyOtp = useCallback(
@@ -714,14 +717,15 @@ function EnabledWealthfolioConnectProvider({ children }: { children: ReactNode }
           requestPostLoginSync("otp", data.session);
         }
       } catch (err) {
-        const message = err instanceof Error ? err.message : "Invalid verification code";
+        const message =
+          err instanceof Error ? err.message : t("connect:authErrors.invalidVerificationCode");
         setError(message);
         throw err;
       } finally {
         setIsLoading(false);
       }
     },
-    [supabase, storeTokens, requestPostLoginSync],
+    [supabase, storeTokens, requestPostLoginSync, t],
   );
 
   const signOut = useCallback(async () => {
@@ -749,13 +753,13 @@ function EnabledWealthfolioConnectProvider({ children }: { children: ReactNode }
       setPostLoginSyncRequest(null);
       clearProcessedAuthCodes();
       await storeTokens(null).catch(() => {});
-      const message = err instanceof Error ? err.message : "Sign out failed";
+      const message = err instanceof Error ? err.message : t("connect:authErrors.signOutFailed");
       setError(message);
       throw err;
     } finally {
       setIsLoading(false);
     }
-  }, [supabase, storeTokens, clearProcessedAuthCodes]);
+  }, [supabase, storeTokens, clearProcessedAuthCodes, t]);
 
   const clearError = useCallback(() => setError(null), []);
 
@@ -776,12 +780,13 @@ function EnabledWealthfolioConnectProvider({ children }: { children: ReactNode }
     } catch (err) {
       logger.error("Failed to fetch user info from API.");
       setUserInfo(null);
-      const message = err instanceof Error ? err.message : "Failed to fetch user info";
+      const message =
+        err instanceof Error ? err.message : t("connect:authErrors.fetchUserInfoFailed");
       setError(message);
     } finally {
       setIsLoadingUserInfo(false);
     }
-  }, [session]);
+  }, [session, t]);
 
   // Fetch user info when session changes
   useEffect(() => {

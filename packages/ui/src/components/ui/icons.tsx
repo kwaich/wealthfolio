@@ -176,6 +176,7 @@ import {
 import type { ComponentType, CSSProperties } from "react";
 
 // Phosphor icons - deep imports for optimal tree shaking with Vite
+import { CalendarDotsIcon } from "@phosphor-icons/react/dist/csr/CalendarDots";
 import { CarProfileIcon } from "@phosphor-icons/react/dist/csr/CarProfile";
 import { ClockCounterClockwiseIcon } from "@phosphor-icons/react/dist/csr/ClockCounterClockwise";
 import { CoinsIcon } from "@phosphor-icons/react/dist/csr/Coins";
@@ -188,6 +189,8 @@ import { EyeIcon } from "@phosphor-icons/react/dist/csr/Eye";
 import { EyeSlashIcon } from "@phosphor-icons/react/dist/csr/EyeSlash";
 import { GarageIcon } from "@phosphor-icons/react/dist/csr/Garage";
 import { HouseIcon } from "@phosphor-icons/react/dist/csr/House";
+import { PuzzlePieceIcon } from "@phosphor-icons/react/dist/csr/PuzzlePiece";
+import { ReceiptIcon } from "@phosphor-icons/react/dist/csr/Receipt";
 import { SketchLogoIcon } from "@phosphor-icons/react/dist/csr/SketchLogo";
 import { SparkleIcon } from "@phosphor-icons/react/dist/csr/Sparkle";
 import { TagIcon } from "@phosphor-icons/react/dist/csr/Tag";
@@ -715,6 +718,15 @@ const IconsInternal = {
   ),
 
   // Phosphor icons
+  CalendarDots: ({ size, className, style, color }: IconProps) => (
+    <CalendarDotsIcon size={size} weight="duotone" className={className} style={style} color={color} />
+  ),
+  PuzzlePiece: ({ size, className, style, color }: IconProps) => (
+    <PuzzlePieceIcon size={size} weight="regular" className={className} style={style} color={color} />
+  ),
+  ReceiptDuotone: ({ size, className, style, color }: IconProps) => (
+    <ReceiptIcon size={size} weight="duotone" className={className} style={style} color={color} />
+  ),
   Devices: ({ size, className, style, color }: IconProps) => (
     <DevicesIcon size={size} weight="duotone" className={className} style={style} color={color} />
   ),
@@ -894,10 +906,12 @@ export type IconName =
   | "ArrowRightLeft"
   | "ArrowLeftRight"
   | "Receipt"
+  | "ReceiptDuotone"
   | "ReceiptText"
   | "Percent"
   | "Store"
   | "Package"
+  | "PuzzlePiece"
   | "Star"
   | "Shield"
   | "ShieldAlert"
@@ -950,6 +964,7 @@ export type IconName =
   | "UserSwitch"
   // Additional icons for UI components
   | "Baseline"
+  | "CalendarDots"
   | "CalendarIcon"
   | "CaseSensitive"
   | "CheckSquare"

@@ -1,4 +1,5 @@
 import { isWeb } from "@/adapters";
+import { setAddonQueryClient } from "@/addons/addons-runtime-context";
 import { AuthGate, AuthProvider } from "@/context/auth-context";
 import { EventDialogProvider } from "@/features/spending/components/event-dialog-provider";
 import { WealthfolioConnectProvider } from "@/features/wealthfolio-connect";
@@ -26,8 +27,7 @@ function App() {
 
   const isWebEnv = isWeb;
 
-  // Make QueryClient available globally for addons
-  window.__wealthfolio_query_client__ = queryClient;
+  setAddonQueryClient(queryClient as unknown as Parameters<typeof setAddonQueryClient>[0]);
 
   const routedContent = isWebEnv ? (
     <AuthGate fallback={<LoginPage />}>

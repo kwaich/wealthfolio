@@ -12,10 +12,12 @@ export const extractAddonZip = async (zipData: Uint8Array): Promise<ExtractedAdd
 export const installAddonZip = async (
   zipData: Uint8Array,
   enableAfterInstall?: boolean,
+  approvedNetworkHosts?: string[],
 ): Promise<AddonManifest> => {
   return await tauriInvoke<AddonManifest>("install_addon_zip", {
     zipData: Array.from(zipData),
     enableAfterInstall,
+    approvedNetworkHosts,
   });
 };
 
@@ -67,8 +69,9 @@ export const extractAddon = async (zipData: Uint8Array): Promise<ExtractedAddon>
 export const installAddon = async (
   zipData: Uint8Array,
   enableAfterInstall?: boolean,
+  approvedNetworkHosts?: string[],
 ): Promise<AddonManifest> => {
-  return installAddonZip(zipData, enableAfterInstall);
+  return installAddonZip(zipData, enableAfterInstall, approvedNetworkHosts);
 };
 
 export const getEnabledAddons = async (): Promise<ExtractedAddon[]> => {
@@ -95,10 +98,12 @@ export const downloadAddonForReview = async (addonId: string): Promise<Extracted
 export const installFromStaging = async (
   addonId: string,
   enableAfterInstall?: boolean,
+  approvedNetworkHosts?: string[],
 ): Promise<AddonManifest> => {
   return tauriInvoke<AddonManifest>("install_addon_from_staging", {
     addonId,
     enableAfterInstall,
+    approvedNetworkHosts,
   });
 };
 

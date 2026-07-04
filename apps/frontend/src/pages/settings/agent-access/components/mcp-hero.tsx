@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 
 /** Shared "hero" banner for AI Agent Access, used on both desktop and web. */
@@ -20,9 +21,10 @@ export function McpHero({
   /** Optional right-slot control (the enable toggle on desktop). */
   action?: ReactNode;
 }) {
+  const { t } = useTranslation();
   return (
     <section
-      aria-label="AI Agent Access status"
+      aria-label={t("settings:agentAccess.hero_aria")}
       className="bg-foreground text-background relative overflow-hidden rounded-lg shadow-lg"
     >
       <div className="p-5 sm:px-7 sm:py-6">

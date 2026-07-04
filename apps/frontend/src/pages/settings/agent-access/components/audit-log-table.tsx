@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { format } from "date-fns";
 import {
   AlertDialog,
@@ -36,15 +37,9 @@ import { useAgentAudit } from "../hooks/use-agent-audit";
 
 const PAGE_SIZE = 25;
 
-const ACTOR_LABEL: Record<string, string> = {
-  pat: "Token",
+const ACTOR_LABEL_KEY: Record<string, string> = {
+  pat: "settings:agentAccess.audit_actor_token",
 };
-
-const OUTCOME_OPTIONS = [
-  { label: "Success", value: "success" },
-  { label: "Denied", value: "denied" },
-  { label: "Error", value: "error" },
-];
 
 function outcomeVariant(outcome: string): "success" | "warning" | "destructive" | "secondary" {
   switch (outcome) {
@@ -60,6 +55,15 @@ function outcomeVariant(outcome: string): "success" | "warning" | "destructive" 
 }
 
 export function AuditLogTable({ disabledNotice }: { disabledNotice?: string }) {
+  const { t } = useTranslation();
+  const OUTCOME_OPTIONS = useMemo(
+    () => [
+      { label: t("settings:agentAccess.audit_outcome_success"), value: "success" },
+      { label: t("settings:agentAccess.audit_outcome_denied"), value: "denied" },
+      { label: t("settings:agentAccess.audit_outcome_error"), value: "error" },
+    ],
+    [t],
+  );
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
   const [tools, setTools] = useState<Set<string>>(new Set());
@@ -102,9 +106,11 @@ export function AuditLogTable({ disabledNotice }: { disabledNotice?: string }) {
     <Card className="rounded-lg">
       <CardHeader className="flex flex-row items-start justify-between gap-3 space-y-0 p-6 pb-4">
         <div className="space-y-1">
-          <CardTitle className="text-base font-semibold tracking-tight">Agent activity</CardTitle>
+          <CardTitle className="text-base font-semibold tracking-tight">
+            {t("settings:agentAccess.audit_card_title")}
+          </CardTitle>
           <CardDescription className="text-xs">
-            Recent tool calls made by connected agents.
+            {t("settings:agentAccess.audit_card_description")}
           </CardDescription>
         </div>
         {logHasData && (
@@ -116,7 +122,7 @@ export function AuditLogTable({ disabledNotice }: { disabledNotice?: string }) {
             onClick={() => setPurgeOpen(true)}
           >
             <Icons.Trash2 className="h-3.5 w-3.5" />
-            Clear log
+            {t("settings:agentAccess.audit_clear_log")}
           </Button>
         )}
       </CardHeader>
@@ -136,18 +142,18 @@ export function AuditLogTable({ disabledNotice }: { disabledNotice?: string }) {
                 type="text"
                 value={search}
                 onChange={(event) => onFilter(setSearch, event.target.value)}
-                placeholder="Search tool…"
+                placeholder={t("settings:agentAccess.audit_search_placeholder")}
                 className="shadow-inner-xs bg-muted/90 hover:bg-muted/80 placeholder:text-muted-foreground focus:ring-ring/50 h-8 w-full rounded-md pl-8 pr-3 text-sm outline-none transition-colors focus:ring-2"
               />
             </div>
             <FacetedFilter
-              title="Tool"
+              title={t("settings:agentAccess.audit_filter_tool")}
               options={toolOptions}
               selectedValues={tools}
               onFilterChange={(value) => onFilter(setTools, value)}
             />
             <FacetedFilter
-              title="Outcome"
+              title={t("settings:agentAccess.audit_filter_outcome")}
               options={OUTCOME_OPTIONS}
               selectedValues={outcomes}
               onFilterChange={(value) => onFilter(setOutcomes, value)}
@@ -164,7 +170,7 @@ export function AuditLogTable({ disabledNotice }: { disabledNotice?: string }) {
                   setPage(1);
                 }}
               >
-                Reset
+                {t("settings:agentAccess.audit_reset")}
               </Button>
             )}
           </div>
@@ -178,7 +184,9 @@ export function AuditLogTable({ disabledNotice }: { disabledNotice?: string }) {
           </div>
         ) : items.length === 0 ? (
           <p className="text-muted-foreground py-8 text-center text-sm">
-            {hasFilters ? "No entries match these filters." : "No agent activity recorded yet."}
+            {hasFilters
+              ? t("settings:agentAccess.audit_empty_filtered")
+              : t("settings:agentAccess.audit_empty")}
           </p>
         ) : (
           <>
@@ -186,10 +194,10 @@ export function AuditLogTable({ disabledNotice }: { disabledNotice?: string }) {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Time</TableHead>
-                    <TableHead>Tool</TableHead>
-                    <TableHead>Outcome</TableHead>
-                    <TableHead>Actor</TableHead>
+                    <TableHead>{t("settings:agentAccess.audit_col_time")}</TableHead>
+                    <TableHead>{t("settings:agentAccess.audit_col_tool")}</TableHead>
+                    <TableHead>{t("settings:agentAccess.audit_col_outcome")}</TableHead>
+                    <TableHead>{t("settings:agentAccess.audit_col_actor")}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -209,8 +217,9 @@ export function AuditLogTable({ disabledNotice }: { disabledNotice?: string }) {
                       </TableCell>
                       <TableCell className="font-mono text-xs" title={entry.actorFingerprint}>
                         {nameByFingerprint.get(entry.actorFingerprint) ??
-                          ACTOR_LABEL[entry.actorKind] ??
-                          entry.actorKind}
+                          (ACTOR_LABEL_KEY[entry.actorKind]
+                            ? t(ACTOR_LABEL_KEY[entry.actorKind])
+                            : entry.actorKind)}
                       </TableCell>
                     </TableRow>
                   ))}
@@ -220,7 +229,11 @@ export function AuditLogTable({ disabledNotice }: { disabledNotice?: string }) {
 
             <div className="flex items-center justify-between">
               <p className="text-muted-foreground text-xs">
-                Page {page} of {pageCount} · {totalCount} {totalCount === 1 ? "entry" : "entries"}
+                {t("settings:agentAccess.audit_pagination", {
+                  count: totalCount,
+                  page,
+                  pageCount,
+                })}
               </p>
               <div className="flex items-center gap-2">
                 <Button
@@ -230,7 +243,7 @@ export function AuditLogTable({ disabledNotice }: { disabledNotice?: string }) {
                   onClick={() => setPage((current) => Math.max(1, current - 1))}
                 >
                   <Icons.ChevronLeft className="h-4 w-4" />
-                  <span className="sr-only">Previous page</span>
+                  <span className="sr-only">{t("settings:agentAccess.audit_prev_page")}</span>
                 </Button>
                 <Button
                   variant="outline"
@@ -239,7 +252,7 @@ export function AuditLogTable({ disabledNotice }: { disabledNotice?: string }) {
                   onClick={() => setPage((current) => Math.min(pageCount, current + 1))}
                 >
                   <Icons.ChevronRight className="h-4 w-4" />
-                  <span className="sr-only">Next page</span>
+                  <span className="sr-only">{t("settings:agentAccess.audit_next_page")}</span>
                 </Button>
               </div>
             </div>
@@ -250,13 +263,15 @@ export function AuditLogTable({ disabledNotice }: { disabledNotice?: string }) {
       <AlertDialog open={purgeOpen} onOpenChange={setPurgeOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Clear audit log?</AlertDialogTitle>
+            <AlertDialogTitle>{t("settings:agentAccess.audit_clear_title")}</AlertDialogTitle>
             <AlertDialogDescription>
-              This permanently deletes every agent activity entry. This action cannot be undone.
+              {t("settings:agentAccess.audit_clear_desc")}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={purgeMutation.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel disabled={purgeMutation.isPending}>
+              {t("common:cancel")}
+            </AlertDialogCancel>
             <AlertDialogAction
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
               disabled={purgeMutation.isPending}
@@ -270,7 +285,7 @@ export function AuditLogTable({ disabledNotice }: { disabledNotice?: string }) {
               }}
             >
               <Icons.Trash className="mr-2 h-4 w-4" />
-              Clear log
+              {t("settings:agentAccess.audit_clear_log")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

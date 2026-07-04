@@ -258,11 +258,11 @@ const enable: AddonEnableFunction = (context) => {
   const addedItems: Array<{ remove: () => void }> = [];
 
   try {
-    // Add sidebar navigation item with icon from UI library
+    // Add sidebar navigation item with a host-supported icon token
     const sidebarItem = context.sidebar.addItem({
       id: 'investment-fees-tracker',
       label: 'Fee Tracker',
-      icon: <Icons.Invoice className="h-5 w-5" />,
+      icon: 'receipt',
       route: '/addons/investment-fees-tracker',
       order: 200
     });
@@ -726,7 +726,8 @@ Add an item to the application sidebar.
 
 - `config.id` (string): Unique identifier
 - `config.label` (string): Display text
-- `config.icon` (string | ReactNode): Icon name or component
+- `config.icon` (string): Host-supported icon token, such as `receipt`,
+  `chart-bar`, or `calendar-dots`
 - `config.route` (string): Navigation route
 - `config.order` (number): Display order (optional)
 - `config.onClick` (function): Click handler (optional)
