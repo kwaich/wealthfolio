@@ -9,6 +9,8 @@ import {
   SymbolSearch,
   AssetTypeSelector,
   OptionContractFields,
+  PositionIntentSelector,
+  StockTradeIntentSelector,
   type AssetType,
   type AccountSelectOption,
 } from "../forms/fields";
@@ -284,6 +286,9 @@ export function MobileDetailsStep({ accounts, activityType, isEditing }: MobileD
       setValue("quoteMode" as any, QuoteMode.MARKET);
       setValue("assetKind" as any, undefined);
     }
+    // Reset the trade intent (Sell Short / Buy to Cover / option Open-Close) so
+    // a stale subtype never carries across asset types.
+    setValue("subtype" as any, null);
     setValue("assetId" as any, "");
     setValue("existingAssetId" as any, undefined);
     setValue("exchangeMic" as any, undefined);
@@ -444,7 +449,8 @@ export function MobileDetailsStep({ accounts, activityType, isEditing }: MobileD
         : t("activity:form.label_price");
 
   // Toggle shown in the "Asset & Account" card header: transfer mode for
-  // transfers, asset type (Stock/Option/Bond) for buy/sell.
+  // transfers. Asset type (Stock/Option/Bond) renders as a full-width row
+  // inside the section instead (see below).
   const headerAction = isTransfer ? (
     <AnimatedToggleGroup
       items={transferModeItems}
@@ -453,13 +459,18 @@ export function MobileDetailsStep({ accounts, activityType, isEditing }: MobileD
       size="sm"
       rounded="lg"
     />
-  ) : isBuyOrSell && !isEditing ? (
-    <AssetTypeSelector
-      control={control as any}
-      name={"assetType" as any}
-      onValueChange={handleAssetTypeChange}
-    />
   ) : null;
+
+  // Stock/Option/Bond selector — full-width segmented control on mobile.
+  const assetTypeSelector =
+    isBuyOrSell && !isEditing ? (
+      <AssetTypeSelector
+        control={control as any}
+        name={"assetType" as any}
+        onValueChange={handleAssetTypeChange}
+        className="w-full"
+      />
+    ) : null;
 
   const detailsTitle = isBuyOrSell
     ? t("activity:form.section_trade")
@@ -524,6 +535,7 @@ export function MobileDetailsStep({ accounts, activityType, isEditing }: MobileD
       <ScrollArea>
         <div className="form-mobile-spacing pb-4">
           <FormSection title={t("activity:form.section_asset_account")} action={headerAction}>
+            {assetTypeSelector}
             {/* External checkbox + direction (transfers) */}
             {isTransfer && (
               <div className="flex items-center gap-4">
@@ -748,6 +760,20 @@ export function MobileDetailsStep({ accounts, activityType, isEditing }: MobileD
 
           {hasValueFields && (
             <FormSection title={detailsTitle}>
+              {/* Trade intent — Sell/Sell Short (stock), Open/Close (option). Bonds have none. */}
+              {isBuyOrSell && !isBond && (
+                <div className="-mt-1">
+                  {isOption ? (
+                    <PositionIntentSelector control={control as any} name={"subtype" as any} />
+                  ) : (
+                    <StockTradeIntentSelector
+                      control={control as any}
+                      name={"subtype" as any}
+                      side={activityType === ActivityType.SELL ? "sell" : "buy"}
+                    />
+                  )}
+                </div>
+              )}
               {/* Quantity and Unit Price */}
               {needsQuantity && (
                 <>

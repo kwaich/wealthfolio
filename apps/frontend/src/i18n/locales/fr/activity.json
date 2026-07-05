@@ -749,6 +749,7 @@
     "err_transfer_amount_currencies": "Le montant et les devises du transfert sont requis.",
     "err_link_before_internal": "Utilisez Lier le transfert... pour associer ce transfert existant avant de l'enregistrer comme interne.",
     "err_internal_securities_both_legs": "La modification d'un transfert de titres interne nécessite les deux volets.",
+    "add_details": "Saisissez les détails de la transaction",
     "update_details": "Mettre à jour les détails de la transaction"
   },
   "import": {

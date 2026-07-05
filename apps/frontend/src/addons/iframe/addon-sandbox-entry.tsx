@@ -95,6 +95,20 @@ function callHost(type: string, payload: Record<string, unknown> = {}) {
   });
 }
 
+function formatError(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function reportHostCallError(action: string, error: unknown) {
+  const message = `${action} failed: ${formatError(error)}`;
+  console.error(message);
+  post("runtimeError", { error: message });
+}
+
+function reportLoadPhase(phase: string) {
+  post("loadPhase", { phase });
+}
+
 function waitForNextPaint() {
   return new Promise<void>((resolve) => {
     requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
@@ -514,7 +528,9 @@ function createContext() {
           route: typeof cfg?.route === "string" ? cfg.route : undefined,
           order: typeof cfg?.order === "number" ? cfg.order : undefined,
         };
-        callHost("sidebar.addItem", { item }).catch((error: unknown) => console.error(error));
+        callHost("sidebar.addItem", { item }).catch((error: unknown) => {
+          reportHostCallError("sidebar.addItem", error);
+        });
         return {
           remove() {
             return callHost("sidebar.removeItem", { itemId: item.id });
@@ -537,7 +553,7 @@ function createContext() {
         }
         return callHost("router.add", { route: normalizedRoute }).catch((error: unknown) => {
           routes.delete(normalizedRoute.routeId);
-          console.error(error);
+          reportHostCallError("router.add", error);
           throw error;
         });
       },
@@ -573,16 +589,22 @@ function resolveEnable(mod: Record<string, unknown>) {
 }
 
 async function loadAddon(code: string, files: SandboxAddonFile[] = []) {
+  reportLoadPhase("installing addon styles");
   installAddonCssFiles(files);
+  reportLoadPhase("creating addon module registry");
   const moduleRegistry = createAddonModuleRegistry(code, files);
   addonModuleUrls = moduleRegistry.objectUrls;
   addonCodeUrl = moduleRegistry.mainUrl;
+  reportLoadPhase(`importing addon module ${moduleRegistry.mainPath}`);
   const mod = (await import(/* @vite-ignore */ addonCodeUrl)) as Record<string, unknown>;
+  reportLoadPhase("addon module imported");
   const enable = resolveEnable(mod);
   if (!enable) {
     throw new Error("Addon does not export an enable(context) function");
   }
+  reportLoadPhase("running addon enable");
   const result = await (enable as (context: unknown) => unknown)(createContext());
+  reportLoadPhase("addon enable resolved");
   addonDisable =
     result &&
     typeof result === "object" &&

@@ -88,7 +88,7 @@
   "download": "Herunterladen",
   "insights": "Einblicke",
   "assistant": "Assistent",
-  "connect": "Verbinden",
+  "connect": "Connect",
   "addons": "Add-ons",
   "nav": {
     "label_dashboard": "Übersicht anzeigen",
@@ -108,7 +108,7 @@
     "open_launcher": "Launcher öffnen",
     "more_navigation": "Weitere Navigation",
     "more_options": "Weitere Optionen",
-    "connect_last_synced": "Verbinden - Zuletzt synchronisiert {{time}}",
+    "connect_last_synced": "Connect - Zuletzt synchronisiert {{time}}",
     "refreshing": "Wird aktualisiert…",
     "sidebar": "Seitenleiste",
     "floating_navigation": "Schwebende Navigation",

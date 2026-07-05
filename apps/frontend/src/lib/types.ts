@@ -2253,6 +2253,10 @@ export interface HealthIssue {
   category: HealthCategory;
   title: string;
   message: string;
+  /** Stable message code; when present the frontend renders health:issues.<code>.* */
+  code?: string;
+  /** Interpolation params for the translated title/message (count, symbol, dates, …). */
+  params?: Record<string, unknown>;
   affectedCount: number;
   affectedMvPct?: number;
   fixAction?: FixAction;

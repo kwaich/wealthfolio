@@ -109,6 +109,8 @@ impl TransferIntegrityCheck {
             .id(format!("invalid_transfer_group:{}", data_hash))
             .severity(Severity::Error)
             .category(HealthCategory::DataConsistency)
+            .code("transfer_incomplete")
+            .param("count", count as u32)
             .title(title)
             .message(
                 "Some transfers are missing the other side of the move. Match the two transactions if this was between your accounts, or mark the transfer as external if money entered or left your portfolio.",

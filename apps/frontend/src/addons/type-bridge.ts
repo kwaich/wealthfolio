@@ -251,7 +251,12 @@ export function createPermissionGuard(
     canUse: isAllowed,
     assertCanUse: (category: string, functionName: string) => {
       if (!isAllowed(category, functionName)) {
-        throw new Error(`Addon '${addonId}' is not allowed to call ${category}.${functionName}`);
+        const error = new Error(
+          `Addon '${addonId}' is not allowed to call ${category}.${functionName}`,
+        );
+        // Lets callers surface permission denials distinctly from other errors.
+        error.name = "AddonPermissionDenied";
+        throw error;
       }
     },
   };

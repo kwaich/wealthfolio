@@ -117,6 +117,9 @@ impl FxIntegrityCheck {
                     .id(format!("fx_missing:{}", data_hash))
                     .severity(severity)
                     .category(HealthCategory::FxIntegrity)
+                    .code("fx_missing")
+                    .param("count", count as u32)
+                    .param("currency", missing_pairs[0].from_currency.clone())
                     .title(title)
                     .message(
                         "We can't convert some holdings to your base currency. This affects your total portfolio value.",
@@ -178,6 +181,8 @@ impl FxIntegrityCheck {
                     .id(format!("fx_stale:error:{}", data_hash))
                     .severity(severity)
                     .category(HealthCategory::FxIntegrity)
+                    .code("fx_stale_error")
+                    .param("count", count as u32)
                     .title(title)
                     .message(
                         "Some exchange rates haven't been updated in over 3 days. Currency conversions may be inaccurate.",
@@ -239,6 +244,8 @@ impl FxIntegrityCheck {
                     .id(format!("fx_stale:warning:{}", data_hash))
                     .severity(severity)
                     .category(HealthCategory::FxIntegrity)
+                    .code("fx_stale_warning")
+                    .param("count", count as u32)
                     .title(title)
                     .message(
                         "Some exchange rates haven't been updated recently. Consider refreshing rates.",

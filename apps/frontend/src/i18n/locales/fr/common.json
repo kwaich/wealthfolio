@@ -91,7 +91,7 @@
   "columns": "Colonnes",
   "insights": "Analyses",
   "assistant": "Assistant",
-  "connect": "Connexion",
+  "connect": "Connect",
   "addons": "Extensions",
   "nav": {
     "label_dashboard": "Afficher le tableau de bord",
@@ -111,7 +111,7 @@
     "open_launcher": "Ouvrir le lanceur",
     "more_navigation": "Plus de navigation",
     "more_options": "Plus d'options",
-    "connect_last_synced": "Connexion - Dernière synchronisation {{time}}",
+    "connect_last_synced": "Connect - Dernière synchronisation {{time}}",
     "refreshing": "Actualisation…",
     "sidebar": "Barre latérale",
     "floating_navigation": "Navigation flottante",

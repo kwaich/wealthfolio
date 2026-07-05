@@ -217,6 +217,13 @@ function validateTradeFields(
     if (!data.optionType) {
       return { field: "optionType", message: t("activity:form.err_option_type_required") };
     }
+    // Require an explicit Open/Close choice — matches the desktop option form.
+    if (
+      data.subtype !== ACTIVITY_SUBTYPES.POSITION_OPEN &&
+      data.subtype !== ACTIVITY_SUBTYPES.POSITION_CLOSE
+    ) {
+      return { field: "subtype", message: t("activity:form.err_open_or_close") };
+    }
   } else {
     if (!(data.assetId as string)?.trim()) {
       return { field: "assetId", message: t("activity:form.err_select_security") };
@@ -856,8 +863,14 @@ export function MobileActivityForm({
                 ))}
               </div>
             )}
-            {activity?.id && (
+            {activity?.id ? (
               <SheetDescription>{t("activity:mobile_form.update_details")}</SheetDescription>
+            ) : (
+              // Always describe the dialog for a11y; the add flow shows step dots
+              // instead of visible description text, so keep it screen-reader only.
+              <SheetDescription className="sr-only">
+                {t("activity:mobile_form.add_details")}
+              </SheetDescription>
             )}
           </div>
         </SheetHeader>

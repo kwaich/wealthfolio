@@ -9,6 +9,7 @@ import {
   removeAddonRoute,
 } from "@/addons/addons-runtime-context";
 import { logger } from "@/adapters";
+import { toast } from "sonner";
 import { collectAddonThemeSnapshot, type AddonThemeSnapshot } from "./addon-sandbox-theme";
 import { createPermissionGuard, type PermissionGuard } from "../type-bridge";
 
@@ -52,11 +53,13 @@ interface Runtime {
   files: AddonFile[];
   api: unknown;
   activeContainer?: HTMLElement;
+  containerResizeObserver?: ResizeObserver;
   activeRoute?: {
     location: AddonRouteLocation;
     routeId: string;
   };
   isLoaded: boolean;
+  loadPhase: string;
   lastRenderedRouteKey?: string;
   permissionGuard: PermissionGuard;
   activeRouteRequestId?: string;
@@ -89,6 +92,7 @@ interface SandboxMessage {
   routeId?: string;
   subscriptionId?: string;
   error?: string;
+  phase?: string;
 }
 
 function createNonce() {
@@ -161,6 +165,27 @@ function clearPendingRouteRender(runtime: Runtime) {
   }
 }
 
+// Permission denials are otherwise invisible: the sandbox promise rejects and
+// most add-ons swallow it, leaving the user with silently missing data. Toast
+// each addon+function denial once per session (deduped so retry loops don't
+// spam) with an actionable hint.
+const notifiedPermissionDenials = new Set<string>();
+
+function notifyPermissionDenialOnce(addonId: string, method: string | undefined, error: unknown) {
+  if (!(error instanceof Error) || error.name !== "AddonPermissionDenied") {
+    return;
+  }
+  const key = `${addonId}:${method ?? "unknown"}`;
+  if (notifiedPermissionDenials.has(key)) {
+    return;
+  }
+  notifiedPermissionDenials.add(key);
+  toast.error("Add-on permission denied", {
+    description: `'${addonId}' tried to use '${method ?? "an API"}' without permission. Updating the add-on may fix this.`,
+    duration: 15000,
+  });
+}
+
 function getParkingRoot() {
   let root = document.getElementById("addon-sandbox-parking");
   if (!root) {
@@ -171,6 +196,11 @@ function getParkingRoot() {
       overflow: "visible",
       pointerEvents: "none",
       position: "fixed",
+      // index.html gives #root `z-index: 1` (splash-screen layering), which
+      // paints the whole app above z-auto body siblings. Match it so this
+      // later sibling wins the tie and addon frames show above page content,
+      // while staying below dialog/toast portals (z-50+).
+      zIndex: "1",
     });
     document.body.appendChild(root);
   }
@@ -346,8 +376,10 @@ export class AddonIframeManager {
         files: input.files ?? [],
         iframe,
         isLoaded: false,
+        loadPhase: "creating sandbox iframe",
         loadTimer: window.setTimeout(() => {
-          reject(new Error(`Timed out loading addon '${input.addonId}'`));
+          const phase = this.runtimes.get(input.addonId)?.loadPhase ?? "unknown";
+          reject(new Error(`Timed out loading addon '${input.addonId}' during ${phase}`));
           void this.stopAddon(input.addonId);
         }, LOAD_TIMEOUT_MS),
         nonce,
@@ -361,6 +393,21 @@ export class AddonIframeManager {
     });
 
     getParkingRoot().appendChild(iframe);
+    const runtime = this.runtimes.get(input.addonId);
+    if (runtime) {
+      runtime.loadPhase = "loading sandbox document";
+    }
+    iframe.addEventListener(
+      "error",
+      () => {
+        const runtime = this.runtimes.get(input.addonId);
+        // Rejecting is enough: the load-error path in addons-core surfaces a
+        // user-facing toast, so no extra notification here.
+        runtime?.rejectLoad(new Error(`Failed to load add-on sandbox for '${input.addonId}'`));
+        void this.stopAddon(input.addonId);
+      },
+      { once: true },
+    );
     iframe.src = sandboxUrl;
 
     return loadPromise.finally(() => {
@@ -418,6 +465,10 @@ export class AddonIframeManager {
     runtime.iframe.style.visibility = runtime.lastRenderedRouteKey ? "visible" : "hidden";
     this.ensureLayoutListener();
     this.updateFrameBounds(runtime);
+    // Window resize/scroll listeners miss container-only changes (e.g. sidebar
+    // collapse reflows the page without either event) — observe the container.
+    runtime.containerResizeObserver = new ResizeObserver(() => this.updateFrameBounds(runtime));
+    runtime.containerResizeObserver.observe(container);
   }
 
   updateRoute(addonId: string, routeId: string, location: AddonRouteLocation) {
@@ -439,6 +490,8 @@ export class AddonIframeManager {
       return;
     }
 
+    runtime.containerResizeObserver?.disconnect();
+    runtime.containerResizeObserver = undefined;
     runtime.activeContainer = undefined;
     runtime.activeRouteRequestId = undefined;
     clearPendingRouteRender(runtime);
@@ -460,9 +513,13 @@ export class AddonIframeManager {
     clearTimeout(runtime.loadTimer);
     runtime.activeRouteRequestId = undefined;
     clearPendingRouteRender(runtime);
-    runtime.rejectLoad(
-      new Error(`Addon '${runtime.addonId}' was unloaded before it finished loading`),
+    const cancellation = new Error(
+      `Addon '${runtime.addonId}' was unloaded before it finished loading`,
     );
+    // Marks deliberate cancellation (stop/reload) so load-error reporting can
+    // distinguish it from a real failure.
+    cancellation.name = "AddonLoadCancelled";
+    runtime.rejectLoad(cancellation);
 
     const disabled = runtime.isLoaded ? this.waitForDisable(runtime) : Promise.resolve(true);
     this.post(runtime, "disable");
@@ -471,6 +528,8 @@ export class AddonIframeManager {
     }
 
     await this.clearSubscriptions(runtime);
+    runtime.containerResizeObserver?.disconnect();
+    runtime.containerResizeObserver = undefined;
     this.hideFrame(runtime);
     runtime.iframe.remove();
     this.runtimes.delete(runtime.addonId);
@@ -619,8 +678,15 @@ export class AddonIframeManager {
   private async dispatchMessage(runtime: Runtime, message: SandboxMessage) {
     try {
       switch (message.type) {
+        case "loadPhase":
+          if (message.phase) {
+            runtime.loadPhase = message.phase;
+          }
+          break;
         case "ready":
+          runtime.loadPhase = "sandbox ready";
           await this.resetRuntimeForReload(runtime);
+          runtime.loadPhase = "host sent addon code";
           this.post(runtime, "loadAddon", {
             code: runtime.code,
             files: runtime.files,
@@ -629,14 +695,20 @@ export class AddonIframeManager {
           break;
         case "loaded":
           runtime.isLoaded = true;
+          runtime.loadPhase = "loaded";
           runtime.resolveLoad({
             disable: () => this.stopAddon(runtime.addonId),
           });
           this.renderActiveRoute(runtime);
           break;
         case "loadError": {
-          const error = new Error(message.error || `Failed to load addon '${runtime.addonId}'`);
-          runtime.rejectLoad(error);
+          // Log unconditionally: on a sandbox reload the load promise has
+          // already settled, so rejectLoad is a no-op and this would
+          // otherwise be silent.
+          logger.error(`Addon '${runtime.addonId}' failed to load: ${message.error || "unknown"}`);
+          runtime.rejectLoad(
+            new Error(message.error || `Failed to load addon '${runtime.addonId}'`),
+          );
           await this.stopAddon(runtime.addonId);
           break;
         }
@@ -681,6 +753,7 @@ export class AddonIframeManager {
       logger.error(
         `Addon '${runtime.addonId}' message '${message.type ?? "unknown"}' failed: ${String(error)}`,
       );
+      notifyPermissionDenialOnce(runtime.addonId, message.method, error);
       if (message.requestId) {
         this.respond(runtime, message.requestId, false, undefined, error);
       }

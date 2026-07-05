@@ -137,6 +137,9 @@ impl PriceStalenessCheck {
                     .id(format!("manual_valuation:missing:{data_hash}"))
                     .severity(Severity::Warning)
                     .category(HealthCategory::PriceStaleness)
+                    .code("price_manual_valuation_missing")
+                    .param("count", count as u32)
+                    .param("symbol", manual_without_value[0].symbol.clone())
                     .title(title)
                     .message(
                         "Manual/custom holdings need a manual valuation before they can be included as valued performance positions.",
@@ -210,17 +213,29 @@ impl PriceStalenessCheck {
                 .filter(|a| !latest_quote_times.contains_key(&a.asset_id))
                 .count();
 
-            let title = if missing_count == count {
+            let (code, title, message): (&str, String, &str) = if missing_count == count {
                 // All assets are missing prices (no quote data at all)
-                if count == 1 {
+                let title = if count == 1 {
                     format!("No market data for {}", error_assets[0].symbol)
                 } else {
                     format!("No market data for {} holdings", count)
-                }
-            } else if count == 1 {
-                "Outdated price for 1 holding".to_string()
+                };
+                (
+                    "price_no_market_data",
+                    title,
+                    "Unable to fetch market data for some holdings. This may be due to invalid symbols or provider issues. Your portfolio value may be inaccurate.",
+                )
             } else {
-                format!("Outdated prices for {} holdings", count)
+                let title = if count == 1 {
+                    "Outdated price for 1 holding".to_string()
+                } else {
+                    format!("Outdated prices for {} holdings", count)
+                };
+                (
+                    "price_stale_outdated",
+                    title,
+                    "Some holdings haven't had prices updated in over 3 days. Your portfolio value may be inaccurate.",
+                )
             };
 
             let asset_ids: Vec<String> = error_assets.iter().map(|a| a.asset_id.clone()).collect();
@@ -264,17 +279,20 @@ impl PriceStalenessCheck {
                 ));
             }
 
-            let message = if missing_count > 0 {
-                "Unable to fetch market data for some holdings. This may be due to invalid symbols or provider issues. Your portfolio value may be inaccurate."
-            } else {
-                "Some holdings haven't had prices updated in over 3 days. Your portfolio value may be inaccurate."
-            };
-
             issues.push(
                 HealthIssue::builder()
                     .id(format!("price_stale:error:{}", data_hash))
                     .severity(severity)
                     .category(HealthCategory::PriceStaleness)
+                    .code(code)
+                    .param("count", count as u32)
+                    .param(
+                        "symbol",
+                        error_assets
+                            .first()
+                            .map(|a| a.symbol.clone())
+                            .unwrap_or_default(),
+                    )
                     .title(title)
                     .message(message)
                     .affected_count(count as u32)
@@ -328,6 +346,8 @@ impl PriceStalenessCheck {
                     .id(format!("price_stale:warning:{}", data_hash))
                     .severity(severity)
                     .category(HealthCategory::PriceStaleness)
+                    .code("price_update_needed")
+                    .param("count", count as u32)
                     .title(title)
                     .message(
                         "Some holdings haven't had prices updated recently. Consider syncing prices.",

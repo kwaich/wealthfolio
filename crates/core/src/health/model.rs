@@ -856,6 +856,16 @@ pub struct HealthIssue {
     /// Example: "Your holdings haven't had prices updated recently."
     pub message: String,
 
+    /// Stable message code for frontend translation. When set, the frontend
+    /// renders `health:issues.<code>.{title,message}` with `params`, falling
+    /// back to `title`/`message` above. `None` means use title/message as-is.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+
+    /// Interpolation values for the translated message (e.g. count, symbol, dates).
+    #[serde(skip_serializing_if = "HashMap::is_empty", default)]
+    pub params: HashMap<String, Value>,
+
     /// Number of items affected by this issue
     pub affected_count: u32,
 
@@ -907,6 +917,8 @@ pub struct HealthIssueBuilder {
     category: Option<HealthCategory>,
     title: Option<String>,
     message: Option<String>,
+    code: Option<String>,
+    params: HashMap<String, Value>,
     affected_count: u32,
     affected_mv_pct: Option<f64>,
     fix_action: Option<FixAction>,
@@ -940,6 +952,18 @@ impl HealthIssueBuilder {
 
     pub fn message(mut self, message: impl Into<String>) -> Self {
         self.message = Some(message.into());
+        self
+    }
+
+    /// Sets the stable message code used for frontend translation.
+    pub fn code(mut self, code: impl Into<String>) -> Self {
+        self.code = Some(code.into());
+        self
+    }
+
+    /// Adds an interpolation parameter for the translated message.
+    pub fn param(mut self, key: impl Into<String>, value: impl Into<Value>) -> Self {
+        self.params.insert(key.into(), value.into());
         self
     }
 
@@ -1131,6 +1155,8 @@ impl HealthIssueBuilder {
             category,
             title,
             message,
+            code: self.code,
+            params: self.params,
             affected_count: self.affected_count,
             affected_mv_pct: self.affected_mv_pct,
             fix_action,

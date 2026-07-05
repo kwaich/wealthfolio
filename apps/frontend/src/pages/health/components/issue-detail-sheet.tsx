@@ -20,6 +20,7 @@ import {
 import { cn } from "@wealthfolio/ui/lib/utils";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
+import { translateIssueText } from "../translate-issue";
 import { Link } from "react-router-dom";
 
 interface IssueDetailSheetProps {
@@ -436,9 +437,13 @@ export function IssueDetailSheet({
               {t(`health:${categoryConfigKeys.labelKey}`)}
             </span>
           </div>
-          <SheetTitle className="text-xl leading-tight">{issue.title}</SheetTitle>
+          <SheetTitle className="text-xl leading-tight">
+            {translateIssueText(t, issue, "title")}
+          </SheetTitle>
           <p className="text-muted-foreground text-sm leading-relaxed">
-            {isGroupedPrice ? t("health:sheet.groupedPriceMessage") : issue.message}
+            {isGroupedPrice
+              ? t("health:sheet.groupedPriceMessage")
+              : translateIssueText(t, issue, "message")}
           </p>
         </SheetHeader>
 

@@ -1,5 +1,7 @@
 import { isWeb } from "@/adapters";
+import { AddonRuntimeLoader } from "@/addons/addon-runtime-loader";
 import { setAddonQueryClient } from "@/addons/addons-runtime-context";
+import { Toaster } from "@/components/sonner";
 import { AuthGate, AuthProvider } from "@/context/auth-context";
 import { EventDialogProvider } from "@/features/spending/components/event-dialog-provider";
 import { WealthfolioConnectProvider } from "@/features/wealthfolio-connect";
@@ -44,6 +46,8 @@ function App() {
           <PrivacyProvider>
             <SettingsProvider>
               <TooltipProvider>
+                <Toaster mobileOffset={{ top: "68px" }} closeButton expand={false} />
+                <AddonRuntimeLoader />
                 <EventDialogProvider>{routedContent}</EventDialogProvider>
               </TooltipProvider>
             </SettingsProvider>

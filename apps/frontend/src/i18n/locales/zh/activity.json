@@ -749,6 +749,7 @@
     "err_transfer_amount_currencies": "转账金额和货币为必填项。",
     "err_link_before_internal": "请使用“关联转账……”配对此现有转账，然后再将其保存为内部转账。",
     "err_internal_securities_both_legs": "编辑内部证券转账需要转账双方。",
+    "add_details": "输入交易详情",
     "update_details": "更新交易详情"
   },
   "import": {

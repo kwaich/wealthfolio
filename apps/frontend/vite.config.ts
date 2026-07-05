@@ -86,6 +86,10 @@ export default defineConfig({
   build: {
     // Output to project root's dist folder (for Tauri)
     outDir: "../../dist",
+    // outDir is outside the Vite root, so Vite won't clean it by default —
+    // stale hashed bundles then accumulate and Tauri embeds the ENTIRE dist
+    // tree into release builds (tauri.conf.json frontendDist).
+    emptyOutDir: true,
     rollupOptions: {
       input: {
         main: path.resolve(__dirname, "index.html"),

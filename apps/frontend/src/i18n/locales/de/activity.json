@@ -644,6 +644,7 @@
     "err_transfer_amount_currencies": "Transferbetrag und Währungen sind erforderlich.",
     "err_link_before_internal": "Verwenden Sie Transfer verknüpfen..., um diesen bestehenden Transfer zu koppeln, bevor Sie ihn als intern speichern.",
     "err_internal_securities_both_legs": "Die Bearbeitung eines internen Wertpapiertransfers erfordert beide Seiten.",
+    "add_details": "Transaktionsdetails eingeben",
     "update_details": "Transaktionsdetails aktualisieren"
   },
   "table_symbol": "Symbol",

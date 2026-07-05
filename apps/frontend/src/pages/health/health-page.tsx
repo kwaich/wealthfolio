@@ -20,6 +20,7 @@ import {
 import { cn } from "@wealthfolio/ui/lib/utils";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
+import { translateIssueText } from "./translate-issue";
 import { IssueDetailSheet } from "./components/issue-detail-sheet";
 
 const SEVERITY_LABEL_KEYS: Record<HealthSeverity, string> = {
@@ -118,14 +119,18 @@ function HealthIssueRow({
 
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
-          <span className="truncate text-sm font-medium">{issue.title}</span>
+          <span className="truncate text-sm font-medium">
+            {translateIssueText(t, issue, "title")}
+          </span>
           {issue.affectedCount > 0 && (
             <Badge variant="secondary" className="h-5 shrink-0 px-1.5 text-[10px] font-medium">
               {issue.affectedCount}
             </Badge>
           )}
         </div>
-        <p className="text-muted-foreground mt-0.5 line-clamp-1 text-xs">{issue.message}</p>
+        <p className="text-muted-foreground mt-0.5 line-clamp-1 text-xs">
+          {translateIssueText(t, issue, "message")}
+        </p>
       </div>
 
       <div className="flex shrink-0 items-center gap-1.5">

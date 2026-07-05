@@ -104,6 +104,14 @@ interface QueryClientLike {
 
 const dynamicNavItems = new Map<string, DynamicNavItem>();
 const dynamicRoutes = new Map<string, DynamicRouteEntry>();
+const claimedRouteNamespaces = new Map<string, string>();
+// Maps each installed add-on's owned namespaces (id + slug) to the single
+// add-on id that owns it. Populated from the installed-addon registry before
+// any add-on loads, so a namespace that is a peer's identity stays reserved for
+// that peer even if it hasn't loaded yet — a malicious add-on that loads first
+// cannot squat it. Exact-id ownership wins over slug ownership, so a bare-id
+// add-on ("foo") and a suffixed peer ("foo-addon") can't co-own the "foo" slug.
+const installedNamespaceOwners = new Map<string, string>();
 const disableCallbacks = new Map<string, Set<() => void>>();
 const navigationUpdateListeners = new Set<() => void>();
 const ADDON_ID_SUFFIX = "-addon";
@@ -139,6 +147,30 @@ export function setAddonQueryClient(queryClient: QueryClientLike) {
   hostQueryClient = queryClient;
 }
 
+/**
+ * Registers the identities of all installed add-ons so their route namespaces
+ * are reserved regardless of load order. Call before loading add-ons (and on
+ * reload) with every installed add-on id.
+ */
+export function setInstalledAddonIds(addonIds: string[]) {
+  installedNamespaceOwners.clear();
+  // Pass 1: exact-id namespaces take precedence.
+  for (const addonId of addonIds) {
+    const idNamespace = cleanRouteNamespace(addonId);
+    if (idNamespace && !installedNamespaceOwners.has(idNamespace)) {
+      installedNamespaceOwners.set(idNamespace, addonId);
+    }
+  }
+  // Pass 2: slug namespaces, only where no exact id already claimed them.
+  for (const addonId of addonIds) {
+    for (const namespace of getOwnedAddonRouteNamespaces(addonId)) {
+      if (!installedNamespaceOwners.has(namespace)) {
+        installedNamespaceOwners.set(namespace, addonId);
+      }
+    }
+  }
+}
+
 function notifyNavigationUpdate() {
   navigationUpdateListeners.forEach((listener) => listener());
 }
@@ -158,7 +190,13 @@ function toRouterPath(href: string) {
 }
 
 function cleanRouteNamespace(namespace: string) {
-  return namespace.trim().replace(/^\/+|\/+$/g, "");
+  // Lowercased so ownership/reservation checks match the router's
+  // case-insensitive path matching (blocks "/addon/MyAddon" vs "/addon/myaddon"
+  // squatting). Only used for namespace identity, never for the stored href.
+  return namespace
+    .trim()
+    .replace(/^\/+|\/+$/g, "")
+    .toLowerCase();
 }
 
 function getOwnedAddonRouteNamespaces(addonId: string) {
@@ -175,19 +213,44 @@ function isPathWithinRoutePrefix(path: string, prefix: string) {
   return href === cleanPrefix || href.startsWith(`${cleanPrefix}/`);
 }
 
-function isAddonRouteNamespaceAllowed(addonId: string, path: string, aliases: string[] = []) {
-  const href = cleanRoutePath(path);
-  const namespaces = [...getOwnedAddonRouteNamespaces(addonId), ...aliases]
-    .map(cleanRouteNamespace)
-    .filter(Boolean);
+function getRequestedRouteNamespace(path: string) {
+  const match = /^\/addons?\/([^/]+)(?:\/|$)/.exec(cleanRoutePath(path));
+  return match ? cleanRouteNamespace(match[1]) : undefined;
+}
 
-  return namespaces.some(
-    (namespace) =>
-      href === `/addon/${namespace}` ||
-      href.startsWith(`/addon/${namespace}/`) ||
-      href === `/addons/${namespace}` ||
-      href.startsWith(`/addons/${namespace}/`),
-  );
+function isAddonRouteNamespaceAllowed(addonId: string, path: string) {
+  const namespace = getRequestedRouteNamespace(path);
+  if (!namespace) {
+    return false;
+  }
+  // A namespace that is a known installed add-on's identity (id or slug) is
+  // reserved for its single owner, resolved regardless of load order — this is
+  // what blocks route squatting between installed peers.
+  const reservedOwner = installedNamespaceOwners.get(namespace);
+  if (reservedOwner !== undefined) {
+    return reservedOwner === addonId;
+  }
+  // Fallback when the installed registry hasn't been populated (dev servers,
+  // tests): an add-on may always register under its own id/slug.
+  if (getOwnedAddonRouteNamespaces(addonId).includes(namespace)) {
+    return true;
+  }
+  // Id-shaped namespaces stay reserved for the add-on with that id. Anything
+  // else is first-come-first-served: published add-ons register custom route
+  // namespaces (e.g. goal-progress-tracker-addon uses
+  // /addon/investment-target-tracker), so requiring an id match breaks them.
+  if (namespace.endsWith(ADDON_ID_SUFFIX)) {
+    return false;
+  }
+  const claimedBy = claimedRouteNamespaces.get(namespace);
+  return claimedBy === undefined || claimedBy === addonId;
+}
+
+function claimRouteNamespace(addonId: string, path: string) {
+  const namespace = getRequestedRouteNamespace(path);
+  if (namespace && !claimedRouteNamespaces.has(namespace)) {
+    claimedRouteNamespaces.set(namespace, addonId);
+  }
 }
 
 function hasRegisteredAddonNavPrefix(addonId: string, path: string) {
@@ -212,6 +275,7 @@ export function registerAddonNavItem(addonId: string, cfg: SidebarItemConfig) {
     throw new Error(`Addon '${addonId}' cannot register sidebar route '${href}'`);
   }
 
+  claimRouteNamespace(addonId, href);
   dynamicNavItems.set(scopedKey(addonId, itemId), {
     addonId,
     href,
@@ -242,6 +306,7 @@ export function registerAddonRoute(
     throw new Error(`Addon '${addonId}' cannot register route '${href}'`);
   }
 
+  claimRouteNamespace(addonId, href);
   dynamicRoutes.set(scopedKey(addonId, routeId), {
     addonId,
     href,
@@ -259,6 +324,12 @@ export function removeAddonRoute(addonId: string, routeId: string) {
 
 export function clearAddonRegistrations(addonId: string) {
   let changed = false;
+
+  for (const [namespace, owner] of claimedRouteNamespaces) {
+    if (owner === addonId) {
+      claimedRouteNamespaces.delete(namespace);
+    }
+  }
 
   for (const [key, item] of dynamicNavItems) {
     if (item.addonId === addonId) {

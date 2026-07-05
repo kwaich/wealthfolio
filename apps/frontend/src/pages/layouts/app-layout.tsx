@@ -1,6 +1,5 @@
 import AppLauncher from "@/components/app-launcher";
 import { MobileLoadingIndicator } from "@/components/mobile-loading-indicator";
-import { Toaster } from "@/components/sonner";
 import { StartupError } from "@/components/startup-error";
 import { UpdateDialog } from "@/components/update-dialog";
 import { PortfolioSyncProvider } from "@/context/portfolio-sync-context";
@@ -123,7 +122,6 @@ const AppLayoutContent = () => {
           <FloatingNavigationBar navigation={navigation} />
         )}
 
-        <Toaster mobileOffset={{ top: "68px" }} closeButton expand={false} />
         <AppLauncher />
         <UpdateDialog />
       </ApplicationShell>

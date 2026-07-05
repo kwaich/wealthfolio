@@ -749,6 +749,7 @@
     "err_transfer_amount_currencies": "El importe y las monedas de la transferencia son obligatorios.",
     "err_link_before_internal": "Usa Vincular transferencia... para emparejar esta transferencia existente antes de guardarla como interna.",
     "err_internal_securities_both_legs": "Editar una transferencia interna de valores requiere ambas partes.",
+    "add_details": "Introduce los detalles de la transacción",
     "update_details": "Actualizar los detalles de la transacción"
   },
   "import": {

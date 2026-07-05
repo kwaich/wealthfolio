@@ -328,6 +328,43 @@ fn get_app_data_dir(handle: &AppHandle) -> Result<String, Box<dyn std::error::Er
     Ok(handle.path().app_data_dir()?.to_string_lossy().into_owned())
 }
 
+// The main window is built here in code (rather than auto-created by Tauri)
+// solely so we can attach `on_web_resource_request` and rewrite the
+// Access-Control-Allow-Origin header — the only mechanism Tauri exposes for
+// customizing asset-protocol response headers. This is REQUIRED for add-ons to
+// load on WebKit webviews (iOS, and macOS/Linux release builds), where add-on
+// assets are served over `tauri://` instead of the dev server. It is paired
+// with `"create": false` on the "main" window in tauri.conf.json — if that flag
+// is removed, Tauri auto-creates the window WITHOUT this handler and add-ons
+// silently break on iOS while still working in `tauri dev`. Keep them together.
+fn create_main_window<R: tauri::Runtime>(app: &tauri::App<R>) -> tauri::Result<()> {
+    let window_config = app
+        .config()
+        .app
+        .windows
+        .iter()
+        .find(|window| window.label == "main")
+        .expect("main window config is missing");
+
+    tauri::WebviewWindowBuilder::from_config(app.handle(), window_config)?
+        .on_web_resource_request(|_request, response| {
+            // The addon sandbox iframe (sandbox="allow-scripts") has an opaque
+            // origin, so its module-script loads are CORS requests that Tauri's
+            // reflected `Access-Control-Allow-Origin: tauri://localhost` can never
+            // satisfy (and the mobile dev proxy appends a second ACAO header).
+            // WKWebView does not reliably forward the `Origin` header to scheme
+            // handlers, so reply `*` unconditionally: this protocol only serves
+            // the public app bundle — IPC does not go through it.
+            response.headers_mut().insert(
+                "access-control-allow-origin",
+                tauri::http::HeaderValue::from_static("*"),
+            );
+        })
+        .build()?;
+
+    Ok(())
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Application entry point
 // ─────────────────────────────────────────────────────────────────────────────
@@ -375,6 +412,8 @@ pub fn run() {
 
     builder
         .setup(|app| {
+            create_main_window(app)?;
+
             let handle = app.handle().clone();
 
             // Embedded MCP server state (commands need it managed up front)

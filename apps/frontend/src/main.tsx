@@ -1,8 +1,7 @@
 import { isDesktop, getPlatform } from "@/adapters";
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { debugAddonState, isAddonDevModeEnabled, loadAllAddons } from "./addons/addons-loader";
-import "./addons/addons-runtime-context";
+import { debugAddonState, isAddonDevModeEnabled } from "./addons/addons-loader";
 import App from "./App";
 import "./globals.css";
 // Initialize i18next before the app renders. The active language is applied
@@ -31,9 +30,6 @@ if (import.meta.env.DEV) {
     writable: false,
   });
 }
-
-// Load addons after context is injected
-loadAllAddons();
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>

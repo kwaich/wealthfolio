@@ -749,6 +749,7 @@
     "err_transfer_amount_currencies": "Transfer amount and currencies are required.",
     "err_link_before_internal": "Use Link transfer... to pair this existing transfer before saving it as internal.",
     "err_internal_securities_both_legs": "Editing an internal securities transfer requires both legs.",
+    "add_details": "Enter the transaction details",
     "update_details": "Update transaction details"
   },
   "import": {

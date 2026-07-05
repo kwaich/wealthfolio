@@ -1,6 +1,11 @@
 import { logger, getInstalledAddons, loadAddon as loadAddonRuntime } from "@/adapters";
-import { getDynamicNavItems, getDynamicRoutes } from "@/addons/addons-runtime-context";
+import {
+  getDynamicNavItems,
+  getDynamicRoutes,
+  setInstalledAddonIds,
+} from "@/addons/addons-runtime-context";
 import { addonIframeManager, type AddonRuntimeHandle } from "@/addons/iframe/addon-iframe-manager";
+import { toast } from "sonner";
 import type { AddonManifest } from "@wealthfolio/addon-sdk";
 import { HOST_DEPENDENCIES, SDK_VERSION } from "@wealthfolio/addon-sdk";
 
@@ -13,6 +18,22 @@ interface AddonFile {
 // Store loaded addons for cleanup
 const loadedAddons = new Map<string, AddonRuntimeHandle>();
 const loadedAddonIds = new Set<string>(); // Prevent re-loading already processed addons
+
+function formatAddonError(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function notifyAddonLoadError(addonFile: AddonFile, error: unknown) {
+  // Deliberate cancellations (addon stopped/reloaded mid-load) are not
+  // failures the user needs to see.
+  if (error instanceof Error && error.name === "AddonLoadCancelled") {
+    return;
+  }
+  toast.error("Add-on failed to load", {
+    description: `${addonFile.manifest.name || addonFile.manifest.id}: ${formatAddonError(error)}`,
+    duration: 15000,
+  });
+}
 
 /**
  * Discovers all available addons using Tauri commands
@@ -130,6 +151,7 @@ async function loadAddon(addonFile: AddonFile): Promise<boolean> {
     return true;
   } catch (error) {
     logger.error(`Failed to load addon ${addonFile.manifest.id}: ${String(error)}`);
+    notifyAddonLoadError(addonFile, error);
     return false;
   }
 }
@@ -139,6 +161,12 @@ async function loadAddon(addonFile: AddonFile): Promise<boolean> {
  */
 export async function loadInstalledAddons(): Promise<void> {
   const addonFiles = await discoverAddons();
+
+  // Reserve every installed add-on's route namespace up front (before any load)
+  // so load order can't let one add-on squat a peer's namespace. Note: in dev
+  // mode, dev-server add-ons load before this runs (see loadAllAddons), so the
+  // reservation doesn't cover them — acceptable, as dev add-ons are trusted.
+  setInstalledAddonIds(addonFiles.map((addonFile) => addonFile.manifest.id));
 
   if (addonFiles.length === 0) {
     logger.info("⚠️  No addons found to load - check AppData/addons directory");

@@ -120,6 +120,18 @@ describe("Addon Type Bridge", () => {
       );
     });
 
+    it("marks permission denials with a distinguishable error name", () => {
+      const guard = createPermissionGuard("test-addon", []);
+
+      try {
+        guard.assertCanUse("currency", "getAll");
+        expect.unreachable("assertCanUse should throw");
+      } catch (error) {
+        expect(error).toBeInstanceOf(Error);
+        expect((error as Error).name).toBe("AddonPermissionDenied");
+      }
+    });
+
     it("should allow legacy addon navigation when router permission is granted", () => {
       const guard = createPermissionGuard("test-addon", [
         {
