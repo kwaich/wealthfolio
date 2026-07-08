@@ -175,7 +175,7 @@ const sidebarItem = ctx.sidebar.addItem({
   id: "my-addon",
   label: "My Addon",
   route: "/addon/my-addon",
-  icon: MyAddonIcon, // Optional React component
+  icon: "puzzle-piece", // Optional host icon name; see the migration guide for the full list
   order: 100, // Lower numbers appear first
 });
 
@@ -192,15 +192,21 @@ Register routes for your addon's pages.
 #### `add(route: RouteConfig): void`
 
 ```typescript
+import { createRoot } from "react-dom/client";
+
 ctx.router.add({
   path: "/addon/my-addon",
-  component: React.lazy(() => Promise.resolve({ default: MyAddonComponent })),
+  render: ({ root }) => {
+    createRoot(root).render(<MyAddonComponent ctx={ctx} />);
+  },
 });
 
 // Multiple routes
 ctx.router.add({
   path: "/addon/my-addon/settings",
-  component: React.lazy(() => Promise.resolve({ default: MyAddonSettings })),
+  render: ({ root }) => {
+    createRoot(root).render(<MyAddonSettings ctx={ctx} />);
+  },
 });
 ```
 

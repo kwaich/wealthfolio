@@ -63,7 +63,7 @@ impl PriceStalenessCheck {
         }
 
         // Convert hour thresholds to trading days
-        // 24 hours ≈ 1 trading day, 72 hours ≈ 3 trading days
+        // 48 hours ≈ 2 trading days, 72 hours ≈ 3 trading days by default
         let warning_trading_days = (ctx.config.price_stale_warning_hours / 24).max(1) as i64;
         let critical_trading_days = (ctx.config.price_stale_critical_hours / 24).max(1) as i64;
 
@@ -643,7 +643,7 @@ mod tests {
         }];
 
         // Quote from Monday Jan 15 (2 trading days ago: Tue, Wed)
-        // With default config (24h = 1 trading day warning), this should trigger warning
+        // With default config (48h = 2-trading-day warning), this should trigger warning
         let mut quote_times = HashMap::new();
         let monday = Utc.with_ymd_and_hms(2024, 1, 15, 16, 0, 0).unwrap();
         quote_times.insert("SEC:AAPL:XNAS".to_string(), monday);
@@ -731,18 +731,16 @@ mod tests {
         }];
 
         // Quote from Friday Jan 19 - only 1 trading day (Monday) has passed
-        // Default warning threshold is 1 trading day, so this is exactly at the threshold
-        // but not over it (we use >= so 1 >= 1 would trigger)
-        // Actually with the default 24h = 1 day threshold, 1 trading day should trigger warning
+        // Default warning threshold is 2 trading days, so this remains fresh.
         let mut quote_times = HashMap::new();
         let friday = Utc.with_ymd_and_hms(2024, 1, 19, 16, 0, 0).unwrap();
         quote_times.insert("SEC:AAPL:XNAS".to_string(), friday);
 
         let issues = check.analyze(&holdings, &quote_times, &ctx);
-        // 1 trading day has passed (Monday), warning threshold is 1 day
-        // So this will trigger a warning - which is correct behavior for Monday
-        assert_eq!(issues.len(), 1);
-        assert_eq!(issues[0].severity, Severity::Warning);
+        assert!(
+            issues.is_empty(),
+            "Friday quote should not be stale with relaxed warning threshold"
+        );
     }
 
     #[test]

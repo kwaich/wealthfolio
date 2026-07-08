@@ -26,13 +26,21 @@ body,
   margin: 0;
 }
 
+/*
+ * Prefer the LIVE host theme token (--background / --foreground): applyHostTheme
+ * re-copies these into the sandbox on every theme apply, so they track the
+ * current theme. --addon-initial-* is a one-time snapshot taken at addon start
+ * and is never refreshed on its own — using it directly leaves a stale (often
+ * dark) background when the app resolves its real theme after the snapshot.
+ * Keep it only as the pre-loadAddon fallback.
+ */
 html {
-  background: var(--addon-initial-background, transparent);
+  background: var(--background, var(--addon-initial-background, transparent));
 }
 
 body {
-  background: var(--addon-initial-background, transparent);
-  color: var(--addon-initial-foreground, inherit);
+  background: var(--background, var(--addon-initial-background, transparent));
+  color: var(--foreground, var(--addon-initial-foreground, inherit));
 }
 
 #addon-root {

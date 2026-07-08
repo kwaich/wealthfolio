@@ -49,6 +49,16 @@ export function applyHostTheme(theme?: Partial<AddonThemeSnapshot>) {
     htmlElement.style.colorScheme = theme.colorScheme;
   }
 
+  // Refresh the snapshot fallbacks too. These are seeded once from URL params at
+  // addon start (before the app's real theme resolves), so without this they can
+  // stay stuck on a dark startup value even after the app settles on light.
+  if (theme.backgroundColor) {
+    htmlElement.style.setProperty("--addon-initial-background", theme.backgroundColor);
+  }
+  if (theme.foregroundColor) {
+    htmlElement.style.setProperty("--addon-initial-foreground", theme.foregroundColor);
+  }
+
   document.body.classList.remove(...FONT_CLASSES);
   if (theme.fontClass && FONT_CLASSES.includes(theme.fontClass as (typeof FONT_CLASSES)[number])) {
     document.body.classList.add(theme.fontClass);

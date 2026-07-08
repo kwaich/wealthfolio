@@ -459,7 +459,12 @@ Permissions are categorized by risk:
 Every addon exports an enable function:
 
 ```typescript
+import { createRoot, type Root } from "react-dom/client";
+import { MyComponent } from "./MyComponent";
+
 export default function enable(ctx: AddonContext) {
+  let root: Root | null = null;
+
   // Register UI elements
   const sidebar = ctx.sidebar.addItem({
     id: "my-feature",
@@ -470,12 +475,17 @@ export default function enable(ctx: AddonContext) {
   // Register route
   ctx.router.add({
     path: "/my-feature",
-    component: React.lazy(() => import("./MyComponent")),
+    render: ({ root: routeRoot }) => {
+      root ??= createRoot(routeRoot);
+      root.render(<MyComponent ctx={ctx} />);
+    },
   });
 
   // Return cleanup function
   return {
     disable() {
+      root?.unmount();
+      root = null;
       sidebar.remove();
     },
   };

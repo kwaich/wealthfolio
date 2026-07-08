@@ -1274,7 +1274,7 @@ impl Default for HealthStatus {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct HealthConfig {
-    /// Hours after which a stale price triggers a Warning (default: 24)
+    /// Hours after which a stale price triggers a Warning (default: 48)
     pub price_stale_warning_hours: u32,
 
     /// Hours after which a stale price triggers an Error (default: 72)
@@ -1296,7 +1296,7 @@ pub struct HealthConfig {
 impl Default for HealthConfig {
     fn default() -> Self {
         Self {
-            price_stale_warning_hours: 24,
+            price_stale_warning_hours: 48,
             price_stale_critical_hours: 72,
             fx_stale_warning_hours: 24,
             fx_stale_critical_hours: 72,
@@ -1455,7 +1455,7 @@ mod tests {
     #[test]
     fn test_health_config_defaults() {
         let config = HealthConfig::default();
-        assert_eq!(config.price_stale_warning_hours, 24);
+        assert_eq!(config.price_stale_warning_hours, 48);
         assert_eq!(config.price_stale_critical_hours, 72);
         assert_eq!(config.mv_escalation_threshold, 0.30);
     }

@@ -101,6 +101,10 @@ export const ReactVersion = '19.2.4';
 
 export { HOST_DEPENDENCIES } from './host-dependencies';
 
+// Sidebar icon names (see SidebarItemConfig.icon)
+export { ADDON_ICON_NAMES } from './icons';
+export type { AddonIconName } from './icons';
+
 /**
  * Addons receive their context as a parameter to the enable() function.
  * Each addon gets its own isolated iframe context with scoped host APIs.

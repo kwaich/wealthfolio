@@ -103,9 +103,8 @@ hello-world-addon/
 `src/addon.tsx` contains the addon logic:
 
 ```typescript
-import React from 'react';
+import { createRoot, type Root } from 'react-dom/client';
 import type { AddonContext } from '@wealthfolio/addon-sdk';
-import { Icons } from '@wealthfolio/ui';
 
 function HelloWorldPage() {
   return (
@@ -122,11 +121,13 @@ function HelloWorldPage() {
 }
 
 export default function enable(ctx: AddonContext) {
+  let root: Root | null = null;
+
   // Add sidebar item
   const sidebarItem = ctx.sidebar.addItem({
     id: 'hello-world',
     label: 'Hello World',
-    icon: <Icons.Blocks className="h-5 w-5" />,
+    icon: 'puzzle-piece',
     route: '/addon/hello-world',
     order: 100
   });
@@ -134,15 +135,18 @@ export default function enable(ctx: AddonContext) {
   // Register route
   ctx.router.add({
     path: '/addon/hello-world',
-    component: React.lazy(() => Promise.resolve({
-      default: () => <HelloWorldPage />
-    }))
+    render: ({ root: routeRoot }) => {
+      root ??= createRoot(routeRoot);
+      root.render(<HelloWorldPage />);
+    },
   });
 
   ctx.api.logger.info('Hello World addon loaded');
 
   return {
     disable() {
+      root?.unmount();
+      root = null;
       sidebarItem.remove();
       ctx.api.logger.info('Hello World addon disabled');
     }
@@ -207,7 +211,7 @@ pnpm add @tanstack/react-query@^5.62.7
 Update `src/addon.tsx` to access portfolio data using TanStack Query:
 
 ```typescript
-import React from 'react';
+import { createRoot, type Root } from 'react-dom/client';
 import { useQuery } from '@tanstack/react-query';
 import type { AddonContext, Account } from '@wealthfolio/addon-sdk';
 
@@ -299,6 +303,8 @@ function HelloWorldPage({ ctx }: { ctx: AddonContext }) {
 }
 
 export default function enable(ctx: AddonContext) {
+  let root: Root | null = null;
+
   const sidebarItem = ctx.sidebar.addItem({
     id: 'hello-world',
     label: 'Hello World',
@@ -308,13 +314,16 @@ export default function enable(ctx: AddonContext) {
 
   ctx.router.add({
     path: '/addon/hello-world',
-    component: React.lazy(() => Promise.resolve({
-      default: () => <HelloWorldPage ctx={ctx} />
-    }))
+    render: ({ root: routeRoot }) => {
+      root ??= createRoot(routeRoot);
+      root.render(<HelloWorldPage ctx={ctx} />);
+    },
   });
 
   return {
     disable() {
+      root?.unmount();
+      root = null;
       sidebarItem.remove();
     }
   };
@@ -492,6 +501,19 @@ pnpm format
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
+const hostProvidedDependencies = [
+  "@tanstack/react-query",
+  "@wealthfolio/addon-sdk",
+  "@wealthfolio/ui",
+  "date-fns",
+  "lucide-react",
+  "react",
+  "react-dom",
+  "react-dom/client",
+  "react/jsx-runtime",
+  "recharts",
+];
+
 export default defineConfig({
   plugins: [react()],
   build: {
@@ -501,13 +523,7 @@ export default defineConfig({
       fileName: () => "addon.js",
     },
     rollupOptions: {
-      external: ["react", "react-dom"],
-      output: {
-        globals: {
-          react: "React",
-          "react-dom": "ReactDOM",
-        },
-      },
+      external: hostProvidedDependencies,
     },
   },
 });

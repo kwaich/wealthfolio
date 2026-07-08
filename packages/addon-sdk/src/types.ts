@@ -1,4 +1,5 @@
 import type { HostAPI } from './host-api';
+import type { AddonIconName } from './icons';
 
 /**
  * Core types for addon development
@@ -20,8 +21,8 @@ export interface SidebarItemConfig {
   id: string;
   /** Display text for the sidebar item */
   label: string;
-  /** Optional host-supported icon name */
-  icon?: string;
+  /** Optional host-supported icon name (see {@link AddonIconName}) */
+  icon?: AddonIconName;
   /** Optional route to navigate to when clicked */
   route?: string;
   /** Optional ordering priority (lower numbers appear first) */

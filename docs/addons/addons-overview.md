@@ -49,17 +49,19 @@ Includes hot-reload development server and comprehensive type definitions.
 Every addon exports an enable function that receives a context object:
 
 ```typescript
+import { createRoot, type Root } from 'react-dom/client';
 import type { AddonContext } from '@wealthfolio/addon-sdk';
-import { Icons } from '@wealthfolio/ui';
 
 export default function enable(ctx: AddonContext) {
+  let root: Root | null = null;
+
   // Access financial data
   const accounts = await ctx.api.accounts.getAll();
 
   // Add navigation item
   const sidebarItem = ctx.sidebar.addItem({
     id: 'my-addon',
-    icon: <Icons.Blocks className="h-5 w-5" />,
+    icon: 'puzzle-piece',
     label: 'My Tool',
     route: '/my-addon'
   });
@@ -67,7 +69,10 @@ export default function enable(ctx: AddonContext) {
   // Register route
   ctx.router.add({
     path: '/my-addon',
-    component: MyComponent
+    render: ({ root: routeRoot }) => {
+      root ??= createRoot(routeRoot);
+      root.render(<MyComponent ctx={ctx} />);
+    },
   });
 
   // Listen to events
@@ -78,6 +83,8 @@ export default function enable(ctx: AddonContext) {
   // Cleanup function
   return {
     disable() {
+      root?.unmount();
+      root = null;
       sidebarItem.remove();
       unlisten();
     }
@@ -295,10 +302,23 @@ Available libraries:
 
 ### Build Configuration
 
-Standard Vite configuration externalizes React:
+Standard Vite configuration externalizes host-provided dependencies as ESM:
 
 ```typescript
 // vite.config.ts
+const hostProvidedDependencies = [
+  "@tanstack/react-query",
+  "@wealthfolio/addon-sdk",
+  "@wealthfolio/ui",
+  "date-fns",
+  "lucide-react",
+  "react",
+  "react-dom",
+  "react-dom/client",
+  "react/jsx-runtime",
+  "recharts",
+];
+
 export default defineConfig({
   plugins: [react()],
   build: {
@@ -308,13 +328,7 @@ export default defineConfig({
       formats: ["es"],
     },
     rollupOptions: {
-      external: ["react", "react-dom"],
-      plugins: [
-        externalGlobals({
-          react: "React",
-          "react-dom": "ReactDOM",
-        }),
-      ],
+      external: hostProvidedDependencies,
     },
   },
 });
